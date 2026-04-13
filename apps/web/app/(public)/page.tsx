@@ -76,12 +76,10 @@ export default async function LandingPage() {
           {/* CTA row */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <code className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-subtle)] px-4 py-2.5 text-sm font-mono text-[var(--text-primary)]">
-              npm install @routedock/sdk
+              npm install @routedock/routedock
             </code>
             <a
-              href="https://github.com/routedock/routedock"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="/docs"
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-transparent px-4 py-2.5 text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
             >
               Read the Docs →

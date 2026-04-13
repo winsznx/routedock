@@ -1,7 +1,7 @@
 export function PublicFooter() {
   const links = [
-    { label: 'GitHub', href: 'https://github.com/routedock/routedock' },
-    { label: 'npm', href: 'https://www.npmjs.com/package/@routedock/sdk' },
+    { label: 'GitHub', href: 'https://github.com/winsznx/routedock' },
+    { label: 'npm', href: 'https://www.npmjs.com/package/@routedock/routedock' },
     { label: 'Docs', href: '/docs' },
     {
       label: 'Stellar Explorer',

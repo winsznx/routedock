@@ -59,10 +59,10 @@ export function PublicNav() {
           {/* Right actions */}
           <div className="flex items-center gap-3">
             <code className="hidden sm:inline-flex items-center rounded-md border border-[var(--border-default)] bg-[var(--bg-subtle)] px-2.5 py-1 text-xs font-mono text-[var(--text-secondary)]">
-              npm i @routedock/sdk
+              npm i @routedock/routedock
             </code>
             <Link
-              href="https://github.com/routedock/routedock"
+              href="https://github.com/winsznx/routedock"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center rounded-lg border border-[var(--border-default)] bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"

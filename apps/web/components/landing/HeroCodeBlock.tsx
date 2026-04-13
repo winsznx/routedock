@@ -2,7 +2,7 @@ import { codeToHtml } from 'shiki'
 import { HeroCodeBlockClient } from './HeroCodeBlockClient'
 
 const CODE = `const client = new RouteDockClient({ wallet, network: 'testnet' })
-const result = await client.pay('https://api.example.com/data')
+const result = await client.pay('https://provider.stellar.app/price')
 // result.mode → 'x402' | 'mpp-charge' | 'mpp-session'`
 
 export async function HeroCodeBlock() {
