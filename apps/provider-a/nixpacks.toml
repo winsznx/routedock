@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "pnpm-9_x"]
+
+[phases.install]
+cmds = ["cd ../.. && pnpm install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["cd ../.. && pnpm --filter @routedock/routedock build && pnpm --filter provider-a build"]
+
+[start]
+cmd = "node dist/index.js"
