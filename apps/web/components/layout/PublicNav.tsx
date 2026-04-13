@@ -54,6 +54,12 @@ export function PublicNav() {
             >
               FAQ
             </a>
+            <a
+              href="/dashboard"
+              className="text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+            >
+              Dashboard
+            </a>
           </div>
 
           {/* Right actions */}
