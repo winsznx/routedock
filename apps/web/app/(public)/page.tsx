@@ -162,7 +162,7 @@ export default async function LandingPage() {
               <ModeCard
                 mode="x402"
                 title="Pay per request"
-                description="One HTTP call, one on-chain settlement via OpenZeppelin Channels. Ideal for data queries where you need a result once."
+                description="One HTTP call, one on-chain settlement. The provider runs the facilitator in-process on testnet, or routes to OpenZeppelin on mainnet. Ideal for data queries."
                 icon={<Zap className="h-5 w-5" />}
                 stats="~0.001 USDC · 1 settlement per request"
               />
@@ -284,7 +284,7 @@ export default async function LandingPage() {
               },
               {
                 q: 'Do I need XLM for gas?',
-                a: 'Not for x402. The OpenZeppelin Channels facilitator sponsors all fees. MPP charge supports server-sponsored paths. Your agent holds only USDC.',
+                a: 'On testnet, the provider runs an in-process facilitator that sponsors x402 fees. On mainnet, the OpenZeppelin facilitator handles it. MPP charge uses server-sponsored paths. Your agent holds only USDC.',
               },
               {
                 q: 'What networks are supported?',
