@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://routedock.dev/schemas/routedock.schema.json",
+  "title": "RouteDock Manifest",
+  "description": "Discovery manifest served at /.well-known/routedock.json on every RouteDock provider endpoint",
+  "type": "object",
+  "required": [
+    "routedock",
+    "name",
+    "description",
+    "modes",
+    "network",
+    "asset",
+    "asset_contract",
+    "payee",
+    "pricing",
+    "endpoints",
+    "tags"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "routedock": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Manifest schema version. Always '1.0' for this version."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "Human-readable provider name"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Human-readable description of the provider's data or service"
+    },
+    "modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/PaymentMode"
+      },
+      "description": "Payment modes supported by this provider"
+    },
+    "network": {
+      "type": "string",
+      "enum": ["testnet", "mainnet"],
+      "description": "Stellar network this provider operates on"
+    },
+    "asset": {
+      "type": "string",
+      "description": "Asset ticker symbol (e.g. 'USDC')"
+    },
+    "asset_contract": {
+      "type": "string",
+      "description": "Stellar Asset Contract (SAC) address for the payment asset"
+    },
+    "payee": {
+      "type": "string",
+      "description": "Stellar address (G...) that receives payments"
+    },
+    "pricing": {
+      "type": "object",
+      "description": "Pricing configuration per supported payment mode",
+      "additionalProperties": false,
+      "properties": {
+        "x402": {
+          "$ref": "#/definitions/PricingConfig"
+        },
+        "mpp-charge": {
+          "$ref": "#/definitions/PricingConfig"
+        },
+        "mpp-session": {
+          "$ref": "#/definitions/SessionPricingConfig"
+        }
+      },
+      "minProperties": 1
+    },
+    "endpoints": {
+      "type": "object",
+      "description": "Map of endpoint name to HTTP method + path (e.g. { 'price': 'GET /price' })",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true,
+      "description": "Capability tags indexed with trigram search in the provider registry"
+    }
+  },
+  "definitions": {
+    "PaymentMode": {
+      "type": "string",
+      "enum": ["x402", "mpp-charge", "mpp-session"],
+      "description": "A supported RouteDock payment mode"
+    },
+    "PricingConfig": {
+      "type": "object",
+      "description": "Per-request pricing for x402 or mpp-charge modes",
+      "required": ["amount", "per"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "string",
+          "description": "Cost per request in the payment asset (decimal string, e.g. '0.001')"
+        },
+        "per": {
+          "type": "string",
+          "const": "request",
+          "description": "Billing unit — always 'request' for non-session modes"
+        },
+        "facilitator": {
+          "type": "string",
+          "description": "x402 facilitator URL (required for x402 mode). OpenZeppelin Channels endpoint."
+        }
+      }
+    },
+    "SessionPricingConfig": {
+      "type": "object",
+      "description": "Per-voucher pricing for mpp-session (one-way-channel) mode",
+      "required": ["rate", "per", "channel_contract", "min_deposit", "refund_waiting_period_ledgers"],
+      "additionalProperties": false,
+      "properties": {
+        "rate": {
+          "type": "string",
+          "description": "Cost per voucher in the payment asset (decimal string, e.g. '0.0001')"
+        },
+        "per": {
+          "type": "string",
+          "const": "voucher",
+          "description": "Billing unit — always 'voucher' for session mode"
+        },
+        "channel_contract": {
+          "type": "string",
+          "description": "Soroban contract address (C...) for the one-way-channel contract"
+        },
+        "min_deposit": {
+          "type": "string",
+          "description": "Minimum initial deposit to open a channel (decimal string)"
+        },
+        "refund_waiting_period_ledgers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ledgers the server has to settle before the funder can reclaim. Default: 17280 (~24h). Do not reduce in production."
+        }
+      }
+    }
+  }
+}
