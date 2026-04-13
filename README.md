@@ -222,8 +222,8 @@ routedock/
 | Agent vault | `CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT` | live (testnet) |
 | Channel contract | `CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH` | live (testnet) |
 | Dashboard | [routedock.xyz](https://www.routedock.xyz) | live |
-| Provider A | — | pending deploy |
-| Provider B | — | pending deploy |
+| Provider A (price endpoint) | [api-a.routedock.xyz](https://api-a.routedock.xyz) | live |
+| Provider B (orderbook endpoint) | [api-b.routedock.xyz](https://api-b.routedock.xyz) | live |
 
 ---
 
