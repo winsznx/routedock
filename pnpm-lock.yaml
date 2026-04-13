@@ -34,8 +34,8 @@ importers:
   apps/provider-a:
     dependencies:
       '@routedock/routedock':
-        specifier: 0.1.0
-        version: 0.1.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))
+        specifier: 0.1.2
+        version: 0.1.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -65,8 +65,8 @@ importers:
   apps/provider-b:
     dependencies:
       '@routedock/routedock':
-        specifier: 0.1.0
-        version: 0.1.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))
+        specifier: 0.1.2
+        version: 0.1.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -1142,8 +1142,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@routedock/routedock@0.1.0':
-    resolution: {integrity: sha512-GHRlme6JGaMxbRYI8uvt1ZFfUJ5QDKRhXhXDZReZc0pOlpqkhHbFCxdjaINShomTOjaVXHYXmFXNMbN9980BMQ==}
+  '@routedock/routedock@0.1.2':
+    resolution: {integrity: sha512-ZBxbTpLgQjlUeHAtseY09CqSnqszF7RHzBW4jOjufGjqc3SUD6V80LSJNB/PFAgkgtF0TqziRthPlPvEk94jWA==}
     peerDependencies:
       express: ^4.18.0
 
@@ -5189,7 +5189,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
-  '@routedock/routedock@0.1.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))':
+  '@routedock/routedock@0.1.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6))':
     dependencies:
       '@stellar/mpp': 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.12)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.47.10(typescript@5.9.3)(zod@4.3.6)))
       '@stellar/stellar-sdk': 14.6.1

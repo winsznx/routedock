@@ -20,6 +20,8 @@ export interface MppSessionHandlerOptions {
   manifest: RouteDockManifest
   commitmentPublicKey: string
   onSettled?: (txHash: string, totalPaid: string, mode: string) => Promise<void>
+  onSessionOpen?: (channelId: string) => Promise<void>
+  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -30,14 +32,29 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
   const innerStore = Store.memory()
 
-  // Wrap the store to intercept cumulative amount writes
   let lastCumulativeAmount = 0n
+  let voucherCount = 0
+  let sessionOpened = false
+
   const wrappedStore: ReturnType<typeof Store.memory> = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
       if (key === cumulativeKey && value && typeof value === 'object' && 'amount' in (value as Record<string, unknown>)) {
         lastCumulativeAmount = BigInt((value as { amount: string }).amount)
+        voucherCount++
+
+        if (!sessionOpened) {
+          sessionOpened = true
+          if (opts.onSessionOpen) {
+            await opts.onSessionOpen(opts.channelContract)
+          }
+        }
+
+        if (opts.onVoucher) {
+          const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+          await opts.onVoucher(voucherCount, humanAmount)
+        }
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
@@ -85,6 +102,10 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         } else {
           res.json({ closeTxHash: null, message: 'no vouchers received' })
         }
+
+        sessionOpened = false
+        voucherCount = 0
+        lastCumulativeAmount = 0n
         return
       }
 

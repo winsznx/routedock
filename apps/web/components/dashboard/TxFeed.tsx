@@ -56,7 +56,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
   }, [])
 
   return (
-    <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] flex flex-col max-h-[600px]">
+    <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] flex flex-col max-h-[420px]">
       <div className="px-5 py-4 border-b border-[var(--border-default)] shrink-0">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">Transaction Feed</h2>
       </div>

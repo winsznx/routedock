@@ -87,6 +87,10 @@ const supabase =
 const horizonServer = new Horizon.Server(HORIZON_URL)
 const startedAt = Date.now()
 
+// ── Session tracking (via SDK onSessionOpen / onVoucher hooks) ───────────────
+
+let activeSessionChannelId = ''
+
 // ── Express app ───────────────────────────────────────────────────────────────
 
 const app = express()
@@ -114,9 +118,47 @@ app.use(
     payeeSecretKey: STELLAR_PAYEE_SECRET,
     manifest,
     commitmentPublicKey: COMMITMENT_PUBLIC_KEY,
+    onSessionOpen: async (channelId: string) => {
+      if (!supabase) return
+      activeSessionChannelId = `${channelId}:${Date.now()}`
+      const { error } = await supabase.from('sessions').insert({
+        channel_id: activeSessionChannelId,
+        payee: STELLAR_PAYEE_ADDRESS,
+        payer: '',
+        cumulative_amount: 0,
+        status: 'open',
+        channel_contract: channelId,
+        network: STELLAR_NETWORK,
+        voucher_count: 0,
+      })
+      if (error) console.error('[supabase] session insert failed:', error.message)
+      else console.log('[supabase] session opened:', activeSessionChannelId)
+    },
+    onVoucher: async (voucherIndex: number, cumulativeAmount: string) => {
+      if (!supabase || !activeSessionChannelId) return
+      const { error } = await supabase
+        .from('sessions')
+        .update({
+          cumulative_amount: parseFloat(cumulativeAmount),
+          voucher_count: voucherIndex,
+        })
+        .eq('channel_id', activeSessionChannelId)
+      if (error) console.error('[supabase] session voucher update failed:', error.message)
+    },
     onSettled: async (txHash: string, totalPaid: string, mode: string) => {
       console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid}`)
       if (!supabase) return
+
+      if (activeSessionChannelId) {
+        const { error: closeErr } = await supabase
+          .from('sessions')
+          .update({ status: 'closed', settlement_tx_hash: txHash })
+          .eq('channel_id', activeSessionChannelId)
+        if (closeErr) console.error('[supabase] session close failed:', closeErr.message)
+        else console.log('[supabase] session closed')
+        activeSessionChannelId = ''
+      }
+
       const { error } = await supabase.from('tx_log').insert({
         tx_type: 'channel_close',
         tx_hash: txHash,
@@ -132,8 +174,6 @@ app.use(
   }),
 )
 
-// GET /stream/orderbook — returns a single orderbook snapshot per paid request.
-// Each request is one voucher in the payment channel — pay-per-interaction.
 app.get('/stream/orderbook', async (_req: Request, res: Response) => {
   try {
     const orderbook = await horizonServer
