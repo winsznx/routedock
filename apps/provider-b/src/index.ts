@@ -124,7 +124,7 @@ app.use(
       const { error } = await supabase.from('sessions').insert({
         channel_id: activeSessionChannelId,
         payee: STELLAR_PAYEE_ADDRESS,
-        payer: '',
+        payer: process.env['AGENT_PUBLIC_KEY'] ?? 'unknown',
         cumulative_amount: 0,
         status: 'open',
         channel_contract: channelId,
