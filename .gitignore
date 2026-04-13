@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+.npmrc
+
+*.wasm
+target/
+
+.DS_Store
+.stellar/
+contracts/agent-vault/stellar
+
+# Internal workflow docs — not part of the project
+Routedock master.md
+FRONTEND_SKILL.md
+AGENT_PROGRESS.md
+.claude/
