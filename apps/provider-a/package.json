@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@routedock/routedock": "0.1.0",
+    "@routedock/routedock": "0.1.2",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0",
     "ajv": "^8.17.1",

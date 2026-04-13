@@ -26,6 +26,10 @@ export interface RouteDockMiddlewareOptions {
   manifest: RouteDockManifest
   /** Called after each successful on-chain settlement */
   onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
+  /** Called when a new mpp-session is opened (first voucher received) */
+  onSessionOpen?: (channelId: string) => Promise<void>
+  /** Called after each verified voucher in an mpp-session */
+  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
 
 /**
@@ -97,6 +101,8 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           manifest: opts.manifest,
           commitmentPublicKey: opts.commitmentPublicKey,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+          ...(opts.onSessionOpen ? { onSessionOpen: opts.onSessionOpen } : {}),
+          ...(opts.onVoucher ? { onVoucher: opts.onVoucher } : {}),
         }),
       )
     }
