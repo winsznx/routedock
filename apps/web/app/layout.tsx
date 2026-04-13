@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   description:
     'x402, MPP charge, and MPP session — unified behind client.pay(url). One interface. Three payment modes. Zero hardcoding.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://routedock.vercel.app'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://www.routedock.xyz'),
   openGraph: {
     title: 'RouteDock — Unified Agent Payment Execution on Stellar',
     description: 'One SDK for x402, MPP charge, and MPP session on Stellar. Agents pay for services with a single function call.',

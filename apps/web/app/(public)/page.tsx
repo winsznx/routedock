@@ -43,31 +43,28 @@ export default async function LandingPage() {
           }}
         />
 
-        <div className="relative mx-auto max-w-4xl px-4 sm:px-6 text-center py-32">
+        <div className="relative mx-auto max-w-4xl px-4 sm:px-6 text-center py-20 sm:py-32 overflow-hidden">
           {/* Label chip */}
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--accent)]/30 bg-[var(--accent)]/5 px-4 py-1.5 text-sm text-[var(--accent)]">
+          <div className="mb-6 sm:mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--accent)]/30 bg-[var(--accent)]/5 px-3 sm:px-4 py-1.5 text-xs sm:text-sm text-[var(--accent)]">
             <Zap className="h-3.5 w-3.5" />
             Built for the Stellar Agent Economy
           </div>
 
           {/* H1 */}
-          <h1 className="text-3xl sm:text-5xl md:text-7xl font-bold leading-[1.08] tracking-tight mb-6">
+          <h1 className="text-[1.75rem] leading-[1.15] sm:text-5xl md:text-7xl font-bold sm:leading-[1.08] tracking-tight mb-6">
             One interface.
-            <br className="hidden sm:block" />
-            <span className="sm:hidden"> </span>
+            <br />
             Three payment modes.
-            <br className="hidden sm:block" />
-            <span className="sm:hidden"> </span>
+            <br />
             <span className="text-[var(--accent)]">Zero hardcoding.</span>
           </h1>
 
-          <p className="mx-auto max-w-2xl text-base sm:text-lg text-[var(--text-secondary)] mb-10 leading-relaxed px-2">
+          <p className="mx-auto max-w-2xl text-sm sm:text-lg text-[var(--text-secondary)] mb-8 sm:mb-10 leading-relaxed px-1">
             x402, MPP charge, and MPP session — unified behind{' '}
-            <code className="font-mono text-[var(--text-primary)] bg-white/5 rounded px-1.5 py-0.5 text-sm">
+            <code className="font-mono text-[var(--text-primary)] bg-white/5 rounded px-1 py-0.5 text-xs sm:text-sm">
               client.pay(url)
             </code>
-            . Your agent discovers the endpoint, selects the mode, and pays. You write nothing
-            else.
+            . Your agent discovers the endpoint, selects the mode, and pays.
           </p>
 
           {/* Code block — the hero artifact */}

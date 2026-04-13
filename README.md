@@ -221,7 +221,7 @@ routedock/
 | npm package | [`@routedock/routedock`](https://www.npmjs.com/package/@routedock/routedock) | published |
 | Agent vault | `CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT` | live (testnet) |
 | Channel contract | `CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH` | live (testnet) |
-| Dashboard | — | pending deploy |
+| Dashboard | [routedock.xyz](https://www.routedock.xyz) | live |
 | Provider A | — | pending deploy |
 | Provider B | — | pending deploy |
 
