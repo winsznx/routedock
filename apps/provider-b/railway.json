@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "buildCommand": "cd ../.. && pnpm --filter @routedock/routedock build && pnpm --filter provider-b build",
+    "buildCommand": "pnpm --filter provider-b build",
     "watchPatterns": ["apps/provider-b/**", "packages/sdk/**"]
   },
   "deploy": {
