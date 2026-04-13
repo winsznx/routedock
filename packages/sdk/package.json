@@ -1,0 +1,61 @@
+{
+  "name": "@routedock/routedock",
+  "version": "0.1.0",
+  "description": "Unified payment execution layer for autonomous agents on Stellar",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/winsznx/routedock.git",
+    "directory": "packages/sdk"
+  },
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "client": ["dist/client.d.ts"],
+      "provider": ["dist/provider.d.ts"]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "require": "./dist/client.cjs"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js",
+      "require": "./dist/provider.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.6.1",
+    "@supabase/supabase-js": "^2.47.0",
+    "@x402/core": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
+    "@stellar/mpp": "^0.4.0",
+    "ajv": "^8.17.1",
+    "mppx": "^0.5.7"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.5"
+  }
+}
