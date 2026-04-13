@@ -51,17 +51,19 @@ export default async function LandingPage() {
           </div>
 
           {/* H1 */}
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold leading-[1.05] tracking-tight mb-6">
+          <h1 className="text-3xl sm:text-5xl md:text-7xl font-bold leading-[1.08] tracking-tight mb-6">
             One interface.
-            <br />
+            <br className="hidden sm:block" />
+            <span className="sm:hidden"> </span>
             Three payment modes.
-            <br />
+            <br className="hidden sm:block" />
+            <span className="sm:hidden"> </span>
             <span className="text-[var(--accent)]">Zero hardcoding.</span>
           </h1>
 
-          <p className="mx-auto max-w-2xl text-lg text-[var(--text-secondary)] mb-10 leading-relaxed">
+          <p className="mx-auto max-w-2xl text-base sm:text-lg text-[var(--text-secondary)] mb-10 leading-relaxed px-2">
             x402, MPP charge, and MPP session — unified behind{' '}
-            <code className="font-mono text-[var(--text-primary)] bg-white/5 rounded px-1.5 py-0.5">
+            <code className="font-mono text-[var(--text-primary)] bg-white/5 rounded px-1.5 py-0.5 text-sm">
               client.pay(url)
             </code>
             . Your agent discovers the endpoint, selects the mode, and pays. You write nothing
@@ -69,13 +71,13 @@ export default async function LandingPage() {
           </p>
 
           {/* Code block — the hero artifact */}
-          <div className="mx-auto max-w-2xl mb-10 text-left">
+          <div className="mx-auto max-w-2xl mb-10 text-left overflow-x-auto">
             <HeroCodeBlock />
           </div>
 
           {/* CTA row */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <code className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-subtle)] px-4 py-2.5 text-sm font-mono text-[var(--text-primary)]">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 px-2">
+            <code className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-subtle)] px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-mono text-[var(--text-primary)] max-w-full overflow-x-auto">
               npm install @routedock/routedock
             </code>
             <a
@@ -122,7 +124,7 @@ export default async function LandingPage() {
             ].map((item, i) => (
               <FadeInUp key={item.stat} delay={i * 0.06}>
                 <div className="rounded-2xl border border-[var(--status-error)]/20 bg-[var(--status-error)]/5 p-6">
-                  <div className="text-5xl font-bold text-[var(--status-error)] mb-3">
+                  <div className="text-3xl sm:text-5xl font-bold text-[var(--status-error)] mb-3">
                     {item.stat}
                   </div>
                   <div className="text-base font-semibold text-[var(--text-primary)] mb-1">

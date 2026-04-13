@@ -18,7 +18,7 @@ export function HeroCodeBlockClient({ html, code }: HeroCodeBlockClientProps) {
   }
 
   return (
-    <div className="relative rounded-xl bg-[#0D1117] border border-white/10 overflow-hidden font-mono text-sm">
+    <div className="relative rounded-xl bg-[#0D1117] border border-white/10 overflow-hidden font-mono text-xs sm:text-sm">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
         <div className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-full bg-[#FF5F56]" />
