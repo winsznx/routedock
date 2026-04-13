@@ -1,4 +1,11 @@
+import type { Metadata } from 'next'
+
 export const dynamic = 'force-dynamic'
+
+export const metadata: Metadata = {
+  title: 'Dashboard',
+  description: 'Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar testnet.',
+}
 
 import { getSupabaseServerClient } from '@/lib/supabase'
 import { DashboardHeader } from '@/components/layout/DashboardHeader'

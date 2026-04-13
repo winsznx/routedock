@@ -3,8 +3,8 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "module": "CommonJS",
-    "moduleResolution": "node"
+    "module": "ESNext",
+    "moduleResolution": "bundler"
   },
   "include": ["src/**/*"]
 }
