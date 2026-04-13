@@ -5,7 +5,7 @@
     "watchPatterns": ["apps/provider-a/**", "packages/sdk/**"]
   },
   "deploy": {
-    "startCommand": "node dist/index.js",
+    "startCommand": "node apps/provider-a/dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
