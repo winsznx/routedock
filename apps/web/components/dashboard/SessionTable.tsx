@@ -69,7 +69,7 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
       <div className="px-5 py-4 border-b border-[var(--border-default)]">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">Sessions</h2>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-[var(--border-default)] bg-[var(--bg-subtle)]">
