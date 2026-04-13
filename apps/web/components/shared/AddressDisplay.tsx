@@ -22,8 +22,11 @@ export function AddressDisplay({ address, showFull = false, label, className }: 
   const explorerBase =
     process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ?? 'https://stellar.expert/explorer/testnet'
 
+  const baseAddress = address.includes(':') ? address.split(':')[0]! : address
+  const explorerType = baseAddress.startsWith('C') ? 'contract' : 'account'
+
   async function handleCopy() {
-    await navigator.clipboard.writeText(address)
+    await navigator.clipboard.writeText(baseAddress)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -34,7 +37,7 @@ export function AddressDisplay({ address, showFull = false, label, className }: 
         <span className="text-xs text-[var(--text-muted)] mr-1">{label}</span>
       )}
       <span className="font-mono text-sm text-[var(--mono)]">
-        {showFull ? address : truncateAddress(address)}
+        {showFull ? baseAddress : truncateAddress(baseAddress)}
       </span>
       <button
         onClick={handleCopy}
@@ -48,7 +51,7 @@ export function AddressDisplay({ address, showFull = false, label, className }: 
         )}
       </button>
       <a
-        href={`${explorerBase}/account/${address}`}
+        href={`${explorerBase}/${explorerType}/${baseAddress}`}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="View on Stellar Expert"
