@@ -167,14 +167,16 @@ One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.jso
 
 ## Security Architecture
 
-| Layer | Mechanism | Enforcement |
+| Layer | Mechanism | Enforcement Point |
 |---|---|---|
-| On-chain spend cap | `__check_auth` daily cap policy | Soroban rejects, nothing broadcast |
-| Endpoint allowlist | `__check_auth` payee check | Contract rejects unknown payees |
-| Session key expiry | `SignerExpiration::Ledger` | Time-bounded autonomous access |
-| Monotonic vouchers | DB trigger + application layer | Two-layer enforcement |
-| Refund window | 17280 ledgers (~24h) | Server settles before funder reclaims |
-| Channel settlement | `ed25519_verify` on Soroban | Consensus-layer guarantee |
+| Application | voucher monotonic check | `packages/sdk/src/client/MppSessionClient.ts:currentCumulative` |
+| Application | manifest schema validation (AJV draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
+| Database | monotonic cumulative trigger | `supabase/migrations/001_init.sql:enforce_monotonic_cumulative()` |
+| Database | RLS on sessions table | `supabase/migrations/001_init.sql` |
+| Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | endpoint allowlist policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | session key expiry | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | one-way-channel signature verification | referenced contract `CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH` |
 
 ### Security Notice
 
