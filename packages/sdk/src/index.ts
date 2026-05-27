@@ -1,5 +1,8 @@
 // Full SDK — types, client, provider, store
 export * from './types.js'
+export * from './errors.js'
+export type { RetryPolicy } from './internal/retry.js'
+export { withRetry, backoffDelayMs, DEFAULT_RETRY_POLICY } from './internal/retry.js'
 export * from './client/RouteDockClient.js'
 export * from './client/ModeRouter.js'
 export * from './client/x402Client.js'

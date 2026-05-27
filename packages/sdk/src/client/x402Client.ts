@@ -4,11 +4,16 @@ import { x402Client, x402HTTPClient } from '@x402/core/client'
 import {
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
-  encodePaymentSignatureHeader,
 } from '@x402/core/http'
 import type { Network as X402Network } from '@x402/core/types'
 import type { RouteDockManifest, PaymentResult } from '../types.js'
-import { RouteDockManifestError } from '../types.js'
+import {
+  RouteDockManifestError,
+  RouteDockSignatureError,
+  httpStatusToError,
+  wrapFetchError,
+} from '../errors.js'
+import { withRetry, type RetryPolicy } from '../internal/retry.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -23,6 +28,7 @@ export class X402Client {
   constructor(
     private readonly secretKey: string,
     private readonly network: Network,
+    private readonly retryPolicy?: RetryPolicy,
   ) {
     const caip2 = CAIP2[network]
     const signer = createEd25519Signer(secretKey, caip2)
@@ -41,44 +47,69 @@ export class X402Client {
       throw new RouteDockManifestError('manifest.pricing.x402.facilitator missing')
     }
 
-    // Initial request — expect 402. Include mode hint so middleware routes correctly.
-    const init = await fetch(url, { headers: { 'X-Preferred-Mode': 'x402' } })
-    if (init.status !== 402) {
-      const data = await init.json()
-      return { data, txHash: null, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
-    }
-
-    // Parse payment requirements from header
-    const reqHeader = init.headers.get('X-Payment-Requirements')
-    if (!reqHeader) {
-      throw new RouteDockManifestError('402 response missing X-Payment-Requirements header')
-    }
-
-    const paymentRequired = decodePaymentRequiredHeader(reqHeader)
-
-    // Build signed payment payload
-    const paymentPayload = await this.httpClient.createPaymentPayload(paymentRequired)
-    const paymentHeaders = this.httpClient.encodePaymentSignatureHeader(paymentPayload)
-
-    // Re-request with payment
-    const settled = await fetch(url, { headers: paymentHeaders })
-    if (!settled.ok) {
-      throw new RouteDockManifestError(`x402 payment failed: HTTP ${settled.status}`)
-    }
-
-    // Extract settlement tx hash from response header
-    let txHash: string | null = null
-    const responseHeader = settled.headers.get('X-Payment-Response')
-    if (responseHeader) {
+    return withRetry(async () => {
+      // Initial request — expect 402. Include mode hint so middleware routes correctly.
+      let init: Response
       try {
-        const settleResponse = decodePaymentResponseHeader(responseHeader)
-        txHash = (settleResponse as { transaction?: string }).transaction ?? null
-      } catch {
-        // non-fatal — some facilitators may omit the response header
+        init = await fetch(url, { headers: { 'X-Preferred-Mode': 'x402' } })
+      } catch (err) {
+        throw wrapFetchError(err, 'x402 initial request')
       }
-    }
 
-    const data = await settled.json()
-    return { data, txHash, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
+      if (init.status !== 402) {
+        const data = await init.json()
+        return { data, txHash: null, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
+      }
+
+      const reqHeader = init.headers.get('X-Payment-Requirements')
+      if (!reqHeader) {
+        throw new RouteDockManifestError('402 response missing X-Payment-Requirements header')
+      }
+
+      const paymentRequired = decodePaymentRequiredHeader(reqHeader)
+
+      let paymentPayload
+      try {
+        paymentPayload = await this.httpClient.createPaymentPayload(paymentRequired)
+      } catch (err) {
+        throw new RouteDockSignatureError(`x402 payment signing failed: ${String(err)}`, {
+          cause: err,
+        })
+      }
+
+      const paymentHeaders = this.httpClient.encodePaymentSignatureHeader(paymentPayload)
+
+      let settled: Response
+      try {
+        settled = await fetch(url, { headers: paymentHeaders })
+      } catch (err) {
+        throw wrapFetchError(err, 'x402 settlement request')
+      }
+
+      if (!settled.ok) {
+        if (settled.status >= 500 || settled.status === 429 || settled.status === 503) {
+          throw httpStatusToError(
+            `x402 payment failed: HTTP ${settled.status}`,
+            settled.status,
+            settled,
+          )
+        }
+        throw new RouteDockManifestError(`x402 payment failed: HTTP ${settled.status}`)
+      }
+
+      let txHash: string | null = null
+      const responseHeader = settled.headers.get('X-Payment-Response')
+      if (responseHeader) {
+        try {
+          const settleResponse = decodePaymentResponseHeader(responseHeader)
+          txHash = (settleResponse as { transaction?: string }).transaction ?? null
+        } catch {
+          // non-fatal — some facilitators may omit the response header
+        }
+      }
+
+      const data = await settled.json()
+      return { data, txHash, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
+    }, this.retryPolicy)
   }
 }

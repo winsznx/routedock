@@ -1,17 +1,17 @@
-# @routedock/routedock
+# @routedock/sdk
 
 Unified payment execution layer for autonomous agents on Stellar. One SDK for x402, MPP charge, and MPP session — mode selected automatically from the provider's `routedock.json` manifest.
 
 ## Install
 
 ```bash
-npm install @routedock/routedock
+npm install @routedock/sdk
 ```
 
 ## Agent Usage
 
 ```ts
-import { RouteDockClient } from '@routedock/routedock/client'
+import { RouteDockClient } from '@routedock/sdk/client'
 import { Keypair } from '@stellar/stellar-sdk'
 
 const client = new RouteDockClient({
@@ -39,7 +39,7 @@ await session.close() // triggers on-chain settlement
 
 ```ts
 import express from 'express'
-import { routedock } from '@routedock/routedock/provider'
+import { routedock } from '@routedock/sdk/provider'
 
 const app = express()
 
@@ -106,6 +106,54 @@ app.use('/stream', routedock({
 | `onSessionOpen(channelId)` | First verified voucher in a new session | No |
 | `onVoucher(index, cumulativeAmount)` | Each verified ed25519 commitment | No |
 | `onSettled(txHash, amount, mode)` | Channel close transaction confirmed | Yes |
+
+## Error Handling
+
+All SDK failures extend `RouteDockError` with a stable `code`, `retryable` flag, and optional `cause`. Transient failures (network timeouts, facilitator 5xx, Horizon RPC errors) are retried automatically with exponential backoff unless you disable retries.
+
+```ts
+import {
+  RouteDockClient,
+  RouteDockError,
+  RouteDockFacilitatorError,
+  RouteDockManifestError,
+  RouteDockPolicyRejectError,
+} from '@routedock/sdk/client'
+
+const client = new RouteDockClient({
+  wallet: process.env.AGENT_SECRET!,
+  network: 'testnet',
+  retryPolicy: { maxAttempts: 4, baseDelayMs: 250 },
+})
+
+try {
+  const result = await client.pay('https://provider.example.com/price')
+  console.log(result.mode, result.txHash)
+} catch (err) {
+  if (err instanceof RouteDockPolicyRejectError) {
+    console.error('Spend cap exceeded:', err.reason)
+  } else if (err instanceof RouteDockFacilitatorError) {
+    console.error(`Facilitator HTTP ${err.status} (retryable=${err.retryable})`)
+  } else if (err instanceof RouteDockManifestError) {
+    console.error('Manifest or config problem:', err.message)
+  } else if (err instanceof RouteDockError) {
+    console.error(`[${err.code}] ${err.message} (retryable=${err.retryable})`)
+  } else {
+    throw err
+  }
+}
+```
+
+| Error | `retryable` | Typical cause |
+|---|---|---|
+| `RouteDockManifestError` | no | Invalid manifest, missing pricing fields |
+| `RouteDockNoSupportedModeError` | no | Provider has no compatible payment mode |
+| `RouteDockFacilitatorError` | yes | Facilitator/provider 429 or 5xx |
+| `RouteDockNetworkError` | yes | Timeouts, connection failures |
+| `RouteDockSignatureError` | no | Signing or commitment failure |
+| `RouteDockVoucherMonotonicityError` | no | Non-increasing voucher amount |
+| `RouteDockPolicyRejectError` | no | Local spend cap exceeded |
+| `RouteDockChannelStateError` | no | Channel simulate/close invariant violation |
 
 ## Mode Selection Logic
 

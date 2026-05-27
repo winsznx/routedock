@@ -4,10 +4,8 @@ import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import type { PaymentResult, SessionHandle } from '../types.js'
-import {
-  RouteDockManifestError,
-  RouteDockPolicyRejectedError,
-} from '../types.js'
+import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
+import type { RetryPolicy } from '../internal/retry.js'
 
 export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
@@ -23,6 +21,8 @@ export interface RouteDockClientConfig {
   spendCap?: SpendCap
   /** Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session. */
   commitmentSecret?: string | undefined
+  /** Retry policy for transient failures (network, facilitator 5xx). */
+  retryPolicy?: RetryPolicy
 }
 
 export class RouteDockClient {
@@ -30,6 +30,7 @@ export class RouteDockClient {
   private readonly network: 'testnet' | 'mainnet'
   private readonly spendCap: SpendCap | undefined
   private readonly commitmentSecret: string | undefined
+  private readonly retryPolicy: RetryPolicy | undefined
 
   /** Local daily accumulator keyed by YYYY-MM-DD */
   private dailySpend: { date: string; total: number } = { date: '', total: 0 }
@@ -44,11 +45,12 @@ export class RouteDockClient {
     this.network = config.network
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
+    this.retryPolicy = config.retryPolicy
 
     const secretKey = this.keypair.secret()
-    this.x402 = new X402Client(secretKey, this.network)
-    this.charge = new MppChargeClient(this.keypair, this.network)
-    this.session = new MppSessionClient(this.keypair, this.network)
+    this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
+    this.charge = new MppChargeClient(this.keypair, this.network, this.retryPolicy)
+    this.session = new MppSessionClient(this.keypair, this.network, this.retryPolicy)
   }
 
   /**
@@ -57,7 +59,7 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
     const mode = selectMode(manifest, options)
 
     let result: PaymentResult
@@ -87,7 +89,7 @@ export class RouteDockClient {
    */
   async openSession(url: string): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
 
     if (!manifest.modes.includes('mpp-session')) {
       throw new RouteDockManifestError(
@@ -116,7 +118,7 @@ export class RouteDockClient {
     const amountNum = parseFloat(amount)
     const capNum = parseFloat(this.spendCap.daily)
     if (this.dailySpend.total + amountNum > capNum) {
-      throw new RouteDockPolicyRejectedError('local_daily_cap_exceeded')
+      throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
     this.dailySpend.total += amountNum

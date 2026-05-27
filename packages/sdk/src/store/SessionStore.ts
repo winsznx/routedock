@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SessionState } from '../types.js'
-import { RouteDockSessionError } from '../types.js'
+import {
+  RouteDockVoucherMonotonicityError,
+  RouteDockNetworkError,
+} from '../errors.js'
 
 // ── Interface ──────────────────────────────────────────────────────────────────
 
@@ -23,7 +26,9 @@ export class SupabaseSessionStore implements SessionStore {
       .eq('channel_id', channelId)
       .maybeSingle()
 
-    if (error) throw new RouteDockSessionError(`SessionStore.get failed: ${error.message}`)
+    if (error) {
+      throw new RouteDockNetworkError(`SessionStore.get failed: ${error.message}`)
+    }
     if (!data) return null
 
     return {
@@ -40,14 +45,12 @@ export class SupabaseSessionStore implements SessionStore {
   }
 
   async upsert(channelId: string, state: SessionState): Promise<void> {
-    // Application-level monotonic invariant check — catches non-increasing
-    // amounts before hitting the DB trigger, giving a typed error.
     const existing = await this.get(channelId)
     if (existing) {
       const prev = parseFloat(existing.cumulative_amount)
       const next = parseFloat(state.cumulative_amount)
       if (next <= prev) {
-        throw new RouteDockSessionError(
+        throw new RouteDockVoucherMonotonicityError(
           `cumulative_amount must be strictly increasing: ${next} <= ${prev}`,
         )
       }
@@ -69,13 +72,12 @@ export class SupabaseSessionStore implements SessionStore {
     )
 
     if (error) {
-      // DB trigger will raise 'cumulative_amount must be strictly increasing'
       if (error.message.includes('strictly increasing')) {
-        throw new RouteDockSessionError(
+        throw new RouteDockVoucherMonotonicityError(
           `cumulative_amount must be strictly increasing (DB): ${error.message}`,
         )
       }
-      throw new RouteDockSessionError(`SessionStore.upsert failed: ${error.message}`)
+      throw new RouteDockNetworkError(`SessionStore.upsert failed: ${error.message}`)
     }
   }
 
@@ -85,6 +87,8 @@ export class SupabaseSessionStore implements SessionStore {
       .update({ status: 'closed', updated_at: new Date().toISOString() })
       .eq('channel_id', channelId)
 
-    if (error) throw new RouteDockSessionError(`SessionStore.close failed: ${error.message}`)
+    if (error) {
+      throw new RouteDockNetworkError(`SessionStore.close failed: ${error.message}`)
+    }
   }
 }
