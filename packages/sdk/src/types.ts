@@ -121,45 +121,17 @@ export interface SessionState {
   settlement_tx_hash: string | null
 }
 
-// ── Error hierarchy ────────────────────────────────────────────────────────────
-
-export class RouteDockError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'RouteDockError'
-  }
-}
-
-/** Manifest fetch failed, schema invalid, or required fields missing */
-export class RouteDockManifestError extends RouteDockError {
-  constructor(message: string) {
-    super(message)
-    this.name = 'RouteDockManifestError'
-  }
-}
-
-/** No payment mode in the manifest is supported by this client */
-export class RouteDockNoSupportedModeError extends RouteDockError {
-  constructor(message: string) {
-    super(message)
-    this.name = 'RouteDockNoSupportedModeError'
-  }
-}
-
-/** Session invariant violated (e.g. non-monotonic voucher amount) */
-export class RouteDockSessionError extends RouteDockError {
-  constructor(message: string) {
-    super(message)
-    this.name = 'RouteDockSessionError'
-  }
-}
-
-/** Local spend cap or on-chain policy rejected the payment */
-export class RouteDockPolicyRejectedError extends RouteDockError {
-  readonly reason: string
-  constructor(reason: string) {
-    super(`Payment rejected by policy: ${reason}`)
-    this.name = 'RouteDockPolicyRejectedError'
-    this.reason = reason
-  }
-}
+// Error types live in ./errors.js — re-exported from package entry points.
+export {
+  RouteDockError,
+  RouteDockManifestError,
+  RouteDockNoSupportedModeError,
+  RouteDockFacilitatorError,
+  RouteDockNetworkError,
+  RouteDockSignatureError,
+  RouteDockVoucherMonotonicityError,
+  RouteDockPolicyRejectError,
+  RouteDockChannelStateError,
+  RouteDockPolicyRejectedError,
+  RouteDockSessionError,
+} from './errors.js'
