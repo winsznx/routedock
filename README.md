@@ -51,6 +51,25 @@ graph LR
 
 ---
 
+## Security Architecture
+
+| Layer | Mechanism | Enforcement Point |
+|---|---|---|
+| Application | voucher monotonic check | `packages/sdk/src/client/MppSessionClient.ts:currentCumulative` |
+| Application | manifest schema validation (AJV draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
+| Database | monotonic cumulative trigger | `supabase/migrations/*_sessions.sql:enforce_monotonic_cumulative()` |
+| Database | RLS on sessions table | `supabase/migrations/*_rls.sql` |
+| Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | endpoint allowlist policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | session key expiry | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | one-way-channel signature verification | [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH) |
+
+### Security Notice
+
+The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
+
+---
+
 ## Live Testnet Transactions
 
 All produced by a single autonomous agent run against two live provider services. No mocks.
@@ -162,23 +181,6 @@ app.use('/price', routedock({
 ```
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
-
----
-
-## Security Architecture
-
-| Layer | Mechanism | Enforcement |
-|---|---|---|
-| On-chain spend cap | `__check_auth` daily cap policy | Soroban rejects, nothing broadcast |
-| Endpoint allowlist | `__check_auth` payee check | Contract rejects unknown payees |
-| Session key expiry | `SignerExpiration::Ledger` | Time-bounded autonomous access |
-| Monotonic vouchers | DB trigger + application layer | Two-layer enforcement |
-| Refund window | 17280 ledgers (~24h) | Server settles before funder reclaims |
-| Channel settlement | `ed25519_verify` on Soroban | Consensus-layer guarantee |
-
-### Security Notice
-
-The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
 
 ---
 
