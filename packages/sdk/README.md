@@ -37,6 +37,8 @@ await session.close() // triggers on-chain settlement
 
 ## Provider Usage
 
+### Express
+
 ```ts
 import express from 'express'
 import { routedock } from '@routedock/routedock/provider'
@@ -57,6 +59,35 @@ app.use('/price', routedock({
   },
 }))
 ```
+
+### Hono (edge runtimes)
+
+For Cloudflare Workers, Bun, or Deno Deploy, use the Hono adapter. It accepts the identical config object and returns a Hono `MiddlewareHandler`:
+
+```ts
+import { Hono } from 'hono'
+import { routedockHono } from '@routedock/routedock/provider/hono'
+
+const app = new Hono()
+
+app.use('/price', routedockHono({
+  modes: ['x402', 'mpp-charge'],
+  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+  asset: 'USDC',
+  assetContract: USDC_ASSET_CONTRACT,
+  payee: STELLAR_PAYEE_ADDRESS,
+  network: 'testnet',
+  payeeSecretKey: STELLAR_PAYEE_SECRET,
+  manifest,
+  onSettled: async (txHash, amount, mode) => {
+    console.log(`settled: ${mode} ${amount} USDC — ${txHash}`)
+  },
+}))
+
+app.get('/price', (c) => c.json({ price: '1.2345' }))
+```
+
+`hono` is an optional peer dependency (`npm install hono`). For `mpp-session` sessions on edge runtimes, supply a durable `store` (e.g. `Store.cloudflare(env.KV)`) — the in-memory default does not survive between isolate invocations. The settlement path pulls in `@stellar/stellar-sdk`, so enable `nodejs_compat` on Cloudflare Workers.
 
 ## Session Lifecycle Hooks
 
