@@ -145,6 +145,8 @@ The Supabase `providers` table indexes manifests with `pg_trgm` trigram search â
 
 ## Provider Integration
 
+### Express
+
 ```ts
 import { routedock } from '@routedock/routedock/provider'
 
@@ -160,6 +162,32 @@ app.use('/price', routedock({
   manifest,
 }))
 ```
+
+### Hono (Cloudflare Workers, Bun, Deno)
+
+Same config surface, Hono middleware signature â€” for edge runtimes where Express's Node.js dependencies don't run:
+
+```ts
+import { Hono } from 'hono'
+import { routedockHono } from '@routedock/routedock/provider/hono'
+
+const app = new Hono()
+
+app.use('/price', routedockHono({
+  modes: ['x402', 'mpp-charge'],
+  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+  asset: 'USDC',
+  assetContract: USDC_ASSET_CONTRACT,
+  payee: STELLAR_PAYEE_ADDRESS,
+  payeeSecretKey: STELLAR_PAYEE_SECRET,
+  network: 'testnet',
+  manifest,
+}))
+
+app.get('/price', (c) => c.json({ price: '1.2345' }))
+```
+
+`hono` is an optional peer dependency. For `mpp-session` on edge runtimes, pass a durable `store` (e.g. `Store.cloudflare(env.KV)` from `@stellar/mpp/channel/server`) since the in-memory default does not persist across isolate invocations. The `@stellar/mpp` settlement path uses `@stellar/stellar-sdk`, so enable `nodejs_compat` on Cloudflare Workers.
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
 

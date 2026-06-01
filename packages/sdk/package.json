@@ -15,7 +15,8 @@
   "typesVersions": {
     "*": {
       "client": ["dist/client.d.ts"],
-      "provider": ["dist/provider.d.ts"]
+      "provider": ["dist/provider.d.ts"],
+      "provider/hono": ["dist/provider/hono.d.ts"]
     }
   },
   "exports": {
@@ -33,12 +34,18 @@
       "types": "./dist/provider.d.ts",
       "import": "./dist/provider.js",
       "require": "./dist/provider.cjs"
+    },
+    "./provider/hono": {
+      "types": "./dist/provider/hono.d.ts",
+      "import": "./dist/provider/hono.js",
+      "require": "./dist/provider/hono.cjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx src/tests/smoke.test.ts && tsx src/provider/__tests__/hono.test.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1",
@@ -50,12 +57,20 @@
     "mppx": "^0.5.7"
   },
   "peerDependencies": {
-    "express": "^4.18.0"
+    "express": "^4.18.0",
+    "hono": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
+    "hono": "^4.12.12",
     "tsup": "^8.0.0",
+    "tsx": "^4.8.1",
     "typescript": "^5.4.5"
   }
 }
