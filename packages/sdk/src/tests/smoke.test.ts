@@ -99,7 +99,7 @@ function startTestServer(
 
   try {
     const { fetchManifest } = await import('../client/ModeRouter.js')
-    const { RouteDockManifestError: ManifestError } = await import('../types.js')
+    const { RouteDockManifestError: ManifestError } = await import('../errors.js')
 
     let threw = false
     try {
@@ -125,7 +125,7 @@ function startTestServer(
   // Use an in-memory store implementation to test monotonic invariant
   // without a real Supabase connection.
 
-  const { RouteDockSessionError } = await import('../types.js')
+  const { RouteDockVoucherMonotonicityError } = await import('../errors.js')
 
   // Build a minimal in-memory SessionStore-compatible implementation
   const sessions = new Map<string, import('../types.js').SessionState>()
@@ -139,7 +139,7 @@ function startTestServer(
         const prev = parseFloat(existing.cumulative_amount)
         const next = parseFloat(state.cumulative_amount)
         if (next <= prev) {
-          throw new RouteDockSessionError(
+          throw new RouteDockVoucherMonotonicityError(
             `cumulative_amount must be strictly increasing: ${next} <= ${prev}`,
           )
         }
@@ -177,8 +177,8 @@ function startTestServer(
   } catch (err) {
     threw = true
     assert.ok(
-      err instanceof RouteDockSessionError,
-      `should throw RouteDockSessionError, got ${String(err)}`,
+      err instanceof RouteDockVoucherMonotonicityError,
+      `should throw RouteDockVoucherMonotonicityError, got ${String(err)}`,
     )
   }
   assert.ok(threw, 'equal cumulative amount should be rejected')
@@ -189,7 +189,7 @@ function startTestServer(
     await memStore.upsert('test-channel-1', { ...baseState, cumulative_amount: '0.0010000' })
   } catch (err) {
     threw = true
-    assert.ok(err instanceof RouteDockSessionError)
+    assert.ok(err instanceof RouteDockVoucherMonotonicityError)
   }
   assert.ok(threw, 'lower cumulative amount should be rejected')
 
@@ -203,15 +203,19 @@ function startTestServer(
     RouteDockError,
     RouteDockManifestError,
     RouteDockNoSupportedModeError,
-    RouteDockSessionError,
-    RouteDockPolicyRejectedError,
-  } = await import('../types.js')
+    RouteDockFacilitatorError,
+    RouteDockNetworkError,
+    RouteDockVoucherMonotonicityError,
+    RouteDockPolicyRejectError,
+  } = await import('../errors.js')
 
-  const errors = [
+  const errors: RouteDockError[] = [
     new RouteDockManifestError('test'),
     new RouteDockNoSupportedModeError('test'),
-    new RouteDockSessionError('test'),
-    new RouteDockPolicyRejectedError('test'),
+    new RouteDockFacilitatorError('test', 503),
+    new RouteDockNetworkError('test'),
+    new RouteDockVoucherMonotonicityError('test'),
+    new RouteDockPolicyRejectError('local_daily_cap_exceeded'),
   ]
 
   for (const err of errors) {
@@ -219,7 +223,11 @@ function startTestServer(
     assert.ok(err instanceof Error, `${err.name} should be instance of Error`)
   }
 
-  const policyErr = new RouteDockPolicyRejectedError('local_daily_cap_exceeded')
+  assert.equal(new RouteDockManifestError('x').retryable, false)
+  assert.equal(new RouteDockFacilitatorError('x', 503).retryable, true)
+  assert.equal(new RouteDockNetworkError('x').retryable, true)
+
+  const policyErr = new RouteDockPolicyRejectError('local_daily_cap_exceeded')
   assert.equal(policyErr.reason, 'local_daily_cap_exceeded')
 
   console.log('✓ Test 4: Error subclass hierarchy PASSED')

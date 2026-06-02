@@ -16,8 +16,12 @@ import type {
 } from '../types.js'
 import {
   RouteDockManifestError,
-  RouteDockSessionError,
-} from '../types.js'
+  RouteDockChannelStateError,
+  RouteDockSignatureError,
+  httpStatusToError,
+  wrapFetchError,
+} from '../errors.js'
+import { withRetry, type RetryPolicy } from '../internal/retry.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 
@@ -25,6 +29,7 @@ export class MppSessionClient {
   constructor(
     private readonly keypair: Keypair,
     private readonly network: 'testnet' | 'mainnet',
+    private readonly retryPolicy?: RetryPolicy,
   ) {}
 
   async openSession(
@@ -67,6 +72,7 @@ export class MppSessionClient {
     })
 
     const openTxHash = channelContract
+    const retryPolicy = this.retryPolicy
 
     const handle: SessionHandle = {
       channelId: channelContract,
@@ -74,68 +80,141 @@ export class MppSessionClient {
 
       async *stream(): AsyncIterable<unknown> {
         while (true) {
-          let resp: globalThis.Response | null = null
-          for (let attempt = 0; attempt < 3; attempt++) {
+          const data = await withRetry(async () => {
+            let resp: Response
             try {
               resp = await mppx.fetch(url)
-              if (resp.ok) break
-              resp = null
-            } catch {
-              if (attempt === 2) throw new RouteDockSessionError('Voucher request failed after 3 retries')
-              await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+            } catch (err) {
+              throw wrapFetchError(err, 'Voucher request')
             }
-          }
-          if (!resp || !resp.ok) {
-            throw new RouteDockSessionError(`Voucher request failed: HTTP ${resp?.status ?? 'unknown'}`)
-          }
+
+            if (!resp.ok) {
+              if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
+                throw httpStatusToError(
+                  `Voucher request failed: HTTP ${resp.status}`,
+                  resp.status,
+                  resp,
+                )
+              }
+              throw new RouteDockChannelStateError(
+                `Voucher request failed: HTTP ${resp.status}`,
+              )
+            }
+
+            return resp.json()
+          }, retryPolicy)
+
           vouchersIssued++
-          yield await resp.json()
+          yield data
         }
       },
 
       async close(): Promise<SessionCloseResult> {
-        const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
+          await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelContract)
         const passphrase = 'Test SDF Network ; September 2015'
 
-        const account = await server.getAccount(agentPublicKey)
-        const simTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
-          .addOperation(contract.call('prepare_commitment', nativeToScVal(currentCumulative, { type: 'i128' })))
-          .setTimeout(30)
-          .build()
-        const simResult = await server.simulateTransaction(simTx)
+        const account = await withRetry(async () => {
+          try {
+            return await server.getAccount(agentPublicKey)
+          } catch (err) {
+            throw wrapFetchError(err, 'Horizon getAccount')
+          }
+        }, retryPolicy)
+
+        const simResult = await withRetry(async () => {
+          try {
+            const simTx = new TransactionBuilder(account, {
+              fee: BASE_FEE,
+              networkPassphrase: passphrase,
+            })
+              .addOperation(
+                contract.call(
+                  'prepare_commitment',
+                  nativeToScVal(currentCumulative, { type: 'i128' }),
+                ),
+              )
+              .setTimeout(30)
+              .build()
+            return await server.simulateTransaction(simTx)
+          } catch (err) {
+            throw wrapFetchError(err, 'prepare_commitment RPC')
+          }
+        }, retryPolicy)
+
         if (rpcMod.Api.isSimulationError(simResult)) {
-          throw new RouteDockSessionError(`prepare_commitment simulation failed: ${simResult.error}`)
-        }
-        const commitmentBytes = (simResult as { result?: { retval?: { bytes: () => Buffer } } }).result?.retval?.bytes()
-        if (!commitmentBytes) throw new RouteDockSessionError('prepare_commitment returned no bytes')
-
-        const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
-
-        const closeResp = await fetch(url, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: currentCumulative.toString(),
-            signature: Buffer.from(signature).toString('hex'),
-          }),
-        })
-
-        if (!closeResp.ok) {
-          throw new RouteDockSessionError(`Channel close failed: HTTP ${closeResp.status}`)
+          throw new RouteDockChannelStateError(
+            `prepare_commitment simulation failed: ${simResult.error}`,
+          )
         }
 
-        const closeData = (await closeResp.json()) as { closeTxHash?: string }
-        const closeTxHash = closeData.closeTxHash ?? null
-
-        if (!closeTxHash) {
-          throw new RouteDockSessionError('Channel close response missing closeTxHash')
+        const commitmentBytes = (
+          simResult as { result?: { retval?: { bytes: () => Buffer } } }
+        ).result?.retval?.bytes()
+        if (!commitmentBytes) {
+          throw new RouteDockChannelStateError('prepare_commitment returned no bytes')
         }
+
+        let signature: Buffer
+        try {
+          signature = commitmentKey.sign(Buffer.from(commitmentBytes))
+        } catch (err) {
+          throw new RouteDockSignatureError('Channel close commitment signing failed', {
+            cause: err,
+          })
+        }
+
+        const closeData = await withRetry(async () => {
+          let closeResp: Response
+          try {
+            closeResp = await fetch(url, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                amount: currentCumulative.toString(),
+                signature: Buffer.from(signature).toString('hex'),
+              }),
+            })
+          } catch (err) {
+            throw wrapFetchError(err, 'Channel close request')
+          }
+
+          if (!closeResp.ok) {
+            if (
+              closeResp.status >= 500 ||
+              closeResp.status === 429 ||
+              closeResp.status === 503
+            ) {
+              throw httpStatusToError(
+                `Channel close failed: HTTP ${closeResp.status}`,
+                closeResp.status,
+                closeResp,
+              )
+            }
+            throw new RouteDockChannelStateError(
+              `Channel close failed: HTTP ${closeResp.status}`,
+            )
+          }
+
+          const body = (await closeResp.json()) as { closeTxHash?: string }
+          const closeTxHash = body.closeTxHash ?? null
+          if (!closeTxHash) {
+            throw new RouteDockChannelStateError(
+              'Channel close response missing closeTxHash',
+            )
+          }
+          return { closeTxHash, body }
+        }, retryPolicy)
 
         const totalPaid = (Number(currentCumulative) / 1e7).toFixed(7)
-        return { closeTxHash, totalPaid, vouchersIssued }
+        return {
+          closeTxHash: closeData.closeTxHash,
+          totalPaid,
+          vouchersIssued,
+        }
       },
     }
 
