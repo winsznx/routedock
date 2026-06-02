@@ -6,7 +6,8 @@
     "build": "tsc",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "tsx __tests__/e2e.test.ts"
   },
   "dependencies": {
     "@routedock/routedock": "workspace:*",
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.8.1",
     "typescript": "^5.4.5"
   }
 }
