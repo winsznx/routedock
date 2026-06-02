@@ -22,6 +22,8 @@
       ],
       "react": [
         "dist/react.d.ts"
+      "provider/hono": [
+        "dist/provider/hono.d.ts"
       ]
     }
   },
@@ -45,6 +47,10 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
+    "./provider/hono": {
+      "types": "./dist/provider/hono.d.ts",
+      "import": "./dist/provider/hono.js",
+      "require": "./dist/provider/hono.cjs"
     }
   },
   "scripts": {
@@ -52,6 +58,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
+    "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts"
   },
   "dependencies": {
     "@stellar/mpp": "^0.4.0",
@@ -73,6 +80,7 @@
     "react": {
       "optional": true
     }
+    "hono": ">=4.0.0"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^15.11.7",
@@ -83,6 +91,7 @@
     "@types/react": "^18.3.30",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "hono": "^4.12.23",
     "tsup": "^8.0.0",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5",
