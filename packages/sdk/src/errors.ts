@@ -8,6 +8,8 @@ export type RouteDockErrorCode =
   | 'VOUCHER_MONOTONICITY'
   | 'POLICY_REJECT'
   | 'CHANNEL_STATE'
+  | 'DISPUTE'
+  | 'REFUND_WINDOW'
 
 export interface RouteDockErrorOptions {
   cause?: unknown
@@ -108,6 +110,22 @@ export class RouteDockChannelStateError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'CHANNEL_STATE', false, options)
     this.name = 'RouteDockChannelStateError'
+  }
+}
+
+/** Channel dispute operation failed (refund request, settlement, or contract invariant). */
+export class RouteDockDisputeError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'DISPUTE', false, options)
+    this.name = 'RouteDockDisputeError'
+  }
+}
+
+/** Refund window has not yet opened or has already expired. */
+export class RouteDockRefundWindowError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'REFUND_WINDOW', false, options)
+    this.name = 'RouteDockRefundWindowError'
   }
 }
 

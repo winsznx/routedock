@@ -7,8 +7,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
-    "lib": ["ES2022"],
-    "target": "ES2022"
+    "lib": ["ES2022", "DOM"],
+    "target": "ES2022",
+    "jsx": "react-jsx"
   },
   "include": ["src/**/*"]
 }

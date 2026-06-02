@@ -107,6 +107,98 @@ app.use('/stream', routedock({
 | `onVoucher(index, cumulativeAmount)` | Each verified ed25519 commitment | No |
 | `onSettled(txHash, amount, mode)` | Channel close transaction confirmed | Yes |
 
+## React Integration
+
+`@routedock/sdk/react` provides hooks for client construction, payments, sessions, and live tx log subscription. Wrap your app with `RouteDockProvider`:
+
+```tsx
+import { RouteDockProvider, useRouteDockClient } from '@routedock/sdk/react'
+import { createClient } from '@supabase/supabase-js'
+
+function App({ children }: { children: React.ReactNode }) {
+  const client = useRouteDockClient({
+    wallet: process.env.NEXT_PUBLIC_AGENT_SECRET!,
+    network: 'testnet',
+    spendCap: { daily: '1.00', asset: 'USDC' },
+  })
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  )
+  return (
+    <RouteDockProvider client={client} supabase={supabase}>
+      {children}
+    </RouteDockProvider>
+  )
+}
+```
+
+### `usePay(url, options?)`
+
+```tsx
+import { usePay } from '@routedock/sdk/react'
+
+function PriceButton() {
+  const { pay, result, loading, error } = usePay('https://provider.example.com/price')
+  if (error) return <span>Error: {error.message}</span>
+  return (
+    <button onClick={pay} disabled={loading}>
+      {loading ? 'Paying…' : result ? `Paid: ${result.txHash}` : 'Pay 0.001 USDC'}
+    </button>
+  )
+}
+```
+
+### `useSession(url)`
+
+```tsx
+import { useEffect } from 'react'
+import { useSession } from '@routedock/sdk/react'
+
+function StreamingFeed() {
+  const { open, close, status, vouchers, cumulative } = useSession(
+    'https://provider.example.com/stream/orderbook',
+  )
+  useEffect(() => { void open() }, [])
+  return (
+    <div>
+      <p>Status: {status} — vouchers: {vouchers} — paid: {cumulative} USDC</p>
+      <button onClick={close} disabled={status !== 'open'}>Close & settle</button>
+    </div>
+  )
+}
+```
+
+The hook automatically fires `session.close()` in the background on unmount when status is `open` (best-effort settlement).
+
+### `useTxLog(filter?)`
+
+```tsx
+import { useTxLog } from '@routedock/sdk/react'
+
+function ActivityFeed({ channelId }: { channelId: string }) {
+  const txLog = useTxLog({ channelId, limit: 25 })
+  return (
+    <ul>
+      {txLog.map((row) => (
+        <li key={row.id}>{row.mode} — {row.amount} USDC — {row.tx_hash}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+| Hook | Returns | Requires from `RouteDockProvider` |
+|---|---|---|
+| `useRouteDockClient(config)` | Memoized `RouteDockClient` | — (creator hook) |
+| `usePay(url, options?)` | `{ pay, result, loading, error }` | `client` |
+| `useSession(url)` | `{ session, status, vouchers, cumulative, error, open, close }` | `client` (with `commitmentSecret`) |
+| `useTxLog(filter?)` | `TxLogRow[]` (newest first) | `supabase` |
+
+React is a peer dependency — install `react@^18` (or `^19`) in your app.
+
+---
+
 ## Error Handling
 
 All SDK failures extend `RouteDockError` with a stable `code`, `retryable` flag, and optional `cause`. Transient failures (network timeouts, facilitator 5xx, Horizon RPC errors) are retried automatically with exponential backoff unless you disable retries.
