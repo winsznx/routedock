@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 6,
+    "address": 5,
     "nonce": 0
   },
   "auth": [
@@ -54,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "d44040938228fc85ba2c80de045a0cb82d4678b80a6908237a2240e2f91e0d5c"
+                          "bytes": "b6a8d1e653e6c808c0ba943f4a6f1fed061488a01943faa4e492e85e867dc308"
                         }
                       },
                       {
