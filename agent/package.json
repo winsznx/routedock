@@ -11,7 +11,7 @@
     "recover-sessions": "ts-node-dev --transpile-only src/recover-sessions.ts"
   },
   "dependencies": {
-    "@routedock/routedock": "workspace:*",
+    "@routedock/sdk": "workspace:*",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0"
   },

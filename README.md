@@ -192,6 +192,8 @@ The Supabase `providers` table indexes manifests with `pg_trgm` trigram search â
 
 ## Provider Integration
 
+### Express
+
 ```ts
 import { routedock } from '@routedock/routedock/provider'
 
@@ -206,6 +208,29 @@ app.use('/price', routedock({
   facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
   manifest,
 }))
+```
+
+### Hono (Cloudflare Workers, Bun, Deno Deploy)
+
+```ts
+import { Hono } from 'hono'
+import { routedockHono } from '@routedock/sdk/provider/hono'
+
+const app = new Hono()
+
+app.use('/price', routedockHono({
+  modes: ['x402', 'mpp-charge'],
+  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+  asset: 'USDC',
+  assetContract: process.env.USDC_ASSET_CONTRACT,
+  payee: process.env.STELLAR_PAYEE_ADDRESS,
+  payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
+  network: process.env.STELLAR_NETWORK,
+  facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
+  manifest,
+}))
+
+export default app
 ```
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
