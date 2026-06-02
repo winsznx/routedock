@@ -109,6 +109,8 @@ pnpm --filter @routedock/provider-a dev
 
 Full demo (both providers + agent): see [`docs/AGENT_RUN_CHECKLIST.md`](docs/AGENT_RUN_CHECKLIST.md).
 
+Mainnet rollout: see [`docs/MAINNET_DEPLOYMENT.md`](docs/MAINNET_DEPLOYMENT.md).
+
 ---
 
 ## Examples
