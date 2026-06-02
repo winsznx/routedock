@@ -92,6 +92,22 @@ Full demo (both providers + agent): see [`docs/AGENT_RUN_CHECKLIST.md`](docs/AGE
 
 ---
 
+## Examples
+
+| Example | What it shows |
+|---|---|
+| [`examples/streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session to Provider B's `/stream/orderbook`, consumes 100 voucher-backed orderbook updates, prints best bid/ask, spread, and mid price, then closes the session and logs the settlement tx hash. |
+
+Run it with:
+
+```bash
+cd examples/streaming-orderbook-agent
+pnpm install
+pnpm start
+```
+
+---
+
 ## Three Payment Modes
 
 ### x402 — Pay per request
