@@ -13,11 +13,13 @@ import type {
   RouteDockManifest,
   SessionHandle,
   SessionCloseResult,
+  DisputeStatus,
 } from '../types.js'
 import {
   RouteDockManifestError,
   RouteDockChannelStateError,
   RouteDockSignatureError,
+  RouteDockDisputeError,
   httpStatusToError,
   wrapFetchError,
 } from '../errors.js'
@@ -52,6 +54,7 @@ export class MppSessionClient {
     const commitmentKey = Keypair.fromSecret(commitmentSecret)
     const channelContract = pricing.channel_contract
     const agentPublicKey = this.keypair.publicKey()
+    const agentKeypair = this.keypair
 
     let currentCumulative = 0n
     let vouchersIssued = 0
@@ -214,6 +217,123 @@ export class MppSessionClient {
           closeTxHash: closeData.closeTxHash,
           totalPaid,
           vouchersIssued,
+        }
+      },
+
+      async requestRefund(): Promise<string> {
+        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const server = new rpcMod.Server(rpcUrl)
+        const contract = new Contract(channelContract)
+        const passphrase = 'Test SDF Network ; September 2015'
+
+        try {
+          const account = await server.getAccount(agentPublicKey)
+          const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(contract.call('request_refund'))
+            .setTimeout(30)
+            .build()
+
+          tx.sign(agentKeypair)
+          const simResult = await server.simulateTransaction(tx)
+          if (rpcMod.Api.isSimulationError(simResult)) {
+            throw new RouteDockDisputeError(`request_refund simulation failed: ${(simResult as any).error}`)
+          }
+
+          const result = await server.sendTransaction(tx)
+          if (!result.hash) {
+            throw new RouteDockDisputeError('Refund request transaction not sent')
+          }
+
+          return result.hash
+        } catch (err) {
+          if (err instanceof RouteDockDisputeError) throw err
+          throw new RouteDockDisputeError(`Failed to request refund: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      },
+
+      async settleWithLatestVoucher(): Promise<string> {
+        const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const server = new rpcMod.Server(rpcUrl)
+        const contract = new Contract(channelContract)
+        const passphrase = 'Test SDF Network ; September 2015'
+
+        try {
+          const account = await server.getAccount(agentPublicKey)
+          const simTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(contract.call('prepare_commitment', nativeToScVal(currentCumulative, { type: 'i128' })))
+            .setTimeout(30)
+            .build()
+          const simResult = await server.simulateTransaction(simTx)
+          if (rpcMod.Api.isSimulationError(simResult)) {
+            throw new RouteDockDisputeError(`prepare_commitment simulation failed: ${(simResult as any).error}`)
+          }
+          const commitmentBytes = (simResult as any).result?.retval?.bytes()
+          if (!commitmentBytes) throw new RouteDockDisputeError('prepare_commitment returned no bytes')
+
+          const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
+
+          const settleTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(
+              contract.call(
+                'settle_with_signature',
+                nativeToScVal(currentCumulative, { type: 'i128' }),
+                nativeToScVal(Buffer.from(signature)),
+              ),
+            )
+            .setTimeout(30)
+            .build()
+
+          settleTx.sign(agentKeypair)
+          const settleResult = await server.sendTransaction(settleTx)
+          if (!settleResult.hash) {
+            throw new RouteDockDisputeError('Settlement transaction not sent')
+          }
+
+          return settleResult.hash
+        } catch (err) {
+          if (err instanceof RouteDockDisputeError) throw err
+          throw new RouteDockDisputeError(`Failed to settle with latest voucher: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      },
+
+      async getDisputeStatus(): Promise<DisputeStatus> {
+        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const server = new rpcMod.Server(rpcUrl)
+        const contract = new Contract(channelContract)
+        const passphrase = 'Test SDF Network ; September 2015'
+
+        try {
+          const account = await server.getAccount(agentPublicKey)
+          const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(contract.call('get_channel_state'))
+            .setTimeout(30)
+            .build()
+
+          const simResult = await server.simulateTransaction(tx)
+          if (rpcMod.Api.isSimulationError(simResult)) {
+            throw new RouteDockChannelStateError(`Failed to query channel state: ${(simResult as any).error}`)
+          }
+
+          const retval = (simResult as any).result?.retval
+          if (!retval) {
+            throw new RouteDockChannelStateError('No channel state returned')
+          }
+
+          if (typeof retval === 'object' && retval !== null) {
+            const status = (retval as Record<string, unknown>).status
+            if (status === 'open') return 'open'
+            if (status === 'in_refund_window') return 'in-refund-window'
+            if (status === 'refundable') return 'refundable'
+            if (status === 'settled') return 'settled'
+          }
+
+          return 'open'
+        } catch (err) {
+          if (err instanceof RouteDockChannelStateError) throw err
+          throw new RouteDockChannelStateError(`Failed to get dispute status: ${err instanceof Error ? err.message : String(err)}`)
         }
       },
     }

@@ -166,6 +166,31 @@ The `ModeRouter` uses this decision tree (deterministic, no randomness):
 
 Override with `{ forceMode: 'x402' }` to bypass auto-selection.
 
+## Dispute Resolution
+
+For `mpp-session` mode, the session handle exposes three methods to handle server unavailability or crashes:
+
+```ts
+const session = await client.openSession('https://provider.example.com/stream')
+
+// Check the current dispute status (open, in-refund-window, refundable, settled)
+const status = await session.getDisputeStatus()
+
+// If server is unresponsive, request a refund (starts the refund window)
+const refundTxHash = await session.requestRefund()
+
+// Server-side: settle with the latest signed voucher before refund window expires
+const settleTxHash = await session.settleWithLatestVoucher()
+```
+
+| Method | Purpose | Requires | Returns |
+|--------|---------|----------|---------|
+| `getDisputeStatus()` | Query channel state | None | `'open' \| 'in-refund-window' \| 'refundable' \| 'settled'` |
+| `requestRefund()` | Initiate refund process | Signed agent keypair | Transaction hash (string) |
+| `settleWithLatestVoucher()` | Server counter-settle | Latest voucher signature | Transaction hash (string) |
+
+Raises: `RouteDockDisputeError`, `RouteDockChannelStateError`, `RouteDockRefundWindowError`
+
 ## Security
 
 The `one-way-channel` Soroban contract wrapped by `MppSessionClient` is **unaudited** (`stellar-experimental/one-way-channel`). Safe defaults are enforced: 17280 ledger refund window, monotonic cumulative enforcement at application, database, and contract layers. Production mainnet use should await a formal audit.

@@ -143,6 +143,16 @@ Agent sends a payment intent via the Stellar MPP charge protocol. USDC transfers
 
 Agent deposits USDC into a `stellar-experimental/one-way-channel` Soroban contract. For each unit of data consumed, the agent signs an off-chain ed25519 commitment (no RPC call, no transaction fee). The channel settles with one on-chain close transaction for the cumulative amount.
 
+#### Dispute Resolution
+
+If a server crashes mid-session, the agent can reclaim deposited funds using the dispute resolution API. Three methods handle the recovery flow:
+
+- **`session.requestRefund()`** — initiates the refund process on the channel contract, starting the refund window (default 17,280 ledgers ≈24h)
+- **`session.settleWithLatestVoucher()`** — server-side counter-mechanism to settle the cumulative amount before the refund window expires, using the highest signed voucher
+- **`session.getDisputeStatus()`** — returns the channel state: `'open'`, `'in-refund-window'`, `'refundable'`, or `'settled'`
+
+Raises: `RouteDockDisputeError`, `RouteDockChannelStateError`, `RouteDockRefundWindowError`
+
 ### Mode Selection
 
 Deterministic, manifest-driven:
