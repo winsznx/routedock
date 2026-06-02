@@ -68,6 +68,19 @@ graph LR
 
 The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
 
+## Soroban Events
+
+The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
+
+| Event | Topics | Data | When |
+|---|---|---|---|
+| `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
+| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
+
+```bash
+stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
+```
+
 ---
 
 ## Live Testnet Transactions
