@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 6,
+    "address": 5,
     "nonce": 0
   },
   "auth": [
@@ -10,7 +10,7 @@
   ],
   "ledger": {
     "protocol_version": 22,
-    "sequence_number": 0,
+    "sequence_number": 10000,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -18,6 +18,54 @@
     "min_temp_entry_ttl": 16,
     "max_entry_ttl": 6312000,
     "ledger_entries": [
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "ds"
+                },
+                {
+                  "u32": 0
+                }
+              ]
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "ds"
+                    },
+                    {
+                      "u32": 0
+                    }
+                  ]
+                },
+                "durability": "temporary",
+                "val": {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 100000
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          44560
+        ]
+      ],
       [
         {
           "contract_data": {
@@ -54,7 +102,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "d44040938228fc85ba2c80de045a0cb82d4678b80a6908237a2240e2f91e0d5c"
+                          "bytes": "8f25615a0b7a098a1557ad844872c1b3c2cdbc2f7ff88dc7aa96b549ec66bb21"
                         }
                       },
                       {
@@ -103,7 +151,7 @@
             },
             "ext": "v0"
           },
-          2000000
+          2010000
         ]
       ],
       [
@@ -124,7 +172,7 @@
             },
             "ext": "v0"
           },
-          2000000
+          2010000
         ]
       ]
     ]

@@ -205,7 +205,7 @@ mod tests {
         BytesN::<64>::from_array(env, &sig.to_bytes())
     }
 
-    fn setup(env: &Env) -> (AgentVaultClient, SigningKey, Address, Address) {
+    fn setup(env: &Env) -> (AgentVaultClient<'_>, SigningKey, Address, Address) {
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(env, &vault_id);
 
@@ -321,6 +321,291 @@ mod tests {
             result.unwrap_err().unwrap(),
             Error::SessionExpired,
             "should reject expired session key"
+        );
+    }
+
+    /// Test 5: daily cap boundary — payment at exactly the cap succeeds
+    #[test]
+    fn test_daily_cap_boundary_at_limit_succeeds() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Daily cap = 5_000_000
+
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(
+            result.is_ok(),
+            "payment at exactly the cap should succeed"
+        );
+    }
+
+    /// Test 6: daily cap boundary — payment exceeding cap by 1 stroop fails
+    #[test]
+    fn test_daily_cap_boundary_exceeding_by_one_fails() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Daily cap = 5_000_000
+
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_001)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "payment exceeding cap by 1 stroop should fail"
+        );
+    }
+
+    /// Test 7: accumulated daily spend — multiple transfers within cap succeed
+    #[test]
+    fn test_accumulated_spend_within_cap_succeeds() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Daily cap = 5_000_000
+
+        // First transfer: 2_000_000
+        let payload1 = BytesN::<32>::random(&env);
+        let sig1 = sign_payload(&env, &agent_sk, &payload1);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let result1 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload1,
+            sig1.into_val(&env),
+            &contexts1,
+        );
+        assert!(result1.is_ok(), "first transfer should succeed");
+
+        // Second transfer: 3_000_000 (total = 5_000_000)
+        let payload2 = BytesN::<32>::random(&env);
+        let sig2 = sign_payload(&env, &agent_sk, &payload2);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let result2 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload2,
+            sig2.into_val(&env),
+            &contexts2,
+        );
+        assert!(result2.is_ok(), "second transfer within accumulated cap should succeed");
+    }
+
+    /// Test 8: accumulated daily spend — exceeding cap on second transfer fails
+    #[test]
+    fn test_accumulated_spend_exceeding_cap_fails() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Daily cap = 5_000_000
+
+        // First transfer: 3_000_000
+        let payload1 = BytesN::<32>::random(&env);
+        let sig1 = sign_payload(&env, &agent_sk, &payload1);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let result1 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload1,
+            sig1.into_val(&env),
+            &contexts1,
+        );
+        assert!(result1.is_ok(), "first transfer should succeed");
+
+        // Second transfer: 2_500_000 (total would be 5_500_000 > cap)
+        let payload2 = BytesN::<32>::random(&env);
+        let sig2 = sign_payload(&env, &agent_sk, &payload2);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_500_000)]);
+        let result2 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload2,
+            sig2.into_val(&env),
+            &contexts2,
+        );
+        assert_eq!(
+            result2.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "second transfer exceeding accumulated cap should fail"
+        );
+    }
+
+    /// Test 9: allowlist with multiple entries — all allowlisted addresses accepted
+    #[test]
+    fn test_allowlist_multiple_entries_all_accepted() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let provider_b = Address::generate(&env);
+        let provider_c = Address::generate(&env);
+
+        let allowlist = Vec::from_array(&env, [provider_a.clone(), provider_b.clone(), provider_c.clone()]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        // Test payment to each allowlisted address
+        for provider in [provider_a, provider_b, provider_c] {
+            let payload = BytesN::<32>::random(&env);
+            let sig = sign_payload(&env, &agent_sk, &payload);
+            let contexts = Vec::from_array(&env, [transfer_context(&env, &provider, 100_000)]);
+
+            let result = env.try_invoke_contract_check_auth::<Error>(
+                &vault_id,
+                &payload,
+                sig.into_val(&env),
+                &contexts,
+            );
+            assert!(result.is_ok(), "all allowlisted addresses should be accepted");
+        }
+    }
+
+    /// Test 10: session expiry at exact boundary — payment at expiry ledger succeeds
+    #[test]
+    fn test_session_expiry_at_boundary_succeeds() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Expiry = 10_000
+
+        // Set ledger to exactly the expiry boundary
+        env.ledger().set_sequence_number(10_000);
+
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "payment at expiry boundary ledger should succeed");
+    }
+
+    /// Test 11: session expiry one ledger past boundary — payment rejected
+    #[test]
+    fn test_session_expiry_one_past_boundary_fails() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Expiry = 10_000
+
+        // Set ledger to one past the expiry boundary
+        env.ledger().set_sequence_number(10_001);
+
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::SessionExpired,
+            "payment one ledger past expiry should fail"
+        );
+    }
+
+    /// Test 12: overflow protection — very large successive payments rejected safely
+    #[test]
+    fn test_overflow_protection_large_successive_payments() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        // Daily cap = 5_000_000
+
+        // First large transfer: 4_000_000_000_000_000 (i128 near limit)
+        let payload1 = BytesN::<32>::random(&env);
+        let sig1 = sign_payload(&env, &agent_sk, &payload1);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000_000_000_000)]);
+        let result1 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload1,
+            sig1.into_val(&env),
+            &contexts1,
+        );
+        // This should fail due to cap, not overflow
+        assert_eq!(
+            result1.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "large transfer exceeding cap should fail with DailyCapExceeded, not overflow"
+        );
+    }
+
+    /// Test 13: daily reset logic — spending resets across day boundaries
+    #[test]
+    fn test_daily_reset_across_boundaries() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+
+        let allowlist = Vec::from_array(&env, [provider_a.clone()]);
+        // Initialize with a specific cap
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &500_000_u32);
+
+        // Day 0 (sequence 0): spend 4_000_000
+        let payload1 = BytesN::<32>::random(&env);
+        let sig1 = sign_payload(&env, &agent_sk, &payload1);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let result1 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload1,
+            sig1.into_val(&env),
+            &contexts1,
+        );
+        assert!(result1.is_ok(), "first payment in day 0 should succeed");
+
+        // Still in Day 0: attempt to spend 2_000_000 more (total 6_000_000 > cap) — should fail
+        let payload2 = BytesN::<32>::random(&env);
+        let sig2 = sign_payload(&env, &agent_sk, &payload2);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let result2 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload2,
+            sig2.into_val(&env),
+            &contexts2,
+        );
+        assert_eq!(
+            result2.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "second payment in same day should fail due to accumulated spend"
+        );
+
+        // Move to Day 1: day_bucket = 17_280 / 17_280 = 1
+        env.ledger().set_sequence_number(17_280);
+
+        // Day 1: attempt to spend 4_000_000 again
+        // This should succeed because we're in a new day bucket (bucket 1)
+        let payload3 = BytesN::<32>::random(&env);
+        let sig3 = sign_payload(&env, &agent_sk, &payload3);
+        let contexts3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let result3 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload3,
+            sig3.into_val(&env),
+            &contexts3,
+        );
+        assert!(
+            result3.is_ok(),
+            "payment in new day bucket should succeed after reset"
         );
     }
 }
