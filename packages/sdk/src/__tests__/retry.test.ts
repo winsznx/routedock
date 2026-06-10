@@ -23,7 +23,7 @@ describe('withRetry', () => {
   it('retries retryable errors up to maxAttempts', async () => {
     let calls = 0
     const result = await withRetry(
-      () => {
+      async () => {
         calls++
         if (calls < 3) {
           throw new RouteDockNetworkError('transient')

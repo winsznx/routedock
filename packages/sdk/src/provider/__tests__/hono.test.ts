@@ -152,11 +152,11 @@ describe('routedockHono — mpp-session flow', () => {
 
 describe('routedockHono — constructor validation', () => {
   it('throws when mpp-session mode is enabled without commitmentPublicKey', () => {
+    const { commitmentPublicKey: _ignored, ...withoutCommitment } = BASE_OPTS
     assert.throws(
       () =>
         routedockHono({
-          ...BASE_OPTS,
-          commitmentPublicKey: undefined,
+          ...withoutCommitment,
           modes: ['mpp-session'],
           pricing: {
             'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT },
