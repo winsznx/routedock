@@ -1,13 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { ArrowLeft, Package, Server, Bot, Shield, Search, Terminal } from 'lucide-react'
+import { ArrowLeft, Package, Server, Bot, Shield, Search, Terminal, type LucideIcon } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Docs',
   description: 'RouteDock SDK documentation — agent client, provider middleware, manifest standard, and contract account policies.',
 }
 
-function Section({ id, icon: Icon, title, children }: { id: string; icon: React.ComponentType<{ className?: string }>; title: string; children: React.ReactNode }) {
+function Section({ id, icon: Icon, title, children }: { id: string; icon: LucideIcon; title: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-24">
       <div className="flex items-center gap-3 mb-4">
