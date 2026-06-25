@@ -9,6 +9,7 @@ import {
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import schema from '../schemas/routedock.schema.json' assert { type: 'json' }
+import { verifyManifestSignature } from '../manifest/sign.js'
 
 const ajv = new Ajv()
 const validateManifest = ajv.compile(schema)
@@ -129,6 +130,7 @@ export async function fetchManifest(
     }
 
     const manifest = raw as unknown as RouteDockManifest
+    verifyManifestSignature(manifest)
     manifestCache.set(baseUrl, { manifest, fetchedAt: Date.now() })
     return manifest
   }, retryPolicy)
