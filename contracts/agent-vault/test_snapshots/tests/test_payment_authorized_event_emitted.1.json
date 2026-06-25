@@ -1,10 +1,9 @@
 {
   "generators": {
-    "address": 7,
+    "address": 5,
     "nonce": 0
   },
   "auth": [
-    [],
     [],
     [],
     []
@@ -57,7 +56,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 3000000
+                    "lo": 100000
                   }
                 }
               }
@@ -111,7 +110,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 3000000
+                    "lo": 100000
                   }
                 }
               }
@@ -157,7 +156,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "2c0ac19fbb000e1abc4d5ea2a7ddb55d2bd3e5067e4769da3917e0d29d41e6fd"
+                          "bytes": "cdd45ec7fcdb575f937b7373d524519492df6ccf51c7c474c7d55ac5b472ce5f"
                         }
                       },
                       {
@@ -240,5 +239,48 @@
       ]
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "payment_authorized"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 100000
+                  }
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 100000
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }
