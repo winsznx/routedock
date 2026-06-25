@@ -49,13 +49,19 @@ export interface RouteDockMiddlewareOptions {
  * }))
  * ```
  */
+/** MPP modes, in the priority order used to pick the default (non-x402) handler. */
+const MPP_MODES: readonly PaymentMode[] = ['mpp-session', 'mpp-charge']
+
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
-  const handlers: RequestHandler[] = []
+  // Register each handler under its payment mode so routing is explicit and
+  // never depends on insertion order.
+  const handlerMap = new Map<PaymentMode, RequestHandler>()
 
   if (opts.modes.includes('x402')) {
     const x402Price = opts.pricing.x402
     if (x402Price) {
-      handlers.push(
+      handlerMap.set(
+        'x402',
         createX402Handler({
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
@@ -72,7 +78,8 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   if (opts.modes.includes('mpp-charge')) {
     const chargePrice = opts.pricing['mpp-charge']
     if (chargePrice) {
-      handlers.push(
+      handlerMap.set(
+        'mpp-charge',
         createMppChargeHandler({
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
@@ -91,7 +98,8 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
       if (!opts.commitmentPublicKey) {
         throw new Error('routedock: mpp-session mode requires commitmentPublicKey')
       }
-      handlers.push(
+      handlerMap.set(
+        'mpp-session',
         createMppSessionHandler({
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
@@ -108,6 +116,12 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     }
   }
 
+  // The default (non-x402) handler is the highest-priority MPP mode that is
+  // actually registered; if the provider speaks only x402, it defaults to that.
+  const defaultMode: PaymentMode | undefined =
+    MPP_MODES.find((mode) => handlerMap.has(mode)) ??
+    (handlerMap.has('x402') ? 'x402' : undefined)
+
   return (req: Request, res: Response, next: NextFunction): void => {
     // Serve manifest at /.well-known/routedock.json
     if (req.path === '/.well-known/routedock.json') {
@@ -116,26 +130,26 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     }
 
     // No handlers — pass through
-    if (handlers.length === 0) {
+    if (handlerMap.size === 0) {
       next()
       return
     }
 
-    // Route to the correct handler based on request headers.
-    // x402 clients send `payment-signature` or `x-payment` headers.
-    // mppx clients send `authorization` with the mppx bearer scheme.
-    // On initial request (no payment), use the last handler (mppx returns
-    // WWW-Authenticate which x402 clients ignore; x402 only runs when its
-    // header is explicitly present).
+    // Route by mode, not array position.
+    // x402 clients send `payment-signature` or `x-payment` headers (or opt in
+    // via `x-preferred-mode: x402`). Those go to the x402 handler — and only
+    // the x402 handler. Everything else (initial requests, mppx clients) goes
+    // to the default MPP handler, which returns the WWW-Authenticate challenge.
     const hasX402Header = !!(req.headers['payment-signature'] || req.headers['x-payment'])
     const prefersX402 = req.headers['x-preferred-mode'] === 'x402'
 
-    let handler: RequestHandler | undefined
-    if (hasX402Header || prefersX402) {
-      handler = handlers[0]
-    } else {
-      handler = handlers[handlers.length - 1]
-    }
+    const x402Handler = handlerMap.get('x402')
+    const defaultHandler = defaultMode ? handlerMap.get(defaultMode) : undefined
+
+    // Prefer the x402 handler for x402 requests; if the provider doesn't offer
+    // x402, fall back to the default handler rather than misrouting.
+    const handler: RequestHandler | undefined =
+      hasX402Header || prefersX402 ? (x402Handler ?? defaultHandler) : defaultHandler
 
     if (!handler) {
       next()
