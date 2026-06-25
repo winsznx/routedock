@@ -3,6 +3,7 @@ import { createX402Handler } from './x402Handler.js'
 import { createMppChargeHandler } from './MppChargeHandler.js'
 import { createMppSessionHandler } from './MppSessionHandler.js'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { signManifest } from '../manifest/sign.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -51,6 +52,8 @@ export interface RouteDockMiddlewareOptions {
  */
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   const handlers: RequestHandler[] = []
+  // Sign the manifest at startup so clients can verify payee authenticity.
+  const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402')) {
     const x402Price = opts.pricing.x402
@@ -62,7 +65,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           amount: x402Price,
           assetContract: opts.assetContract,
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
-          manifest: opts.manifest,
+          manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
         }),
       )
@@ -78,7 +81,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           network: opts.network,
           amount: chargePrice,
           assetContract: opts.assetContract,
-          manifest: opts.manifest,
+          manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
         }),
       )
@@ -98,7 +101,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           channelContract: sessionPricing.channelContract,
           rate: sessionPricing.rate,
           assetContract: opts.assetContract,
-          manifest: opts.manifest,
+          manifest: signedManifest,
           commitmentPublicKey: opts.commitmentPublicKey,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onSessionOpen ? { onSessionOpen: opts.onSessionOpen } : {}),
@@ -109,9 +112,9 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   }
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    // Serve manifest at /.well-known/routedock.json
+    // Serve signed manifest at /.well-known/routedock.json
     if (req.path === '/.well-known/routedock.json') {
-      res.json(opts.manifest)
+      res.json(signedManifest)
       return
     }
 

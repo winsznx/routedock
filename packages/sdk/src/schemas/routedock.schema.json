@@ -96,6 +96,10 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
     }
   },
   "definitions": {

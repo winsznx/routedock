@@ -61,6 +61,12 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * Base64 Ed25519 signature of the payee keypair over the SHA-256 digest of
+   * this manifest with the `signature` field omitted. Clients must verify this
+   * before trusting any routing field (payee, endpoints, pricing).
+   */
+  signature?: string
 }
 
 /** Result returned by client.pay() for any payment mode */
