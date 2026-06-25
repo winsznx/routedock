@@ -122,6 +122,10 @@
         "facilitator": {
           "type": "string",
           "description": "x402 facilitator URL (required for x402 mode). OpenZeppelin Channels endpoint."
+        },
+        "payee": {
+          "type": "string",
+          "description": "Optional per-mode payee override (Stellar G... address). Directs settlements for this mode to a separate account for treasury separation. Falls back to the top-level 'payee' when omitted."
         }
       }
     },
