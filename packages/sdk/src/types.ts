@@ -61,6 +61,17 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /** Optional protocol features this provider supports */
+  capabilities?: {
+    /** Supported streaming transports */
+    streaming?: ('sse' | 'websocket')[]
+    /** Whether webhook callbacks are supported */
+    webhooks?: boolean
+    /** Whether idempotency keys are supported */
+    idempotency_keys?: boolean
+    /** Supported content types for request/response */
+    content_types?: string[]
+  }
 }
 
 /** Result returned by client.pay() for any payment mode */
