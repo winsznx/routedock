@@ -6,6 +6,7 @@
   "auth": [
     [],
     [],
+    [],
     []
   ],
   "ledger": {
@@ -54,7 +55,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "cf7d181b55d8ca0b4f0a5aed1d7e8c89c6db3e840de09ff8c4bad6ce5b6d4105"
+                          "bytes": "bb600792371263d4db469cecdf0e2a76519ca32b5d045cb2e5745a0f55d4c8dd"
                         }
                       },
                       {
@@ -85,7 +86,7 @@
                           "symbol": "expiry"
                         },
                         "val": {
-                          "u32": 10000
+                          "u32": 500000
                         }
                       },
                       {

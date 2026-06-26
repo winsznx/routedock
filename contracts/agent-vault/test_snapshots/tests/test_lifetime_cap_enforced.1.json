@@ -54,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "cf7d181b55d8ca0b4f0a5aed1d7e8c89c6db3e840de09ff8c4bad6ce5b6d4105"
+                          "bytes": "c18b34390bce5d116f76c1b60a787318bf12a243ca81235206894244ae0a3a7d"
                         }
                       },
                       {
@@ -85,7 +85,7 @@
                           "symbol": "expiry"
                         },
                         "val": {
-                          "u32": 10000
+                          "u32": 500000
                         }
                       },
                       {
@@ -103,7 +103,7 @@
                         "val": {
                           "i128": {
                             "hi": 0,
-                            "lo": 0
+                            "lo": 3000000
                           }
                         }
                       },

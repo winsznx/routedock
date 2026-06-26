@@ -104,7 +104,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "e1b0362ab579e8b0d4b6a8521ebb0da771bec1aec247c868c9ae29803c1637ac"
+                          "bytes": "75e3c375b566a5a5b39202b715857121549e569227c0c2484e931830919eaafe"
                         }
                       },
                       {
@@ -150,6 +150,28 @@
                         },
                         "val": {
                           "bool": true
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "ltcap"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "ltspend"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 300000
+                          }
                         }
                       }
                     ]

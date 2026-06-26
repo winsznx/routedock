@@ -6,6 +6,8 @@
   "auth": [
     [],
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -18,6 +20,54 @@
     "min_temp_entry_ttl": 16,
     "max_entry_ttl": 6312000,
     "ledger_entries": [
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "ds"
+                },
+                {
+                  "u32": 0
+                }
+              ]
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "ds"
+                    },
+                    {
+                      "u32": 0
+                    }
+                  ]
+                },
+                "durability": "temporary",
+                "val": {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1500000
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          34560
+        ]
+      ],
       [
         {
           "contract_data": {
@@ -54,7 +104,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "cf7d181b55d8ca0b4f0a5aed1d7e8c89c6db3e840de09ff8c4bad6ce5b6d4105"
+                          "bytes": "2f3af6f1dcba70420647fe95d41d9cc1be739f7eef01819245fb5edaea384109"
                         }
                       },
                       {
@@ -85,7 +135,7 @@
                           "symbol": "expiry"
                         },
                         "val": {
-                          "u32": 10000
+                          "u32": 500000
                         }
                       },
                       {
@@ -114,7 +164,7 @@
                         "val": {
                           "i128": {
                             "hi": 0,
-                            "lo": 0
+                            "lo": 1500000
                           }
                         }
                       }
