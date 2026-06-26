@@ -35,6 +35,35 @@ for await (const update of session.stream()) {
 await session.close() // triggers on-chain settlement
 ```
 
+### Durable spend cap
+
+The `spendCap` is enforced via a pluggable `SpendStore` (`read()` / `write()`).
+By default the client uses an in-memory store that resets on every process
+restart — and logs a startup warning — so the cap is **not** durable. For
+production, inject a persistent implementation so a crash or restart can't reset
+the accumulator and bypass the cap:
+
+```ts
+import { RouteDockClient, type SpendStore, type DailySpend } from '@routedock/sdk/client'
+
+const redisSpendStore: SpendStore = {
+  async read(): Promise<DailySpend | null> {
+    const raw = await redis.get('routedock:dailySpend')
+    return raw ? (JSON.parse(raw) as DailySpend) : null
+  },
+  async write(state: DailySpend): Promise<void> {
+    await redis.set('routedock:dailySpend', JSON.stringify(state))
+  },
+}
+
+const client = new RouteDockClient({
+  wallet: Keypair.fromSecret(process.env.AGENT_SECRET),
+  network: 'mainnet',
+  spendCap: { daily: '1.00', asset: 'USDC' },
+  spendStore: redisSpendStore,
+})
+```
+
 ## Provider Usage
 
 ```ts

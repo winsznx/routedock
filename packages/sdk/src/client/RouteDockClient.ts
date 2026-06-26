@@ -6,6 +6,7 @@ import { MppSessionClient } from './MppSessionClient.js'
 import type { PaymentResult, SessionHandle } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
+import { InMemorySpendStore, type SpendStore } from '../store/SpendStore.js'
 
 export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
@@ -23,6 +24,12 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Durable backing store for the daily spend cap accumulator. Defaults to a
+   * non-durable in-memory store that resets on restart (with a startup warning).
+   * Inject a persistent implementation for production safety.
+   */
+  spendStore?: SpendStore
 }
 
 export class RouteDockClient {
@@ -32,8 +39,8 @@ export class RouteDockClient {
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
 
-  /** Local daily accumulator keyed by YYYY-MM-DD */
-  private dailySpend: { date: string; total: number } = { date: '', total: 0 }
+  /** Durable backing store for the local daily spend accumulator (keyed by YYYY-MM-DD) */
+  private readonly spendStore: SpendStore
 
   private readonly x402: X402Client
   private readonly charge: MppChargeClient
@@ -46,6 +53,8 @@ export class RouteDockClient {
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
+    // Only warn about non-durability when a spend cap is actually configured.
+    this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -79,7 +88,7 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
-    this._checkAndRecordSpend(result.amount)
+    await this._checkAndRecordSpend(result.amount)
     return result
   }
 
@@ -107,20 +116,21 @@ export class RouteDockClient {
   }
 
   /** Check local daily cap and record the spend. Throws if cap exceeded. */
-  private _checkAndRecordSpend(amount: string): void {
+  private async _checkAndRecordSpend(amount: string): Promise<void> {
     if (!this.spendCap) return
 
     const today = new Date().toISOString().slice(0, 10)
-    if (this.dailySpend.date !== today) {
-      this.dailySpend = { date: today, total: 0 }
-    }
+    const persisted = await this.spendStore.read()
+    const current =
+      persisted && persisted.date === today ? persisted : { date: today, total: 0 }
 
     const amountNum = parseFloat(amount)
     const capNum = parseFloat(this.spendCap.daily)
-    if (this.dailySpend.total + amountNum > capNum) {
+    if (current.total + amountNum > capNum) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
-    this.dailySpend.total += amountNum
+    current.total += amountNum
+    await this.spendStore.write(current)
   }
 }
