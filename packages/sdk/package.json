@@ -1,5 +1,5 @@
 {
-  "name": "@routedock/sdk",
+  "name": "@routedock/routedock",
   "version": "0.1.2",
   "description": "Unified payment execution layer for autonomous agents on Stellar",
   "license": "MIT",
@@ -43,7 +43,6 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-<<<<<<< HEAD
     "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts"
   },
   "dependencies": {

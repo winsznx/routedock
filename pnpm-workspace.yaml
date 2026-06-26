@@ -3,3 +3,7 @@ packages:
   - 'packages/*'
   - 'agent'
   - 'contracts/*'
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

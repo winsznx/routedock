@@ -5,9 +5,11 @@
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "stress:test": "pnpm exec tsx scripts/stress_test.ts"
   },
   "devDependencies": {
+    "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }
 }

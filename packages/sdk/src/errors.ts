@@ -160,3 +160,19 @@ export function wrapFetchError(err: unknown, context: string): RouteDockError {
   if (err instanceof RouteDockError) return err
   return new RouteDockNetworkError(`${context}: ${String(err)}`, { cause: err })
 }
+export class RouteDockDisputeError extends RouteDockError {
+  constructor(
+    message: string,
+    options: RouteDockErrorOptions = {}
+  ) {
+    super(
+      message,
+      "CHANNEL_STATE",
+      false,
+      options
+    )
+
+    this.name =
+      "RouteDockDisputeError"
+  }
+}
