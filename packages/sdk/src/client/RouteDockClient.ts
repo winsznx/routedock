@@ -1,5 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk'
-import { fetchManifest, selectMode, type ModeSelectOptions } from './ModeRouter.js'
+import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
@@ -23,6 +23,8 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /** Structured logger for SDK events. Defaults to no-op (silent). */
+  logger?: RouteDockLogger
 }
 
 export class RouteDockClient {
@@ -31,6 +33,7 @@ export class RouteDockClient {
   private readonly spendCap: SpendCap | undefined
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
+  private readonly logger: RouteDockLogger | undefined
 
   /** Local daily accumulator keyed by YYYY-MM-DD */
   private dailySpend: { date: string; total: number } = { date: '', total: 0 }
@@ -46,6 +49,7 @@ export class RouteDockClient {
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
+    this.logger = config.logger
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -60,7 +64,7 @@ export class RouteDockClient {
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy)
-    const mode = selectMode(manifest, options)
+    const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     let result: PaymentResult
 

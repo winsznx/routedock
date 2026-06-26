@@ -23,6 +23,8 @@ const CACHE_TTL_MS = 60_000
 /** In-memory manifest cache keyed by base URL. */
 const manifestCache = new Map<string, CacheEntry>()
 
+export type RouteDockLogger = (message: string) => void
+
 export interface ModeSelectOptions {
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
@@ -32,6 +34,8 @@ export interface ModeSelectOptions {
    * Throws RouteDockNoSupportedModeError if the provider does not support it.
    */
   forceMode?: PaymentMode
+  /** Structured logger for mode selection events. Defaults to no-op. */
+  logger?: RouteDockLogger
 }
 
 /** Fetch, validate, and cache a RouteDock manifest from `baseUrl`. */
@@ -91,6 +95,7 @@ export function selectMode(
   options: ModeSelectOptions = {},
 ): PaymentMode {
   const modes = manifest.modes
+  const log = options.logger ?? (() => {})
 
   if (options.forceMode) {
     if (!modes.includes(options.forceMode)) {
@@ -98,25 +103,25 @@ export function selectMode(
         `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
       )
     }
-    console.log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
+    log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
     return options.forceMode
   }
 
   if ((options.sustained || options.session) && modes.includes('mpp-session')) {
     const mode: PaymentMode = 'mpp-session'
-    console.log(`[RouteDock] ${manifest.name} → ${mode}`)
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
     return mode
   }
 
   if (modes.includes('mpp-charge')) {
     const mode: PaymentMode = 'mpp-charge'
-    console.log(`[RouteDock] ${manifest.name} → ${mode}`)
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
     return mode
   }
 
   if (modes.includes('x402')) {
     const mode: PaymentMode = 'x402'
-    console.log(`[RouteDock] ${manifest.name} → ${mode}`)
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
     return mode
   }
 
