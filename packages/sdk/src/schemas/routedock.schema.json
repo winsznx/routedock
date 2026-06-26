@@ -10,8 +10,6 @@
     "description",
     "modes",
     "network",
-    "asset",
-    "asset_contract",
     "payee",
     "pricing",
     "endpoints",
@@ -52,11 +50,19 @@
     },
     "asset": {
       "type": "string",
-      "description": "Asset ticker symbol (e.g. 'USDC')"
+      "description": "[DEPRECATED] Use assets[0].asset instead. Asset ticker symbol (e.g. 'USDC')"
     },
     "asset_contract": {
       "type": "string",
-      "description": "Stellar Asset Contract (SAC) address for the payment asset"
+      "description": "[DEPRECATED] Use assets[0].asset_contract instead. Stellar Asset Contract (SAC) address for the payment asset"
+    },
+    "assets": {
+      "type": "array",
+      "description": "Payment assets accepted by this provider. Each asset can be scoped to specific modes and endpoints.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/AssetConfig"
+      }
     },
     "payee": {
       "type": "string",
@@ -99,6 +105,40 @@
     }
   },
   "definitions": {
+    "AssetConfig": {
+      "type": "object",
+      "description": "Payment asset configuration with optional mode/endpoint scoping",
+      "required": ["asset", "asset_contract"],
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "type": "string",
+          "description": "Asset ticker symbol (e.g. 'USDC', 'XLM')"
+        },
+        "asset_contract": {
+          "type": "string",
+          "description": "Stellar Asset Contract (SAC) address for this payment asset"
+        },
+        "modes": {
+          "type": "array",
+          "description": "Optional: restrict this asset to specific payment modes. If omitted, asset is available for all manifest modes.",
+          "items": {
+            "$ref": "#/definitions/PaymentMode"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "endpoints": {
+          "type": "array",
+          "description": "Optional: restrict this asset to specific endpoints (by name). If omitted, asset is available for all manifest endpoints.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      }
+    },
     "PaymentMode": {
       "type": "string",
       "enum": ["x402", "mpp-charge", "mpp-session"],

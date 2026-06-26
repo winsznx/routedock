@@ -39,8 +39,12 @@ const manifest: RouteDockManifest = {
   description: 'Real-time USDC/XLM orderbook SSE stream from Stellar Horizon',
   modes: ['mpp-session'],
   network: STELLAR_NETWORK,
-  asset: 'USDC',
-  asset_contract: USDC_ASSET_CONTRACT,
+  assets: [
+    {
+      asset: 'USDC',
+      asset_contract: USDC_ASSET_CONTRACT,
+    },
+  ],
   payee: STELLAR_PAYEE_ADDRESS,
   pricing: {
     'mpp-session': {
@@ -111,8 +115,6 @@ app.use(
         channelContract: CHANNEL_CONTRACT_ID,
       },
     },
-    asset: 'USDC',
-    assetContract: USDC_ASSET_CONTRACT,
     payee: STELLAR_PAYEE_ADDRESS,
     network: STELLAR_NETWORK,
     payeeSecretKey: STELLAR_PAYEE_SECRET,

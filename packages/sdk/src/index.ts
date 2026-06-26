@@ -10,3 +10,9 @@ export * from './client/MppChargeClient.js'
 export * from './client/MppSessionClient.js'
 export * from './store/SessionStore.js'
 export * from './provider/routedockMiddleware.js'
+export {
+  normalizeManifestAssets,
+  getEligibleAssets,
+  selectAsset,
+  isAssetEligible,
+} from './internal/assetUtils.js'
