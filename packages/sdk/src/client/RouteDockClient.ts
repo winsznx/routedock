@@ -3,7 +3,7 @@ import { fetchManifest, selectMode, type ModeSelectOptions } from './ModeRouter.
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
-import type { PaymentResult, SessionHandle } from '../types.js'
+import type { PaymentResult, SessionHandle, SessionOptions } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 
@@ -86,8 +86,12 @@ export class RouteDockClient {
   /**
    * Open a sustained MPP session at `url`. Verifies mpp-session is supported
    * before opening a channel. Returns a SessionHandle for streaming + closing.
+   *
+   * By default the session auto-closes after a wall-clock timeout (1h) so an
+   * orphaned channel cannot keep collateral locked on-chain — override or
+   * disable via `options.maxDurationMs`.
    */
-  async openSession(url: string): Promise<SessionHandle> {
+  async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy)
 
@@ -103,7 +107,7 @@ export class RouteDockClient {
       )
     }
 
-    return this.session.openSession(url, manifest, this.commitmentSecret)
+    return this.session.openSession(url, manifest, this.commitmentSecret, options)
   }
 
   /** Check local daily cap and record the spend. Throws if cap exceeded. */

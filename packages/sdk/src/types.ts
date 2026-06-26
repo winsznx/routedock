@@ -87,6 +87,30 @@ export interface SessionCloseResult {
   vouchersIssued: number
 }
 
+/** Default wall-clock lifetime of a session before it auto-closes (1h). */
+export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
+
+/** Options accepted by client.openSession() */
+export interface SessionOptions {
+  /**
+   * Maximum wall-clock lifetime of the session in milliseconds. When the
+   * timer fires, the session emits 'session:timeout' and auto-closes so an
+   * orphaned channel cannot keep collateral locked on-chain indefinitely.
+   * Defaults to {@link DEFAULT_MAX_SESSION_DURATION_MS} (1h). Pass 0 or
+   * Infinity to disable the guard (not recommended).
+   */
+  maxDurationMs?: number
+}
+
+/** Lifecycle events emitted by a SessionHandle. */
+export type SessionEvent = 'session:timeout'
+
+/** Payload delivered with the 'session:timeout' event. */
+export interface SessionTimeoutPayload {
+  /** The wall-clock budget (ms) that elapsed before auto-close was triggered. */
+  maxDurationMs: number
+}
+
 /** Handle for a live MPP session returned by client.openSession() */
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
@@ -107,6 +131,11 @@ export interface SessionHandle {
   settleWithLatestVoucher(): Promise<string>
   /** Get the current dispute status of the channel */
   getDisputeStatus(): Promise<DisputeStatus>
+  /**
+   * Subscribe to a session lifecycle event (e.g. 'session:timeout').
+   * Returns an unsubscribe function.
+   */
+  on(event: SessionEvent, listener: (payload: SessionTimeoutPayload) => void): () => void
 }
 
 /**
