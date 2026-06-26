@@ -23,6 +23,11 @@ const SPEND_PREFIX: Symbol = symbol_short!("ds");
 const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
 const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 
+// ── Event names ──────────────────────────────────────────────────────────────
+// Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
+const EVT_PAYMENT_AUTHORIZED: &str = "payment_authorized";
+const EVT_SESSION_SETTLED: &str = "session_settled";
+
 // ── Error codes ───────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -100,6 +105,15 @@ impl AgentVault {
     /// Can only be lowered below current spend counter, not raised beyond the original
     /// intent — callers should treat this as a ratchet-down control.
     pub fn set_lifetime_cap(env: Env, new_cap: i128) {
+    /// Record an off-chain channel settlement. Emits `session_settled`. Admin only.
+    pub fn record_session_settlement(
+        env: Env,
+        channel_id: Address,
+        payer: Address,
+        payee: Address,
+        cumulative_amount: i128,
+        voucher_count: u32,
+    ) {
         let storage = env.storage().instance();
         let admin: Address = storage
             .get(&ADMIN_KEY)
@@ -114,6 +128,13 @@ impl AgentVault {
             .instance()
             .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
             .unwrap_or(0)
+
+        // topics: (Symbol("session_settled"), channel_id, payee)
+        // data:   (payer, cumulative_amount, voucher_count)
+        env.events().publish(
+            (Symbol::new(&env, EVT_SESSION_SETTLED), channel_id, payee),
+            (payer, cumulative_amount, voucher_count),
+        );
     }
 }
 
@@ -182,8 +203,10 @@ impl CustomAccountInterface for AgentVault {
             if let Context::Contract(ctx) = context {
                 if ctx.fn_name == Symbol::new(&env, "transfer") {
                     // SAC transfer(from: Address, to: Address, amount: i128)
+                    let from: Address = ctx.args.get(0).unwrap().into_val(&env);
                     let to: Address = ctx.args.get(1).unwrap().into_val(&env);
                     let amount: i128 = ctx.args.get(2).unwrap().into_val(&env);
+                    let asset: Address = ctx.contract.clone();
 
                     // Policy 2 — EndpointAllowlistPolicy
                     if !allowlist.contains(&to) {
@@ -205,6 +228,12 @@ impl CustomAccountInterface for AgentVault {
                         return Err(Error::LifetimeCapExceeded);
                     }
                     lifetime_spend = projected_lifetime;
+                    // topics: (Symbol("payment_authorized"), payer, payee)
+                    // data:   (amount, asset, daily_cumulative)
+                    env.events().publish(
+                        (Symbol::new(&env, EVT_PAYMENT_AUTHORIZED), from, to),
+                        (amount, asset, day_spend),
+                    );
                 }
             }
         }
@@ -654,7 +683,6 @@ mod tests {
             "payment in new day bucket should succeed after reset"
         );
     }
-
     // ── Lifetime cap tests ────────────────────────────────────────────────────
 
     /// Helper: vault with daily_cap=5_000_000, lifetime_cap as specified, expiry far out.
@@ -849,5 +877,194 @@ mod tests {
             0,
             "rejected auth must not advance lifetime spend"
         );
+    /// Test 14: payment_authorized event emitted on each successful transfer
+    #[test]
+    fn test_payment_authorized_event_emitted() {
+        use soroban_sdk::{testutils::Events, IntoVal};
+
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+
+        let token = Address::generate(&env);
+        let from = Address::generate(&env);
+        let amount: i128 = 100_000;
+        let ctx = Context::Contract(ContractContext {
+            contract: token.clone(),
+            fn_name: symbol_short!("transfer"),
+            args: (from.clone(), provider_a.clone(), amount).into_val(&env),
+        });
+        let contexts = Vec::from_array(&env, [ctx]);
+
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "auth should pass");
+
+        let events = env.events().all();
+        let evt_name = Symbol::new(&env, "payment_authorized");
+        let matching: std::vec::Vec<_> = events
+            .iter()
+            .filter(|(addr, topics, _)| {
+                *addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+            })
+            .collect();
+
+        assert_eq!(matching.len(), 1, "exactly one payment_authorized event expected");
+
+        let (_, topics, data) = &matching[0];
+        let topic_payer: Address = topics.get(1).unwrap().into_val(&env);
+        let topic_payee: Address = topics.get(2).unwrap().into_val(&env);
+        assert_eq!(topic_payer, from, "topic[1] should be payer");
+        assert_eq!(topic_payee, provider_a, "topic[2] should be payee");
+
+        let data_tuple: (i128, Address, i128) = data.clone().into_val(&env);
+        assert_eq!(data_tuple.0, amount, "data[0] should be amount");
+        assert_eq!(data_tuple.1, token, "data[1] should be asset contract");
+        assert_eq!(data_tuple.2, amount, "data[2] should be daily_cumulative (first transfer)");
+    }
+
+    /// Test 15: daily_cumulative on the event reflects the accumulated spend
+    #[test]
+    fn test_payment_authorized_daily_cumulative_accumulates() {
+        use soroban_sdk::{testutils::Events, IntoVal};
+
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+
+        let p1 = BytesN::<32>::random(&env);
+        let s1 = sign_payload(&env, &agent_sk, &p1);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).unwrap();
+
+        let p2 = BytesN::<32>::random(&env);
+        let s2 = sign_payload(&env, &agent_sk, &p2);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).unwrap();
+
+        let events = env.events().all();
+        let evt_name = Symbol::new(&env, "payment_authorized");
+        let last = events
+            .iter()
+            .filter(|(addr, topics, _)| {
+                *addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+            })
+            .last()
+            .expect("expected at least one payment_authorized event");
+        let data_tuple: (i128, Address, i128) = last.2.clone().into_val(&env);
+        assert_eq!(data_tuple.2, 3_000_000, "daily_cumulative should accumulate");
+    }
+
+    /// Test 16: rejected transfer does NOT emit payment_authorized
+    #[test]
+    fn test_rejected_transfer_emits_no_event() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let (_, agent_sk, vault_id, _) = setup(&env);
+
+        let unlisted = Address::generate(&env);
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &agent_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &unlisted, 100_000)]);
+        let _ = env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
+
+        let events = env.events().all();
+        let evt_name = Symbol::new(&env, "payment_authorized");
+        let count = events
+            .iter()
+            .filter(|(addr, topics, _)| {
+                *addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+            })
+            .count();
+        assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
+    }
+
+    /// Test 17: session_settled event emitted with full payload
+    #[test]
+    fn test_session_settled_event_emitted() {
+        use soroban_sdk::{testutils::Events, IntoVal};
+
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Vec::from_array(&env, [provider_a.clone()]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let payee = provider_a.clone();
+        let cumulative_amount: i128 = 500_000;
+        let voucher_count: u32 = 42;
+
+        env.mock_all_auths();
+        client.record_session_settlement(
+            &channel_id,
+            &payer,
+            &payee,
+            &cumulative_amount,
+            &voucher_count,
+        );
+
+        let events = env.events().all();
+        let evt_name = Symbol::new(&env, "session_settled");
+        let matching: std::vec::Vec<_> = events
+            .iter()
+            .filter(|(addr, topics, _)| {
+                *addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+            })
+            .collect();
+        assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
+
+        let (_, topics, data) = &matching[0];
+        let topic_channel: Address = topics.get(1).unwrap().into_val(&env);
+        let topic_payee: Address = topics.get(2).unwrap().into_val(&env);
+        assert_eq!(topic_channel, channel_id, "topic[1] should be channel_id");
+        assert_eq!(topic_payee, payee, "topic[2] should be payee");
+
+        let data_tuple: (Address, i128, u32) = data.clone().into_val(&env);
+        assert_eq!(data_tuple.0, payer, "data[0] should be payer");
+        assert_eq!(data_tuple.1, cumulative_amount, "data[1] should be cumulative_amount");
+        assert_eq!(data_tuple.2, voucher_count, "data[2] should be voucher_count");
+    }
+
+    /// Test 18: record_session_settlement without admin auth panics
+    #[test]
+    #[should_panic]
+    fn test_session_settled_requires_admin_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Vec::from_array(&env, [provider_a.clone()]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        // No mock_all_auths() — require_auth() must panic
+        let channel = Address::generate(&env);
+        let payer = Address::generate(&env);
+        client.record_session_settlement(&channel, &payer, &provider_a, &500_000_i128, &10_u32);
     }
 }

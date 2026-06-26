@@ -7,7 +7,7 @@
     "start": "node --experimental-strip-types --env-file-if-exists=.env index.ts"
   },
   "dependencies": {
-    "@routedock/sdk": "npm:@routedock/routedock@0.1.2"
+    "@routedock/routedock": "workspace:*"
   },
   "engines": {
     "node": ">=22.6.0"
