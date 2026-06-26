@@ -14,6 +14,10 @@ export interface PricingConfig {
   per: 'request'
   /** x402 facilitator URL (OpenZeppelin Channels). Required for x402 mode. */
   facilitator?: string
+  /** If true, this pricing entry is deprecated and should not be used for new payments */
+  deprecated?: boolean
+  /** ISO 8601 timestamp after which this pricing entry will be removed. Agents should migrate before this date. */
+  sunset_at?: string
 }
 
 /** Per-voucher pricing config — used by mpp-session (one-way-channel) mode */
@@ -31,6 +35,24 @@ export interface SessionPricingConfig {
    * security parameter the server depends on to settle first.
    */
   refund_waiting_period_ledgers: number
+  /** If true, this pricing entry is deprecated and should not be used for new payments */
+  deprecated?: boolean
+  /** ISO 8601 timestamp after which this pricing entry will be removed. Agents should migrate before this date. */
+  sunset_at?: string
+}
+
+/**
+ * An endpoint entry in the manifest.
+ * Can be a simple string (e.g. "GET /price") for backward compatibility,
+ * or an object with path and optional deprecation metadata.
+ */
+export interface EndpointEntry {
+  /** HTTP method + path, e.g. "GET /price" */
+  path: string
+  /** If true, this endpoint is deprecated and should not be used for new requests */
+  deprecated?: boolean
+  /** ISO 8601 timestamp after which this endpoint will be removed. Agents should migrate before this date. */
+  sunset_at?: string
 }
 
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
@@ -57,10 +79,16 @@ export interface RouteDockManifest {
     'mpp-charge'?: PricingConfig
     'mpp-session'?: SessionPricingConfig
   }
-  /** Map of endpoint name to HTTP method + path, e.g. { price: "GET /price" } */
-  endpoints: Record<string, string>
+  /** Map of endpoint name to HTTP method + path or EndpointEntry with deprecation metadata */
+  endpoints: Record<string, string | EndpointEntry>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * ISO 8601 timestamp after which this manifest should be considered stale.
+   * Agents MUST re-fetch the manifest after this time before making new requests.
+   * If absent, agents should use their default cache TTL.
+   */
+  expires_at?: string
 }
 
 /** Result returned by client.pay() for any payment mode */
@@ -142,6 +170,8 @@ export {
   RouteDockRefundWindowError,
   RouteDockPolicyRejectedError,
   RouteDockSessionError,
+  RouteDockDeprecatedError,
+  RouteDockStaleManifestError,
 } from './errors.js'
 
 /** Dispute status of a channel */

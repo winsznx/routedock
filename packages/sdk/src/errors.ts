@@ -10,6 +10,8 @@ export type RouteDockErrorCode =
   | 'CHANNEL_STATE'
   | 'DISPUTE'
   | 'REFUND_WINDOW'
+  | 'DEPRECATED'
+  | 'STALE_MANIFEST'
 
 export interface RouteDockErrorOptions {
   cause?: unknown
@@ -126,6 +128,38 @@ export class RouteDockRefundWindowError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'REFUND_WINDOW', false, options)
     this.name = 'RouteDockRefundWindowError'
+  }
+}
+
+/**
+ * The requested endpoint or pricing mode is deprecated.
+ * The manifest still serves it but agents should migrate before the sunset date.
+ */
+export class RouteDockDeprecatedError extends RouteDockError {
+  /** Name of the deprecated item (e.g. endpoint name, pricing mode) */
+  readonly item: string
+  /** Optional ISO 8601 timestamp after which the item will be removed */
+  readonly sunsetAt: string | undefined
+  /** Optional suggested replacement */
+  readonly replacement: string | undefined
+
+  constructor(message: string, item: string, options?: { sunsetAt?: string; replacement?: string; cause?: unknown }) {
+    super(message, 'DEPRECATED', false, { cause: options?.cause })
+    this.name = 'RouteDockDeprecatedError'
+    this.item = item
+    this.sunsetAt = options?.sunsetAt
+    this.replacement = options?.replacement
+  }
+}
+
+/**
+ * The cached manifest has expired (based on expires_at) and should be re-fetched.
+ * This is an internal signal used by ModeRouter to force a refresh.
+ */
+export class RouteDockStaleManifestError extends RouteDockError {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message, 'STALE_MANIFEST', false, { cause: options.cause })
+    this.name = 'RouteDockStaleManifestError'
   }
 }
 

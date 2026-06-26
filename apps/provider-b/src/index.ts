@@ -53,6 +53,7 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { stream: 'GET /stream/orderbook' },
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
+  expires_at: new Date(Date.now() + 3600_000).toISOString(), // 1 hour from start
 }
 
 // Required env var check
