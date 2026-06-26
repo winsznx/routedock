@@ -6,6 +6,7 @@ import { MppSessionClient } from './MppSessionClient.js'
 import type { PaymentResult, SessionHandle } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
+import { usdcToUnits } from '../internal/usdc.js'
 
 export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
@@ -32,7 +33,7 @@ export class RouteDockClient {
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
 
-  /** Local daily accumulator keyed by YYYY-MM-DD */
+  /** Local daily accumulator keyed by YYYY-MM-DD. `total` is integer microUSDC (10^-7 USDC). */
   private dailySpend: { date: string; total: number } = { date: '', total: 0 }
 
   private readonly x402: X402Client
@@ -115,12 +116,15 @@ export class RouteDockClient {
       this.dailySpend = { date: today, total: 0 }
     }
 
-    const amountNum = parseFloat(amount)
-    const capNum = parseFloat(this.spendCap.daily)
-    if (this.dailySpend.total + amountNum > capNum) {
+    // Compare and accumulate in the integer microUSDC domain — floating-point
+    // addition drifts (e.g. 7000 × 0.0001 → 0.7000000000000006) and silently
+    // overruns the cap on every boundary crossing.
+    const amountUnits = usdcToUnits(amount)
+    const capUnits = usdcToUnits(this.spendCap.daily)
+    if (this.dailySpend.total + amountUnits > capUnits) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
-    this.dailySpend.total += amountNum
+    this.dailySpend.total += amountUnits
   }
 }
