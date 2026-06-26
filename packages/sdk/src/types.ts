@@ -91,8 +91,13 @@ export interface SessionCloseResult {
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
   channelId: string
-  /** Transaction hash from the channel-open on-chain call */
-  openTxHash: string
+  /**
+   * Transaction hash of the on-chain channel-open call, or null.
+   * The one-way-channel contract is deployed and funded before the agent
+   * runs, so openSession() performs no on-chain open and has no hash to
+   * report — it returns null rather than a non-transaction identifier.
+   */
+  openTxHash: string | null
   /**
    * Async generator of server-sent event data.
    * Each iteration sends a voucher and yields the parsed response.

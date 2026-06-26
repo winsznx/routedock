@@ -124,9 +124,11 @@ async function main(): Promise<void> {
   log('mpp-session', 'Opening MPP session channel...')
   const session = await client.openSession(`${PROVIDER_B_URL}/stream/orderbook`)
 
-  txHashes.channelOpen = session.openTxHash
-  log('mpp-session', `[Session] Opened. Channel: ${session.channelId} openTxHash: ${session.openTxHash}`)
-  log('mpp-session', `Channel open explorer: ${explorerLink(session.openTxHash)}`)
+  txHashes.channelOpen = session.openTxHash ?? undefined
+  log('mpp-session', `[Session] Opened. Channel: ${session.channelId} openTxHash: ${session.openTxHash ?? 'n/a (pre-deployed channel)'}`)
+  if (session.openTxHash) {
+    log('mpp-session', `Channel open explorer: ${explorerLink(session.openTxHash)}`)
+  }
 
   // Consume exactly 50 SSE events from the session stream
   const TARGET_VOUCHERS = 50
