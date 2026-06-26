@@ -81,9 +81,16 @@
     },
     "endpoints": {
       "type": "object",
-      "description": "Map of endpoint name to HTTP method + path (e.g. { 'price': 'GET /price' })",
+      "description": "Map of endpoint name to HTTP method + path or EndpointEntry with deprecation metadata",
       "additionalProperties": {
-        "type": "string"
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/definitions/EndpointEntry"
+          }
+        ]
       },
       "minProperties": 1
     },
@@ -96,6 +103,10 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "expires_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp after which this manifest should be considered stale. Agents MUST re-fetch after this time."
     }
   },
   "definitions": {
@@ -122,6 +133,14 @@
         "facilitator": {
           "type": "string",
           "description": "x402 facilitator URL (required for x402 mode). OpenZeppelin Channels endpoint."
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "If true, this pricing entry is deprecated and should not be used for new payments"
+        },
+        "sunset_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp after which this pricing entry will be removed. Agents should migrate before this date."
         }
       }
     },
@@ -152,6 +171,34 @@
           "type": "integer",
           "minimum": 1,
           "description": "Ledgers the server has to settle before the funder can reclaim. Default: 17280 (~24h). Do not reduce in production."
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "If true, this pricing entry is deprecated and should not be used for new payments"
+        },
+        "sunset_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp after which this pricing entry will be removed. Agents should migrate before this date."
+        }
+      }
+    },
+    "EndpointEntry": {
+      "type": "object",
+      "description": "An endpoint entry with path and optional deprecation metadata",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "HTTP method + path, e.g. 'GET /price'"
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "If true, this endpoint is deprecated and should not be used for new requests"
+        },
+        "sunset_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp after which this endpoint will be removed. Agents should migrate before this date."
         }
       }
     }

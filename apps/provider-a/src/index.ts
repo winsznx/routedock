@@ -52,6 +52,7 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { price: 'GET /price' },
   tags: ['price', 'stellar', 'dex', 'orderbook', 'usdc'],
+  expires_at: new Date(Date.now() + 3600_000).toISOString(), // 1 hour from start
 }
 
 // Required env var check — abort with clear message rather than a deep stack trace

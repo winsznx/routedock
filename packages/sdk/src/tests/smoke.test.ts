@@ -5,6 +5,7 @@
  *   1. x402 flow against a local mock server (402 → payment → 200)
  *   2. ModeRouter manifest fetch + validation
  *   3. SessionStore monotonic invariant rejection
+ *   4. Manifest deprecation/sunset/expires_at handling
  *
  * Run with: pnpm --filter @routedock/sdk test
  * No testnet RPC calls are made — all network calls are mocked via fetch interception.
@@ -207,6 +208,8 @@ function startTestServer(
     RouteDockNetworkError,
     RouteDockVoucherMonotonicityError,
     RouteDockPolicyRejectError,
+    RouteDockDeprecatedError,
+    RouteDockStaleManifestError,
   } = await import('../errors.js')
 
   const errors: InstanceType<typeof RouteDockError>[] = [
@@ -216,6 +219,8 @@ function startTestServer(
     new RouteDockNetworkError('test'),
     new RouteDockVoucherMonotonicityError('test'),
     new RouteDockPolicyRejectError('local_daily_cap_exceeded'),
+    new RouteDockDeprecatedError('test', 'test-endpoint'),
+    new RouteDockStaleManifestError('test'),
   ]
 
   for (const err of errors) {
@@ -230,7 +235,192 @@ function startTestServer(
   const policyErr = new RouteDockPolicyRejectError('local_daily_cap_exceeded')
   assert.equal(policyErr.reason, 'local_daily_cap_exceeded')
 
-  console.log('✓ Test 4: Error subclass hierarchy PASSED')
+  // Test DeprecatedError
+  const depErr = new RouteDockDeprecatedError('test msg', 'test-endpoint', { sunsetAt: '2026-01-01T00:00:00Z' })
+  assert.equal(depErr.code, 'DEPRECATED')
+  assert.equal(depErr.item, 'test-endpoint')
+  assert.equal(depErr.sunsetAt, '2026-01-01T00:00:00Z')
+
+  // Test StaleManifestError
+  const staleErr = new RouteDockStaleManifestError('manifest expired')
+  assert.equal(staleErr.code, 'STALE_MANIFEST')
+
+  console.log('✓ Test 4: Error subclass hierarchy (including new errors) PASSED')
+}
+
+// ── Test 5: Manifest expires_at handling ──────────────────────────────────────
+
+{
+  const { fetchManifest } = await import('../client/ModeRouter.js')
+
+  // Create a manifest with a past expires_at (expired immediately)
+  const expiredManifest = {
+    routedock: '1.0',
+    name: 'Expired Provider',
+    description: 'Manifest that is already expired',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+    },
+    endpoints: { price: 'GET /price' },
+    tags: ['price', 'stellar'],
+    expires_at: '2020-01-01T00:00:00.000Z', // Expired long ago
+  }
+
+  let fetchCount = 0
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(expiredManifest))
+      fetchCount++
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    // First fetch
+    const manifest1 = await fetchManifest(server.url)
+    assert.equal(manifest1.name, 'Expired Provider')
+    assert.equal(manifest1.expires_at, '2020-01-01T00:00:00.000Z')
+
+    // Second fetch — because expires_at is in the past, cache should be invalidated
+    // and a new fetch should be made
+    const manifest2 = await fetchManifest(server.url)
+    assert.equal(fetchCount, 2, `should have re-fetched due to expired expires_at, fetchCount=${fetchCount}`)
+    assert.notEqual(manifest1, manifest2, 'should return a new object after re-fetch')
+
+    console.log('✓ Test 5: Manifest expires_at cache invalidation PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 6: Endpoint deprecation detection ────────────────────────────────────
+
+{
+  const { checkEndpointDeprecation, getEndpointDeprecation, normalizeEndpointPath } = await import('../client/ModeRouter.js')
+  const { RouteDockDeprecatedError } = await import('../errors.js')
+
+  // Test with plain string endpoint (no deprecation)
+  assert.equal(normalizeEndpointPath('GET /price'), 'GET /price')
+  assert.equal(getEndpointDeprecation('GET /price'), undefined)
+
+  // Test with EndpointEntry object (deprecated but not sunset)
+  const endpoints = {
+    'price': 'GET /price',
+    'old-endpoint': { path: 'GET /old', deprecated: true, sunset_at: '2099-01-01T00:00:00.000Z' },
+  }
+  const deprecation = getEndpointDeprecation(endpoints['old-endpoint'])
+  assert.ok(deprecation?.deprecated)
+  assert.equal(deprecation?.sunsetAt, '2099-01-01T00:00:00.000Z')
+
+  // This should not throw (not yet sunset)
+  checkEndpointDeprecation(endpoints, 'old-endpoint')
+
+  // Test with sunset endpoint (past sunset_at) — should throw
+  const sunsetEndpoints = {
+    'sunset-endpoint': { path: 'GET /sunset', deprecated: true, sunset_at: '2020-01-01T00:00:00.000Z' },
+  }
+
+  let threw = false
+  try {
+    checkEndpointDeprecation(sunsetEndpoints, 'sunset-endpoint')
+  } catch (err) {
+    threw = true
+    assert.ok(err instanceof RouteDockDeprecatedError, `should throw RouteDockDeprecatedError, got ${String(err)}`)
+    assert.equal((err as RouteDockDeprecatedError).item, 'sunset-endpoint')
+  }
+  assert.ok(threw, 'sunset endpoint should throw')
+
+  // Test normalizeEndpointPath with EndpointEntry
+  assert.equal(normalizeEndpointPath(endpoints['old-endpoint']), 'GET /old')
+  assert.equal(normalizeEndpointPath(undefined), undefined)
+
+  console.log('✓ Test 6: Endpoint deprecation detection PASSED')
+}
+
+// ── Test 7: Pricing deprecation in selectMode ─────────────────────────────────
+
+{
+  const { selectMode } = await import('../client/ModeRouter.js')
+  const { RouteDockDeprecatedError: DeprecatedErr } = await import('../errors.js')
+
+  // Test with non-deprecated pricing
+  const manifest = {
+    routedock: '1.0' as const,
+    name: 'Pricing Dep Test',
+    description: 'test',
+    modes: ['x402' as const, 'mpp-charge' as const],
+    network: 'testnet' as const,
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      x402: { amount: '0.001', per: 'request' as const, facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+      'mpp-charge': { amount: '0.0008', per: 'request' as const },
+    },
+    endpoints: { price: 'GET /price' },
+    tags: ['test'],
+  }
+
+  // Should select mpp-charge without errors
+  const mode = selectMode(manifest)
+  assert.equal(mode, 'mpp-charge')
+
+  // Test with deprecated pricing (not yet sunset) — should warn but not throw
+  const deprecatedPricingManifest = {
+    routedock: '1.0' as const,
+    name: 'Pricing Dep Test',
+    description: 'test',
+    modes: ['x402' as const, 'mpp-charge' as const],
+    network: 'testnet' as const,
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      x402: { amount: '0.001', per: 'request' as const, facilitator: 'https://channels.openzeppelin.com/x402/testnet', deprecated: true, sunset_at: '2099-01-01T00:00:00.000Z' },
+      'mpp-charge': { amount: '0.0008', per: 'request' as const },
+    },
+    endpoints: { price: 'GET /price' },
+    tags: ['test'],
+  }
+  // Should still select mpp-charge (not deprecated)
+  const mode2 = selectMode(deprecatedPricingManifest)
+  assert.equal(mode2, 'mpp-charge')
+
+  // Test with sunset pricing — should throw
+  const sunsetPricing = {
+    routedock: '1.0' as const,
+    name: 'Pricing Dep Test',
+    description: 'test',
+    modes: ['x402' as const],
+    network: 'testnet' as const,
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      x402: { amount: '0.001', per: 'request' as const, facilitator: 'https://channels.openzeppelin.com/x402/testnet', deprecated: true, sunset_at: '2020-01-01T00:00:00.000Z' },
+    },
+    endpoints: { price: 'GET /price' },
+    tags: ['test'],
+  }
+
+  let threw = false
+  try {
+    selectMode(sunsetPricing, { forceMode: 'x402' })
+  } catch (err) {
+    threw = true
+    assert.ok(err instanceof DeprecatedErr, `should throw RouteDockDeprecatedError, got ${String(err)}`)
+  }
+  assert.ok(threw, 'sunset pricing mode should throw RouteDockDeprecatedError')
+
+  console.log('✓ Test 7: Pricing deprecation in selectMode PASSED')
 }
 
 console.log('\nAll smoke tests passed.')
