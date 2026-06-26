@@ -3,6 +3,7 @@ import { createX402Handler } from './x402Handler.js'
 import { createMppChargeHandler } from './MppChargeHandler.js'
 import { createMppSessionHandler } from './MppSessionHandler.js'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { normalizeManifestAssets } from '../internal/assetUtils.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -11,9 +12,10 @@ export interface RouteDockMiddlewareOptions {
     'mpp-charge'?: string
     'mpp-session'?: { rate: string; channelContract: string }
   }
-  asset: string
-  /** Stellar Asset Contract address for the payment asset */
-  assetContract: string
+  /** @deprecated Use manifest.assets instead. Asset ticker for the payment asset */
+  asset?: string
+  /** @deprecated Use manifest.assets instead. Stellar Asset Contract address for the payment asset */
+  assetContract?: string
   payee: string
   network: 'testnet' | 'mainnet'
   /** Private key (S...) of the server/payee account */
@@ -52,6 +54,13 @@ export interface RouteDockMiddlewareOptions {
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   const handlers: RequestHandler[] = []
 
+  // Determine asset_contract: prefer deprecated opts.assetContract, fallback to manifest
+  let assetContract = opts.assetContract
+  if (!assetContract) {
+    const assets = normalizeManifestAssets(opts.manifest)
+    assetContract = assets[0].asset_contract
+  }
+
   if (opts.modes.includes('x402')) {
     const x402Price = opts.pricing.x402
     if (x402Price) {
@@ -60,7 +69,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: x402Price,
-          assetContract: opts.assetContract,
+          assetContract: assetContract,
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
@@ -77,7 +86,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: chargePrice,
-          assetContract: opts.assetContract,
+          assetContract: assetContract,
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
         }),
@@ -97,7 +106,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           network: opts.network,
           channelContract: sessionPricing.channelContract,
           rate: sessionPricing.rate,
-          assetContract: opts.assetContract,
+          assetContract: assetContract,
           manifest: opts.manifest,
           commitmentPublicKey: opts.commitmentPublicKey,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),

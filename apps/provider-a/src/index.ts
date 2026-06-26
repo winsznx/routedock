@@ -39,8 +39,12 @@ const manifest: RouteDockManifest = {
   description: 'Real-time USDC/XLM mid-price from Stellar DEX orderbook via Horizon',
   modes: ['x402', 'mpp-charge'],
   network: STELLAR_NETWORK,
-  asset: 'USDC',
-  asset_contract: USDC_ASSET_CONTRACT,
+  assets: [
+    {
+      asset: 'USDC',
+      asset_contract: USDC_ASSET_CONTRACT,
+    },
+  ],
   payee: STELLAR_PAYEE_ADDRESS,
   pricing: {
     x402: {
@@ -96,8 +100,6 @@ app.use(
       x402: '0.001',
       'mpp-charge': '0.0008',
     },
-    asset: 'USDC',
-    assetContract: USDC_ASSET_CONTRACT,
     payee: STELLAR_PAYEE_ADDRESS,
     network: STELLAR_NETWORK,
     payeeSecretKey: STELLAR_PAYEE_SECRET,

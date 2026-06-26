@@ -7,6 +7,18 @@
 
 export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
 
+/** Payment asset configuration with optional mode/endpoint scoping */
+export interface AssetConfig {
+  /** Asset ticker symbol, e.g. "USDC" or "XLM" */
+  asset: string
+  /** Stellar Asset Contract (SAC) address for this payment asset */
+  asset_contract: string
+  /** Optional: restrict this asset to specific payment modes. If omitted, available for all modes. */
+  modes?: PaymentMode[]
+  /** Optional: restrict this asset to specific endpoints (by name). If omitted, available for all endpoints. */
+  endpoints?: string[]
+}
+
 /** Per-request pricing config — used by x402 and mpp-charge modes */
 export interface PricingConfig {
   /** Cost per request in the payment asset, e.g. "0.001" */
@@ -45,10 +57,12 @@ export interface RouteDockManifest {
   modes: PaymentMode[]
   /** Stellar network this provider operates on */
   network: 'testnet' | 'mainnet'
-  /** Asset ticker symbol, e.g. "USDC" */
-  asset: string
-  /** Stellar Asset Contract (SAC) address for the payment asset */
-  asset_contract: string
+  /** @deprecated Use assets[0].asset instead. Asset ticker symbol, e.g. "USDC" */
+  asset?: string
+  /** @deprecated Use assets[0].asset_contract instead. Stellar Asset Contract (SAC) address for the payment asset */
+  asset_contract?: string
+  /** Payment assets accepted by this provider. Each asset can be scoped to specific modes and endpoints. */
+  assets?: AssetConfig[]
   /** Stellar address (G...) that receives payments */
   payee: string
   /** Pricing configuration per supported payment mode */
