@@ -335,6 +335,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
+    update(key, fn) { return innerStore.update(key, fn) },
   }
 
   const mppx = Mppx.create({
