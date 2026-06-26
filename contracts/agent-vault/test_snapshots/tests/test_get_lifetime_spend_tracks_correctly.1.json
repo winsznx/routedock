@@ -6,6 +6,8 @@
   "auth": [
     [],
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -56,7 +58,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 5000000
+                    "lo": 1500000
                   }
                 }
               }
@@ -110,7 +112,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 5000000
+                    "lo": 1500000
                   }
                 }
               }
@@ -156,7 +158,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "72ced2886b2e9bcd89391821d6ba2d48466d4d5c34b746bfb46b32cc891917ac"
+                          "bytes": "b63cd8d94c8bcdcbb09c8319b13c049572218673e5a70bfa321faf1f347dab70"
                         }
                       },
                       {
@@ -195,7 +197,7 @@
                           "symbol": "expiry"
                         },
                         "val": {
-                          "u32": 10000
+                          "u32": 500000
                         }
                       },
                       {
@@ -224,7 +226,7 @@
                         "val": {
                           "i128": {
                             "hi": 0,
-                            "lo": 5000000
+                            "lo": 1500000
                           }
                         }
                       }
@@ -261,48 +263,5 @@
       ]
     ]
   },
-  "events": [
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "payment_authorized"
-              },
-              {
-                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
-              },
-              {
-                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 5000000
-                  }
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 5000000
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    }
-  ]
+  "events": []
 }
