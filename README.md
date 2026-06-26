@@ -301,6 +301,14 @@ For a detailed walkthrough of the architecture, protocol conformance, security m
 
 ---
 
+## What's next
+
+RouteDock is a **chain-agnostic agent payment protocol with Stellar as its canonical home.** The protocols it unifies aren't Stellar-bound — x402, which RouteDock wraps, was designed multi-chain and already settles on EVM.
+
+The [**Multi-Chain Roadmap**](docs/MULTICHAIN_ROADMAP.md) sketches a `ChainAdapter` interface with the existing Stellar clients as the reference implementation and **EVM (via x402) as the first extension target** — keeping the single-call agent experience (`client.pay(url)`) identical across chains. The plan is additive: the manifest's `chain` field is optional and defaults to `stellar`, so every existing provider and agent keeps working.
+
+---
+
 ## License
 
 MIT
