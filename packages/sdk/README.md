@@ -20,6 +20,12 @@ const client = new RouteDockClient({
   spendCap: { daily: '1.00', asset: 'USDC' },
 })
 
+// Compatibility-only check before rendering a Pay button
+const preflight = await client.preflight('https://provider.example.com/price')
+// preflight.supportedModes
+// preflight.estimatedCosts
+// preflight.compliance.payable
+
 // Single call — SDK reads manifest, picks mode automatically
 const result = await client.pay('https://provider.example.com/price')
 // result.data   — response body
@@ -34,6 +40,8 @@ for await (const update of session.stream()) {
 }
 await session.close() // triggers on-chain settlement
 ```
+
+`client.preflight(url, options?)` fetches and validates `/.well-known/routedock.json` without moving money. It returns the validated manifest, the mode `client.pay()` would choose, per-mode pricing estimates, and compatibility flags such as `networkMatch`, `payable`, and `sessionReady`.
 
 ## Provider Usage
 

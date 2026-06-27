@@ -63,6 +63,40 @@ export interface RouteDockManifest {
   tags: string[]
 }
 
+/** Compliance flags returned by client.preflight() */
+export interface PreflightComplianceFlags {
+  /** True when provider and client are on the same Stellar network */
+  networkMatch: boolean
+  /** True when the provider asset matches the local spend-cap asset, if configured */
+  assetMatch: boolean
+  /** True when a local spend cap is configured on the client */
+  spendCapConfigured: boolean
+  /** True when the selected mode's estimated upfront cost fits within the local spend cap */
+  spendCapCoversSelectedMode: boolean
+  /** True when the URL can be used with client.pay() without requiring session mode */
+  payable: boolean
+  /** True when session mode is supported and the client is configured to open one */
+  sessionReady: boolean
+}
+
+/** Lightweight compatibility result returned by client.preflight() */
+export interface PreflightResult {
+  /** Original URL passed to preflight() */
+  url: string
+  /** Provider origin that served the manifest */
+  baseUrl: string
+  /** Validated RouteDock manifest */
+  manifest: RouteDockManifest
+  /** Modes advertised by the provider */
+  supportedModes: PaymentMode[]
+  /** Mode that client.pay() would select for this URL and options */
+  selectedMode: PaymentMode
+  /** Estimated pricing by mode with no money movement */
+  estimatedCosts: RouteDockManifest['pricing']
+  /** Client/provider compatibility summary */
+  compliance: PreflightComplianceFlags
+}
+
 /** Result returned by client.pay() for any payment mode */
 export interface PaymentResult {
   /** Parsed response body from the provider */
