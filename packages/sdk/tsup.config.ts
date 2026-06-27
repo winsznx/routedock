@@ -7,6 +7,7 @@ export default defineConfig({
     provider: 'src/provider/index.ts',
     react: 'src/react/index.ts',
     'provider/hono': 'src/provider/hono.ts',
+    schema: 'src/schema.ts',
   },
   format: ['cjs', 'esm'],
   dts: true,

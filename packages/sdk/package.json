@@ -25,6 +25,9 @@
       ],
       "provider/hono": [
         "dist/provider/hono.d.ts"
+      ],
+      "schema": [
+        "dist/schema.d.ts"
       ]
     }
   },
@@ -53,13 +56,18 @@
       "types": "./dist/provider/hono.d.ts",
       "import": "./dist/provider/hono.js",
       "require": "./dist/provider/hono.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
+    "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/provider/__tests__/encoding.test.ts src/provider/__tests__/SeenTxStore.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
     "@stellar/mpp": "^0.4.0",
