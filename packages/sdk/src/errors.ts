@@ -194,3 +194,9 @@ export class RouteDockDisputeError extends RouteDockError {
       "RouteDockDisputeError"
   }
 }
+export class RouteDockRefundWindowError extends Error {
+  constructor(message?: string) {
+    super(message ?? 'Refund window has not elapsed yet');
+    this.name = 'RouteDockRefundWindowError';
+  }
+}
