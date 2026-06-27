@@ -53,6 +53,7 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { stream: 'GET /stream/orderbook' },
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
+  categories: ['data/stream/crypto'],
 }
 
 // Required env var check

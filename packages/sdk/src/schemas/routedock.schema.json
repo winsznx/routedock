@@ -96,6 +96,16 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "uniqueItems": true,
+      "description": "Optional hierarchical categories from a published taxonomy (e.g. data/price/crypto)"
     }
   },
   "definitions": {

@@ -61,6 +61,8 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /** Optional hierarchical categories from a published taxonomy (e.g. "data/price/crypto") */
+  categories?: string[]
 }
 
 /** Result returned by client.pay() for any payment mode */
