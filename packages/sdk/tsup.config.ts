@@ -9,6 +9,7 @@ export default defineConfig({
     testing: 'src/testing/index.ts',
     'provider/hono': 'src/provider/hono.ts',
     'provider/fastify': 'src/provider/fastify.ts',
+    schema: 'src/schema.ts',
   },
   format: ['cjs', 'esm'],
   dts: true,
