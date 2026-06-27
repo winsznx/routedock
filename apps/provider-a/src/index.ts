@@ -52,6 +52,7 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { price: 'GET /price' },
   tags: ['price', 'stellar', 'dex', 'orderbook', 'usdc'],
+  categories: ['data/price/crypto'],
 }
 
 // Required env var check — abort with clear message rather than a deep stack trace
