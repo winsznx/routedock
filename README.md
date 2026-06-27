@@ -68,6 +68,10 @@ graph LR
 
 The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
 
+**Audit Status:**
+- Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
+- SCF Audit Bank application: Submitted
+
 ## Soroban Events
 
 The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
