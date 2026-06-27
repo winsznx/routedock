@@ -2,7 +2,7 @@
 
 **Unified payment execution layer for autonomous agents on Stellar**
 
-[![npm](https://img.shields.io/npm/v/@routedock/routedock)](https://www.npmjs.com/package/@routedock/routedock) ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Network: Stellar](https://img.shields.io/badge/network-Stellar%20testnet%20%2B%20mainnet-brightgreen)
+[![npm](https://img.shields.io/npm/v/@routedock/routedock)](https://www.npmjs.com/package/@routedock/routedock) [![CI](https://github.com/winsznx/routedock/actions/workflows/ci.yml/badge.svg)](https://github.com/winsznx/routedock/actions/workflows/ci.yml) ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Network: Stellar](https://img.shields.io/badge/network-Stellar%20testnet%20%2B%20mainnet-brightgreen)
 
 ---
 
