@@ -3,6 +3,8 @@ import { createX402Handler } from './x402Handler.js'
 import { createMppChargeHandler } from './MppChargeHandler.js'
 import { createMppSessionHandler } from './MppSessionHandler.js'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import type { SeenTxStore } from './SeenTxStore.js'
+import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -30,6 +32,18 @@ export interface RouteDockMiddlewareOptions {
   onSessionOpen?: (channelId: string) => Promise<void>
   /** Called after each verified voucher in an mpp-session */
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  /**
+   * Called when an mpp-session connection drops or goes idle before a clean
+   * close. Persist the session as `closing` for the SessionReconciler.
+   */
+  onOrphaned?: (channelId: string, info: OrphanedSessionInfo) => Promise<void>
+  /** Idle timeout (ms) after which an mpp-session is flagged orphaned. */
+  idleTimeoutMs?: number
+  /**
+   * Idempotency store shared by the x402 and mpp-charge handlers to dedupe
+   * duplicate settlement on agent retries. Defaults to per-handler in-memory.
+   */
+  seenTxStore?: SeenTxStore
 }
 
 /**
@@ -64,6 +78,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+          ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
         }),
       )
     }
@@ -80,6 +95,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           assetContract: opts.assetContract,
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+          ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
         }),
       )
     }
@@ -103,6 +119,8 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onSessionOpen ? { onSessionOpen: opts.onSessionOpen } : {}),
           ...(opts.onVoucher ? { onVoucher: opts.onVoucher } : {}),
+          ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
+          ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
         }),
       )
     }

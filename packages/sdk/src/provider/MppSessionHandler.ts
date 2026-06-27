@@ -11,6 +11,21 @@ const MPP_NETWORK: Record<Network, 'stellar:testnet' | 'stellar:pubnet'> = {
   mainnet: 'stellar:pubnet',
 }
 
+/** Why a live session was flagged as orphaned (never cleanly closed). */
+export type OrphanReason = 'connection-closed' | 'idle-timeout'
+
+/** Latest signed state of an orphaned session, enough for the reconciler to settle. */
+export interface OrphanedSessionInfo {
+  /** Cumulative amount of the highest voucher seen (human-readable, 7 dp). */
+  cumulativeAmount: string
+  /** Hex-encoded signature of the highest voucher seen. */
+  lastSignature: string
+  /** Number of vouchers received before teardown. */
+  voucherCount: number
+  /** What triggered the orphan flag. */
+  reason: OrphanReason
+}
+
 export interface MppSessionHandlerOptions {
   payeeSecretKey: string
   network: Network
@@ -22,6 +37,17 @@ export interface MppSessionHandlerOptions {
   onSettled?: (txHash: string, totalPaid: string, mode: string) => Promise<void>
   onSessionOpen?: (channelId: string) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  /**
+   * Called when the client connection drops mid-session or the session goes
+   * idle, before a clean close. Persist the session as `closing` so the
+   * SessionReconciler can settle it with the latest signed voucher.
+   */
+  onOrphaned?: (channelId: string, info: OrphanedSessionInfo) => Promise<void>
+  /**
+   * Flag the session orphaned after this many milliseconds with no voucher
+   * activity. Disabled when unset.
+   */
+  idleTimeoutMs?: number
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -35,6 +61,54 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   let lastCumulativeAmount = 0n
   let voucherCount = 0
   let sessionOpened = false
+  // Track the last signature from the authorization header
+  let lastSignatureHex = ''
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  // Set once a session is settled via DELETE so teardown handlers don't
+  // re-flag an already-closed session as orphaned.
+  let settledCleanly = false
+  // Guards against registering more than one 'close' listener per session.
+  let closeListenerArmed = false
+
+  function clearIdleTimer(): void {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+
+  function armIdleTimer(): void {
+    if (!opts.idleTimeoutMs) return
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      void flagOrphan('idle-timeout')
+    }, opts.idleTimeoutMs)
+    // Don't keep the process alive solely for this timer.
+    if (typeof idleTimer.unref === 'function') idleTimer.unref()
+  }
+
+  // Flag an open-but-unsettled session for the reconciler. Idempotent: a
+  // session that was cleanly settled or already flagged is left untouched.
+  async function flagOrphan(reason: OrphanReason): Promise<void> {
+    if (!sessionOpened || settledCleanly) return
+    sessionOpened = false
+    closeListenerArmed = false
+    clearIdleTimer()
+
+    const cumulativeAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+    if (opts.onOrphaned) {
+      try {
+        await opts.onOrphaned(opts.channelContract, {
+          cumulativeAmount,
+          lastSignature: lastSignatureHex,
+          voucherCount,
+          reason,
+        })
+      } catch (err) {
+        console.error('[mpp-session] onOrphaned handler failed:', err)
+      }
+    }
+  }
 
   const wrappedStore: ReturnType<typeof Store.memory> = {
     async get(key: string) { return innerStore.get(key) },
@@ -43,6 +117,9 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       if (key === cumulativeKey && value && typeof value === 'object' && 'amount' in (value as Record<string, unknown>)) {
         lastCumulativeAmount = BigInt((value as { amount: string }).amount)
         voucherCount++
+        // Voucher activity — this session is alive again.
+        settledCleanly = false
+        armIdleTimer()
 
         if (!sessionOpened) {
           sessionOpened = true
@@ -74,9 +151,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     ],
   })
 
-  // Track the last signature from the authorization header
-  let lastSignatureHex = ''
-
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (req.method === 'DELETE') {
@@ -92,6 +166,10 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             feePayer: { envelopeSigner: payeeKeypair },
             network: networkId,
           })
+
+          // Clean close — suppress any orphan flagging for this session.
+          settledCleanly = true
+          clearIdleTimer()
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
@@ -146,6 +224,8 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         sessionOpened = false
         voucherCount = 0
         lastCumulativeAmount = 0n
+        closeListenerArmed = false
+        clearIdleTimer()
         return
       }
 
@@ -187,6 +267,16 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         const body = await challenge.text()
         res.send(body)
         return
+      }
+
+      // Payment verified. Detect connection teardown so a client crash mid-
+      // session flags the channel for the reconciler instead of leaking
+      // in-memory state and leaving the Supabase row stuck `open`.
+      if (!closeListenerArmed) {
+        closeListenerArmed = true
+        req.on('close', () => {
+          void flagOrphan('connection-closed')
+        })
       }
 
       next()
