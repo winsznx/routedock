@@ -244,6 +244,154 @@ function startTestServer(
   }
 }
 
+// ── Test 5: RouteDockClient.preflight() reports compatibility only ───────────
+
+{
+  const manifestRequests: string[] = []
+  const validManifest = {
+    routedock: '1.0',
+    name: 'Preflight Provider',
+    description: 'Provider used to verify compatibility checks',
+    modes: ['x402', 'mpp-charge', 'mpp-session'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      x402: {
+        amount: '0.0010',
+        per: 'request',
+        facilitator: 'https://channels.openzeppelin.com/x402/testnet',
+      },
+      'mpp-charge': { amount: '0.0008', per: 'request' },
+      'mpp-session': {
+        rate: '0.0001',
+        per: 'voucher',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+    },
+    endpoints: {
+      price: { method: 'GET', path: '/price' },
+      stream: { method: 'GET', path: '/stream' },
+    },
+    tags: ['preflight', 'stellar'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    manifestRequests.push(req.url ?? '/')
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(validManifest))
+      return
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true }))
+  })
+
+  try {
+    const { Keypair } = await import('@stellar/stellar-sdk')
+    const { RouteDockClient } = await import('../client/RouteDockClient.js')
+
+    const client = new RouteDockClient({
+      wallet: Keypair.random(),
+      network: 'testnet',
+      spendCap: { daily: '1.00', asset: 'USDC' },
+    })
+
+    const result = await client.preflight(`${server.url}/price`)
+
+    assert.deepEqual(result.supportedModes, ['x402', 'mpp-charge', 'mpp-session'])
+    assert.equal(result.selectedMode, 'mpp-charge')
+    assert.equal(result.estimatedCosts['mpp-charge']?.amount, '0.0008')
+    assert.equal(result.compliance.networkMatch, true)
+    assert.equal(result.compliance.payable, true)
+    assert.equal(result.compliance.sessionReady, false)
+    assert.deepEqual(manifestRequests, ['/.well-known/routedock.json'])
+
+    console.log('✓ Test 5: RouteDockClient.preflight() compatibility summary PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 6: RouteDockClient.pay() rejects over-cap spend before payment ──────
+
+{
+  const requestUrls: string[] = []
+  const manifest = {
+    routedock: '1.0',
+    name: 'Cap Test Provider',
+    description: 'Provider used to verify local spend cap enforcement',
+    modes: ['mpp-charge'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      'mpp-charge': { amount: '1.50', per: 'request' },
+    },
+    endpoints: { price: { method: 'GET', path: '/price' } },
+    tags: ['cap', 'stellar'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    requestUrls.push(req.url ?? '/')
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(manifest))
+      return
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true }))
+  })
+
+  try {
+    const { Keypair } = await import('@stellar/stellar-sdk')
+    const { RouteDockClient } = await import('../client/RouteDockClient.js')
+    const { RouteDockPolicyRejectError } = await import('../errors.js')
+
+    const client = new RouteDockClient({
+      wallet: Keypair.random(),
+      network: 'testnet',
+      spendCap: { daily: '1.00', asset: 'USDC' },
+    })
+
+    let paymentAttempted = false
+    ;(client as unknown as { charge: { pay: () => Promise<unknown> } }).charge = {
+      pay: async () => {
+        paymentAttempted = true
+        return {
+          data: { ok: true },
+          txHash: 'mock',
+          mode: 'mpp-charge',
+          amount: '1.50',
+          timestamp: Date.now(),
+        }
+      },
+    }
+
+    let threw = false
+    try {
+      await client.pay(`${server.url}/price`)
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof RouteDockPolicyRejectError)
+    }
+
+    assert.equal(threw, true, 'client.pay() should reject over-cap requests')
+    assert.equal(paymentAttempted, false, 'payment client should not be called when cap is exceeded')
+    assert.deepEqual(requestUrls, ['/.well-known/routedock.json'])
+
+    console.log('✓ Test 6: RouteDockClient.pay() pre-checks spend cap PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
 // ── Test 5: SessionStore — monotonic invariant rejection ─────────────────────
 
 {
@@ -318,10 +466,10 @@ function startTestServer(
   }
   assert.ok(threw, 'lower cumulative amount should be rejected')
 
-  console.log('✓ Test 3: SessionStore monotonic invariant rejection PASSED')
+  console.log('✓ Test 5: SessionStore monotonic invariant rejection PASSED')
 }
 
-// ── Test 5: Error subclass hierarchy ─────────────────────────────────────────
+// ── Test 7: Error subclass hierarchy ─────────────────────────────────────────
 
 {
   const {
@@ -355,10 +503,10 @@ function startTestServer(
   const policyErr = new RouteDockPolicyRejectError('local_daily_cap_exceeded')
   assert.equal(policyErr.reason, 'local_daily_cap_exceeded')
 
-  console.log('✓ Test 4: Error subclass hierarchy PASSED')
+  console.log('✓ Test 6: Error subclass hierarchy PASSED')
 }
 
-// ── Test 5: Per-endpoint spend cap enforcement ────────────────────────────────
+// ── Test 8: Per-endpoint spend cap enforcement ────────────────────────────────
 
 {
   const { RouteDockPolicyRejectError: PolicyErr } = await import('../errors.js')
@@ -493,7 +641,7 @@ function startTestServer(
     console.log('✓ Test 5d: one endpoint cap exhausted does not block others PASSED')
   }
 
-  console.log('✓ Test 5: Per-endpoint spend cap enforcement ALL PASSED')
+  console.log('✓ Test 8: Per-endpoint spend cap enforcement ALL PASSED')
 }
 
 console.log('\nAll smoke tests passed.')

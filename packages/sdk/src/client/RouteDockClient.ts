@@ -4,7 +4,16 @@ import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareCovenantSigner, CovenantPolicyError, type CovenantZkVaultConfig } from './CovenantZkVault.js'
-import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
+import type {
+  EstimateCostResult,
+  PaymentMode,
+  PaymentResult,
+  PreflightComplianceFlags,
+  PreflightResult,
+  RouteDockManifest,
+  SessionHandle,
+  SessionOptions,
+} from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
@@ -84,6 +93,11 @@ function usdcToMicros(decimal: string): bigint {
   return BigInt(whole) * 10_000_000n + BigInt(paddedFraction)
 }
 
+interface ResolvedPreflight {
+  manifest: RouteDockManifest
+  result: PreflightResult
+}
+
 export class RouteDockClient {
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
@@ -109,7 +123,6 @@ export class RouteDockClient {
     this.network = config.network
     this.spendCap = config.spendCap
     this.retryPolicy = config.retryPolicy
-    // Only warn about non-durability when a spend cap is actually configured.
     this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
     this.logger = config.logger
     this.vault = config.vault
@@ -140,9 +153,11 @@ export class RouteDockClient {
    * checks local spend cap, executes payment, returns result.
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
-    const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
-    const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
+    const { manifest, result: preflight } = await this._resolvePreflight(url, options)
+    const mode = preflight.selectedMode
+
+    this._assertNetworkMatch(preflight)
+    this._assertAssetMatch(preflight)
 
     if (this.vault?.mode === 'covenant-zk') {
       return this._payWithCovenantVault(url, manifest, mode)
@@ -152,9 +167,11 @@ export class RouteDockClient {
 
     switch (mode) {
       case 'x402':
+        await this._checkSpendAllowed(manifest.pricing.x402?.amount, new URL(url).origin)
         result = await this.x402.pay(url, manifest)
         break
       case 'mpp-charge':
+        await this._checkSpendAllowed(manifest.pricing['mpp-charge']?.amount, new URL(url).origin)
         result = await this.charge.pay(url, manifest)
         break
       case 'mpp-session':
@@ -169,11 +186,20 @@ export class RouteDockClient {
     return result
   }
 
+  /**
+   * Fetch and validate the provider manifest for `url` without executing a payment.
+   * Returns supported modes, estimated costs, and compatibility flags for the client.
+   */
+  async preflight(url: string, options?: ModeSelectOptions): Promise<PreflightResult> {
+    const { result } = await this._resolvePreflight(url, options)
+    return result
+  }
+
   /** Covenant ZK vault path — proof built off-chain, attached as auth signature */
   private async _payWithCovenantVault(
     url: string,
-    manifest: import('../types.js').RouteDockManifest,
-    mode: import('../types.js').PaymentMode,
+    manifest: RouteDockManifest,
+    mode: PaymentMode,
   ): Promise<PaymentResult> {
     if (mode !== 'x402') {
       throw new RouteDockManifestError(
@@ -184,8 +210,7 @@ export class RouteDockClient {
     try {
       const { signer } = await prepareCovenantSigner(this.vault!, manifest, mode, this.network)
       const x402 = this.x402.withSigner(signer)
-      const result = await x402.pay(url, manifest)
-      return result
+      return await x402.pay(url, manifest)
     } catch (err) {
       if (err instanceof CovenantPolicyError) {
         throw new RouteDockPolicyRejectError((err as CovenantPolicyError).code)
@@ -229,12 +254,15 @@ export class RouteDockClient {
    * disable via `options.maxDurationMs`.
    */
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
-    const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const { manifest, result: preflight } = await this._resolvePreflight(url, {
+      forceMode: 'mpp-session',
+    })
 
-    if (!manifest.modes.includes('mpp-session')) {
+    this._assertNetworkMatch(preflight)
+
+    if (!preflight.compliance.sessionReady) {
       throw new RouteDockManifestError(
-        `Provider at ${baseUrl} does not support mpp-session mode`,
+        'commitmentSecret is required in RouteDockClientConfig for mpp-session mode',
       )
     }
 
@@ -257,21 +285,118 @@ export class RouteDockClient {
     _secrets.delete(this)
   }
 
-  /**
-   * Check local daily caps and record the spend. Throws if any cap is exceeded.
-   *
-   * Enforcement order:
-   *   1. Per-endpoint cap (if `endpointCaps[endpointKey]` is set) — checked first.
-   *   2. Global daily cap — checked second.
-   *
-   * Both limits are independent: a payment is only recorded after **both** pass.
-   * All spend (regardless of endpoint) counts toward the global accumulator.
-   *
-   * All arithmetic is done in exact integer microUSDC (bigint) to avoid
-   * floating point precision loss from repeated decimal additions. The
-   * accumulator is read from and written back to the injected SpendStore so
-   * the cap survives process restarts when a durable store is configured.
-   */
+  private async _resolvePreflight(
+    url: string,
+    options: ModeSelectOptions = {},
+  ): Promise<ResolvedPreflight> {
+    const baseUrl = new URL(url).origin
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const selectedMode = selectMode(manifest, options)
+    const compliance = await this._buildComplianceFlags(manifest, selectedMode)
+
+    return {
+      manifest,
+      result: {
+        url,
+        baseUrl,
+        manifest,
+        supportedModes: [...manifest.modes],
+        selectedMode,
+        estimatedCosts: { ...manifest.pricing },
+        compliance,
+      },
+    }
+  }
+
+  private async _buildComplianceFlags(
+    manifest: RouteDockManifest,
+    selectedMode: PaymentMode,
+  ): Promise<PreflightComplianceFlags> {
+    const spendCapConfigured = this.spendCap !== undefined
+    const assetMatch = !this.spendCap || manifest.asset === this.spendCap.asset
+    const spendCapCoversSelectedMode = await this._canAffordEstimatedSpend(
+      this._getEstimatedSpendForMode(manifest, selectedMode),
+    )
+    const networkMatch = manifest.network === this.network
+    const sessionReady = !manifest.modes.includes('mpp-session') || Boolean(_secrets.get(this))
+    const payable =
+      selectedMode !== 'mpp-session' &&
+      networkMatch &&
+      assetMatch &&
+      spendCapCoversSelectedMode
+
+    return {
+      networkMatch,
+      assetMatch,
+      spendCapConfigured,
+      spendCapCoversSelectedMode,
+      payable,
+      sessionReady,
+    }
+  }
+
+  private _getEstimatedSpendForMode(
+    manifest: RouteDockManifest,
+    mode: PaymentMode,
+  ): string | undefined {
+    switch (mode) {
+      case 'x402':
+        return manifest.pricing.x402?.amount
+      case 'mpp-charge':
+        return manifest.pricing['mpp-charge']?.amount
+      case 'mpp-session':
+        return manifest.pricing['mpp-session']?.min_deposit
+      default:
+        return undefined
+    }
+  }
+
+  private _assertNetworkMatch(preflight: PreflightResult): void {
+    if (!preflight.compliance.networkMatch) {
+      throw new RouteDockManifestError(
+        `Provider network ${preflight.manifest.network} does not match client network ${this.network}`,
+      )
+    }
+  }
+
+  private _assertAssetMatch(preflight: PreflightResult): void {
+    if (!preflight.compliance.assetMatch) {
+      throw new RouteDockManifestError(
+        `Provider asset ${preflight.manifest.asset} does not match local spend cap asset ${this.spendCap?.asset}`,
+      )
+    }
+  }
+
+  /** Check local daily cap before any payment client runs. Throws if cap exceeded. */
+  private async _checkSpendAllowed(amount: string | undefined, endpointKey: string): Promise<void> {
+    if (!this.spendCap || !amount) return
+
+    const today = new Date().toISOString().slice(0, 10)
+    const persisted = await this.spendStore.read()
+    const current: DailySpend =
+      persisted && persisted.date === today
+        ? persisted
+        : { date: today, totalMicros: '0', endpoints: {} }
+
+    const amountMicros = usdcToMicros(amount)
+    const total = BigInt(current.totalMicros)
+
+    const endpointCapStr = this.spendCap.endpointCaps?.[endpointKey]
+    if (endpointCapStr !== undefined) {
+      const endpointCapMicros = usdcToMicros(endpointCapStr)
+      const endpointTotal = BigInt(current.endpoints[endpointKey] ?? '0')
+      if (endpointTotal + amountMicros > endpointCapMicros) {
+        throw new RouteDockPolicyRejectError('local_endpoint_cap_exceeded')
+      }
+    }
+
+    const globalCapMicros = usdcToMicros(this.spendCap.daily)
+    if (total + amountMicros > globalCapMicros) {
+      throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
+    }
+  }
+
+  /** Record successful spend after settlement completes. */
   private async _checkAndRecordSpend(amount: string, endpointKey: string): Promise<void> {
     if (!this.spendCap) return
 
@@ -285,7 +410,6 @@ export class RouteDockClient {
     const amountMicros = usdcToMicros(amount)
     const total = BigInt(current.totalMicros)
 
-    // 1. Per-endpoint cap check
     const endpointCapStr = this.spendCap.endpointCaps?.[endpointKey]
     if (endpointCapStr !== undefined) {
       const endpointCapMicros = usdcToMicros(endpointCapStr)
@@ -295,18 +419,31 @@ export class RouteDockClient {
       }
     }
 
-    // 2. Global daily cap check
     const globalCapMicros = usdcToMicros(this.spendCap.daily)
     if (total + amountMicros > globalCapMicros) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
-    // Both checks passed — record the spend
     current.totalMicros = (total + amountMicros).toString()
     if (endpointCapStr !== undefined) {
       current.endpoints[endpointKey] =
         (BigInt(current.endpoints[endpointKey] ?? '0') + amountMicros).toString()
     }
     await this.spendStore.write(current)
+  }
+
+  private async _canAffordEstimatedSpend(amount: string | undefined): Promise<boolean> {
+    if (!this.spendCap || !amount) return true
+
+    const today = new Date().toISOString().slice(0, 10)
+    const persisted = await this.spendStore.read()
+    const current: DailySpend =
+      persisted && persisted.date === today
+        ? persisted
+        : { date: today, totalMicros: '0', endpoints: {} }
+
+    const amountMicros = usdcToMicros(amount)
+    const capMicros = usdcToMicros(this.spendCap.daily)
+    return BigInt(current.totalMicros) + amountMicros <= capMicros
   }
 }
