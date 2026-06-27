@@ -131,6 +131,8 @@ export interface RouteDockManifest {
    * before trusting any routing field (payee, endpoints, pricing).
    */
   signature?: string
+  /** Optional hierarchical categories from a published taxonomy (e.g. "data/price/crypto") */
+  categories?: string[]
 }
 
 /** Result returned by client.pay() for any payment mode */
