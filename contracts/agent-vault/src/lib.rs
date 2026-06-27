@@ -242,6 +242,11 @@ mod tests {
         BytesN::<64>::from_array(env, &sig.to_bytes())
     }
 
+    fn event_topic_matches(env: &Env, topic: soroban_sdk::Val, expected: &Symbol) -> bool {
+        let sym: Symbol = topic.into_val(env);
+        sym == *expected
+    }
+
     fn setup(env: &Env) -> (AgentVaultClient<'_>, SigningKey, Address, Address) {
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(env, &vault_id);
@@ -682,7 +687,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| event_topic_matches(&env, t, &evt_name))
             })
             .collect();
 
@@ -726,7 +731,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| event_topic_matches(&env, t, &evt_name))
             })
             .last()
             .expect("expected at least one payment_authorized event");
@@ -756,7 +761,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| event_topic_matches(&env, t, &evt_name))
             })
             .count();
         assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
@@ -800,7 +805,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| event_topic_matches(&env, t, &evt_name))
             })
             .collect();
         assert_eq!(matching.len(), 1, "exactly one session_settled event expected");

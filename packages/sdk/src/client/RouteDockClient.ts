@@ -1,8 +1,10 @@
 import { Keypair } from '@stellar/stellar-sdk'
+import { CovenantPolicyError } from '@routedock/covenant-sdk'
 import { fetchManifest, selectMode, type ModeSelectOptions } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
+import { prepareCovenantSigner, type CovenantZkVaultConfig } from './CovenantZkVault.js'
 import type { PaymentResult, SessionHandle } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
@@ -13,16 +15,23 @@ export interface SpendCap {
   asset: 'USDC'
 }
 
+export type VaultConfig = CovenantZkVaultConfig
+
 export interface RouteDockClientConfig {
-  /** Stellar keypair or raw secret key (S...) */
+  /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
   wallet: Keypair | string
   network: 'testnet' | 'mainnet'
-  /** Optional local daily spend cap — checked before every payment */
+  /** Optional local daily spend cap — checked before every payment (local-key vault only) */
   spendCap?: SpendCap
   /** Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session. */
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
+   * with off-chain ZK proofs attached as auth signatures.
+   */
+  vault?: VaultConfig
 }
 
 export class RouteDockClient {
@@ -31,11 +40,12 @@ export class RouteDockClient {
   private readonly spendCap: SpendCap | undefined
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
+  private readonly vault: VaultConfig | undefined
 
   /** Local daily accumulator keyed by YYYY-MM-DD */
   private dailySpend: { date: string; total: number } = { date: '', total: 0 }
 
-  private readonly x402: X402Client
+  private x402: X402Client
   private readonly charge: MppChargeClient
   private readonly session: MppSessionClient
 
@@ -46,6 +56,7 @@ export class RouteDockClient {
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
+    this.vault = config.vault
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -61,6 +72,10 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy)
     const mode = selectMode(manifest, options)
+
+    if (this.vault?.mode === 'covenant-zk') {
+      return this._payWithCovenantVault(url, manifest, mode)
+    }
 
     let result: PaymentResult
 
@@ -81,6 +96,31 @@ export class RouteDockClient {
 
     this._checkAndRecordSpend(result.amount)
     return result
+  }
+
+  /** Covenant ZK vault path — proof built off-chain, attached as auth signature */
+  private async _payWithCovenantVault(
+    url: string,
+    manifest: import('../types.js').RouteDockManifest,
+    mode: import('../types.js').PaymentMode,
+  ): Promise<PaymentResult> {
+    if (mode !== 'x402') {
+      throw new RouteDockManifestError(
+        'covenant-zk vault currently supports x402 mode — force x402 via { forceMode: "x402" }',
+      )
+    }
+
+    try {
+      const { signer } = await prepareCovenantSigner(this.vault!, manifest, mode, this.network)
+      const x402 = this.x402.withSigner(signer)
+      const result = await x402.pay(url, manifest)
+      return result
+    } catch (err) {
+      if (err instanceof CovenantPolicyError) {
+        throw new RouteDockPolicyRejectError(err.code)
+      }
+      throw err
+    }
   }
 
   /**

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, Covenant_integration]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  test-sdk:
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @routedock/covenant-sdk build
+      - run: pnpm --filter @routedock/covenant-sdk test
+      - run: pnpm --filter @routedock/routedock test
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @routedock/covenant-sdk build
+      - run: pnpm --filter @routedock/routedock build
+      - run: pnpm --filter provider-a typecheck
+      - run: pnpm --filter provider-b typecheck
+
+  agent-vault-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run agent-vault contract tests
+        working-directory: contracts/agent-vault
+        run: cargo test

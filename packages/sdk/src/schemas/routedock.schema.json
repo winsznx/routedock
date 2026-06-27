@@ -96,9 +96,22 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "vault": {
+      "$ref": "#/definitions/VaultMode",
+      "description": "Agent custody mode accepted by this provider. covenant-zk uses a Covenant ZK account as payer with off-chain policy proofs."
+    },
+    "covenant_account": {
+      "type": "string",
+      "description": "Covenant smart account contract address (C...) when vault is covenant-zk"
     }
   },
   "definitions": {
+    "VaultMode": {
+      "type": "string",
+      "enum": ["local-key", "agent-vault", "covenant-zk"],
+      "description": "Agent vault / custody mode for payments from this provider"
+    },
     "PaymentMode": {
       "type": "string",
       "enum": ["x402", "mpp-charge", "mpp-session"],
