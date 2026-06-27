@@ -51,6 +51,7 @@ export interface RouteDockMiddlewareOptions {
  */
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   const handlers: RequestHandler[] = []
+  const startTime = Date.now()
 
   if (opts.modes.includes('x402')) {
     const x402Price = opts.pricing.x402
@@ -112,6 +113,19 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     // Serve manifest at /.well-known/routedock.json
     if (req.path === '/.well-known/routedock.json') {
       res.json(opts.manifest)
+      return
+    }
+
+    // Serve health check endpoint
+    if (req.path === '/health') {
+      res.json({
+        status: 'ok',
+        routedock: opts.manifest.routedock,
+        network: opts.network,
+        payee: opts.payee,
+        modesActive: opts.modes,
+        uptime: Math.floor((Date.now() - startTime) / 1000),
+      })
       return
     }
 
