@@ -25,6 +25,27 @@ export interface RouteDockClientConfig {
   retryPolicy?: RetryPolicy
 }
 
+/**
+ * Convert a decimal USDC string (e.g. "0.0001", "1.00") to an exact
+ * integer count of microUSDC (1 USDC = 10^7 units on Stellar) as a bigint.
+ * Avoids floating point precision loss from parseFloat on repeated additions.
+ */
+function usdcToMicros(decimal: string): bigint {
+  const trimmed = decimal.trim()
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(trimmed)
+  if (!match) {
+    throw new RouteDockPolicyRejectError(`invalid_usdc_amount:${decimal}`)
+  }
+
+  const [, whole, fraction = ''] = match
+  if (fraction.length > 7) {
+    throw new RouteDockPolicyRejectError(`usdc_amount_too_precise:${decimal}`)
+  }
+
+  const paddedFraction = fraction.padEnd(7, '0')
+  return BigInt(whole) * 10_000_000n + BigInt(paddedFraction)
+}
+
 export class RouteDockClient {
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
@@ -32,8 +53,8 @@ export class RouteDockClient {
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
 
-  /** Local daily accumulator keyed by YYYY-MM-DD */
-  private dailySpend: { date: string; total: number } = { date: '', total: 0 }
+  /** Local daily accumulator keyed by YYYY-MM-DD, total in microUSDC (1 USDC = 10^7) */
+  private dailySpend: { date: string; total: bigint } = { date: '', total: 0n }
 
   private readonly x402: X402Client
   private readonly charge: MppChargeClient
@@ -112,15 +133,16 @@ export class RouteDockClient {
 
     const today = new Date().toISOString().slice(0, 10)
     if (this.dailySpend.date !== today) {
-      this.dailySpend = { date: today, total: 0 }
+      this.dailySpend = { date: today, total: 0n }
     }
 
-    const amountNum = parseFloat(amount)
-    const capNum = parseFloat(this.spendCap.daily)
-    if (this.dailySpend.total + amountNum > capNum) {
+    const amountMicros = usdcToMicros(amount)
+    const capMicros = usdcToMicros(this.spendCap.daily)
+
+    if (this.dailySpend.total + amountMicros > capMicros) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
-    this.dailySpend.total += amountNum
+    this.dailySpend.total += amountMicros
   }
 }
