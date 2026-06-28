@@ -59,6 +59,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/stream-backpressure.test.ts src/client/__tests__/commitment-secret-isolation.test.ts src/tests/smoke.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
     "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
