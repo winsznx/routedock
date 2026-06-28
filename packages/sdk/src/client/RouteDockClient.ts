@@ -35,6 +35,12 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Timeout in milliseconds for manifest fetches. A provider that accepts the TCP
+   * connection but never sends a response body will be aborted after this delay.
+   * Default: 5000 ms.
+   */
+  manifestTimeoutMs?: number
 }
 
 export class RouteDockClient {
@@ -42,6 +48,7 @@ export class RouteDockClient {
   private readonly network: 'testnet' | 'mainnet'
   private readonly spendCap: SpendCap | undefined
   private readonly retryPolicy: RetryPolicy | undefined
+  private readonly manifestTimeoutMs: number | undefined
 
   /** Local daily accumulator keyed by YYYY-MM-DD */
   private dailySpend: { date: string; total: number } = { date: '', total: 0 }
@@ -56,6 +63,7 @@ export class RouteDockClient {
     this.network = config.network
     this.spendCap = config.spendCap
     this.retryPolicy = config.retryPolicy
+    this.manifestTimeoutMs = config.manifestTimeoutMs
 
     if (config.commitmentSecret) {
       _secrets.set(this, config.commitmentSecret)
@@ -73,7 +81,7 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, options)
 
     let result: PaymentResult
@@ -103,7 +111,7 @@ export class RouteDockClient {
    */
   async openSession(url: string): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
 
     if (!manifest.modes.includes('mpp-session')) {
       throw new RouteDockManifestError(
