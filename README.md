@@ -68,6 +68,19 @@ graph LR
 
 The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
 
+## Soroban Events
+
+The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
+
+| Event | Topics | Data | When |
+|---|---|---|---|
+| `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
+| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
+
+```bash
+stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
+```
+
 ---
 
 ## Live Testnet Transactions
@@ -192,6 +205,8 @@ The Supabase `providers` table indexes manifests with `pg_trgm` trigram search â
 
 ## Provider Integration
 
+### Express
+
 ```ts
 import { routedock } from '@routedock/routedock/provider'
 
@@ -206,6 +221,29 @@ app.use('/price', routedock({
   facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
   manifest,
 }))
+```
+
+### Hono (Cloudflare Workers, Bun, Deno Deploy)
+
+```ts
+import { Hono } from 'hono'
+import { routedockHono } from '@routedock/sdk/provider/hono'
+
+const app = new Hono()
+
+app.use('/price', routedockHono({
+  modes: ['x402', 'mpp-charge'],
+  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+  asset: 'USDC',
+  assetContract: process.env.USDC_ASSET_CONTRACT,
+  payee: process.env.STELLAR_PAYEE_ADDRESS,
+  payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
+  network: process.env.STELLAR_NETWORK,
+  facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
+  manifest,
+}))
+
+export default app
 ```
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.

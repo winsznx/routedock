@@ -23,8 +23,9 @@ export interface RouteDockProviderProps extends RouteDockContextValue {
  */
 export function RouteDockProvider(props: RouteDockProviderProps) {
   const { children, client, supabase } = props
+  const value: RouteDockContextValue = supabase ? { client, supabase } : { client }
   return (
-    <RouteDockContext.Provider value={{ client, supabase }}>
+    <RouteDockContext.Provider value={value}>
       {children}
     </RouteDockContext.Provider>
   )

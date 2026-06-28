@@ -98,6 +98,46 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             await opts.onSettled(closeTxHash, totalPaid, 'mpp-session')
           }
 
+          // Optionally record session_settled on the agent vault.
+          // Requires AGENT_VAULT_CONTRACT and AGENT_VAULT_ADMIN_SECRET env vars.
+          const vaultContract = process.env.AGENT_VAULT_CONTRACT
+          const vaultAdminSecret = process.env.AGENT_VAULT_ADMIN_SECRET
+          if (vaultContract && vaultAdminSecret) {
+            try {
+              const { Contract, TransactionBuilder, BASE_FEE, Networks, Account } = await import('@stellar/stellar-sdk')
+              const { Server } = await import('@stellar/stellar-sdk/rpc')
+              const adminKp = Keypair.fromSecret(vaultAdminSecret)
+              const networkPassphrase = opts.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+              const rpcUrl = opts.network === 'mainnet'
+                ? 'https://mainnet.sorobanrpc.com'
+                : 'https://soroban-testnet.stellar.org'
+              const server = new Server(rpcUrl)
+              const sourceAccount = await server.getAccount(adminKp.publicKey())
+              const vault = new Contract(vaultContract)
+              const { nativeToScVal, Address: StellarAddress } = await import('@stellar/stellar-sdk')
+              const op = vault.call(
+                'record_session_settlement',
+                nativeToScVal(opts.channelContract, { type: 'address' }),
+                nativeToScVal(payeeKeypair.publicKey(), { type: 'address' }),
+                nativeToScVal(payeeKeypair.publicKey(), { type: 'address' }),
+                nativeToScVal(closeAmount, { type: 'i128' }),
+                nativeToScVal(voucherCount, { type: 'u32' }),
+              )
+              const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+              })
+                .addOperation(op)
+                .setTimeout(30)
+                .build()
+              const preparedTx = await server.prepareTransaction(tx)
+              preparedTx.sign(adminKp)
+              await server.sendTransaction(preparedTx)
+            } catch (recordErr) {
+              console.error('[mpp-session] failed to record session_settled on vault:', recordErr)
+            }
+          }
+
           res.json({ closeTxHash })
         } else {
           res.json({ closeTxHash: null, message: 'no vouchers received' })
