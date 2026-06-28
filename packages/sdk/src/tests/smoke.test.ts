@@ -209,7 +209,7 @@ function startTestServer(
     RouteDockPolicyRejectError,
   } = await import('../errors.js')
 
-  const errors: RouteDockError[] = [
+  const errors: InstanceType<typeof RouteDockError>[] = [
     new RouteDockManifestError('test'),
     new RouteDockNoSupportedModeError('test'),
     new RouteDockFacilitatorError('test', 503),
