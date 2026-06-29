@@ -61,6 +61,19 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * IATA airport codes or UN/LOCODE identifiers for regions where this provider
+   * has infrastructure (e.g. ["IAD", "AMS"]). Used by agents to select the
+   * nearest provider and reduce mpp-session round-trip latency.
+   */
+  regions?: string[]
+  /**
+   * Provider-declared p50 latency in milliseconds per region code.
+   * Keys must be a subset of `regions`. Agents can use these hints to
+   * rank providers by expected round-trip cost before opening a session.
+   * Example: { "IAD": 14, "AMS": 22 }
+   */
+  latency_hints?: Record<string, number>
 }
 
 /** Result returned by client.pay() for any payment mode */
