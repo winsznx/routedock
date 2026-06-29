@@ -81,11 +81,14 @@
     },
     "endpoints": {
       "type": "object",
-      "description": "Map of endpoint name to HTTP method + path (e.g. { 'price': 'GET /price' })",
+      "description": "Map of endpoint name to endpoint descriptors",
       "additionalProperties": {
-        "type": "string"
+        "$ref": "#/definitions/EndpointDescriptor"
       },
       "minProperties": 1
+    },
+    "sla": {
+      "$ref": "#/definitions/SLAConfig"
     },
     "tags": {
       "type": "array",
@@ -152,6 +155,82 @@
           "type": "integer",
           "minimum": 1,
           "description": "Ledgers the server has to settle before the funder can reclaim. Default: 17280 (~24h). Do not reduce in production."
+        }
+      }
+    },
+    "SLAConfig": {
+      "type": "object",
+      "description": "Service Level Agreement for the provider",
+      "required": ["uptime_30d_percent", "p95_latency_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "uptime_30d_percent": {
+          "type": "number",
+          "description": "Uptime percentage over the last 30 days"
+        },
+        "p95_latency_ms": {
+          "type": "number",
+          "description": "P95 latency in milliseconds"
+        },
+        "maintenance_windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cron", "duration_minutes"],
+            "additionalProperties": false,
+            "properties": {
+              "cron": {
+                "type": "string",
+                "description": "Cron expression for the maintenance window"
+              },
+              "duration_minutes": {
+                "type": "number",
+                "description": "Duration of the maintenance window in minutes"
+              }
+            }
+          }
+        }
+      }
+    },
+    "EndpointDescriptor": {
+      "type": "object",
+      "description": "Descriptor for a provider endpoint",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "HTTP method for the endpoint"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path for the endpoint"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Expected request headers"
+        },
+        "request_schema": {
+          "description": "JSON schema for the request body"
+        },
+        "response_schema": {
+          "description": "JSON schema for the response body"
+        },
+        "rate_limit": {
+          "type": "object",
+          "required": ["requests", "window_seconds"],
+          "additionalProperties": false,
+          "properties": {
+            "requests": {
+              "type": "number"
+            },
+            "window_seconds": {
+              "type": "number"
+            }
+          }
         }
       }
     }

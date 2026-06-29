@@ -42,6 +42,7 @@ export interface RouteDockHonoOptions {
   onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
   onSessionOpen?: (channelId: string) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onCallbackError?: (err: unknown, cbName: string) => void
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -156,7 +157,10 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, x402Price, 'x402')
+        Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402')).catch(err => {
+          console.error('[x402] onSettled callback error:', err)
+          opts.onCallbackError?.(err, 'onSettled')
+        })
       }
 
       await next()
@@ -224,7 +228,10 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            await opts.onSettled(parsed.reference, chargePrice, 'mpp-charge')
+            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, chargePrice, 'mpp-charge')).catch(err => {
+              console.error('[mpp-charge] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
         } catch {
           // non-fatal
@@ -266,13 +273,19 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(sessionPricing.channelContract)
+            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract)).catch(err => {
+              console.error('[mpp-session] onSessionOpen callback error:', err)
+              opts.onCallbackError?.(err, 'onSessionOpen')
+            })
           }
         }
 
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-          await opts.onVoucher(voucherCount, humanAmount)
+          Promise.resolve().then(() => opts.onVoucher!(voucherCount, humanAmount)).catch(err => {
+            console.error('[mpp-session] onVoucher callback error:', err)
+            opts.onCallbackError?.(err, 'onVoucher')
+          })
         }
       }
     },
@@ -317,7 +330,10 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session')
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session')).catch(err => {
+              console.error('[mpp-session] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
 
           sessionOpened = false

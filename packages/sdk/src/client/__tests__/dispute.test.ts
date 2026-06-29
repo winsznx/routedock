@@ -42,7 +42,7 @@ function buildManifest(): RouteDockManifest {
         refund_waiting_period_ledgers: 17280,
       },
     },
-    endpoints: { stream: 'GET /stream/orderbook' },
+    endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
     tags: ['orderbook', 'stellar', 'test'],
   }
 }

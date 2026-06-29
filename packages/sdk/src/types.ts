@@ -33,6 +33,29 @@ export interface SessionPricingConfig {
   refund_waiting_period_ledgers: number
 }
 
+/** SLA configuration */
+export interface SLAConfig {
+  uptime_30d_percent: number
+  p95_latency_ms: number
+  maintenance_windows?: {
+    cron: string
+    duration_minutes: number
+  }[]
+}
+
+/** Endpoint descriptor */
+export interface EndpointDescriptor {
+  method: string
+  path: string
+  headers?: Record<string, string>
+  request_schema?: unknown
+  response_schema?: unknown
+  rate_limit?: {
+    requests: number
+    window_seconds: number
+  }
+}
+
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
 export interface RouteDockManifest {
   /** Schema version — always "1.0" */
@@ -57,8 +80,10 @@ export interface RouteDockManifest {
     'mpp-charge'?: PricingConfig
     'mpp-session'?: SessionPricingConfig
   }
-  /** Map of endpoint name to HTTP method + path, e.g. { price: "GET /price" } */
-  endpoints: Record<string, string>
+  /** Service Level Agreement for the provider */
+  sla?: SLAConfig
+  /** Map of endpoint name to endpoint descriptors */
+  endpoints: Record<string, EndpointDescriptor>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
 }

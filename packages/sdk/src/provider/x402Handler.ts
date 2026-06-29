@@ -29,6 +29,7 @@ export interface X402HandlerOptions {
   facilitatorApiKey?: string
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
+  onCallbackError?: (err: unknown, cb: string) => void
 }
 
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
@@ -152,7 +153,10 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, opts.amount, 'x402')
+        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402')).catch(err => {
+          console.error('[x402] onSettled callback error:', err)
+          opts.onCallbackError?.(err, 'onSettled')
+        })
       }
 
       next()

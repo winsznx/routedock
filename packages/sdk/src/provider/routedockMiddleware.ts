@@ -30,6 +30,8 @@ export interface RouteDockMiddlewareOptions {
   onSessionOpen?: (channelId: string) => Promise<void>
   /** Called after each verified voucher in an mpp-session */
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  /** Called if any of the above callbacks throw an error */
+  onCallbackError?: (err: unknown, cbName: string) => void
 }
 
 /**
@@ -64,6 +66,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+          ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
         }),
       )
     }
@@ -80,6 +83,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           assetContract: opts.assetContract,
           manifest: opts.manifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+          ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
         }),
       )
     }
@@ -103,6 +107,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onSessionOpen ? { onSessionOpen: opts.onSessionOpen } : {}),
           ...(opts.onVoucher ? { onVoucher: opts.onVoucher } : {}),
+          ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
         }),
       )
     }

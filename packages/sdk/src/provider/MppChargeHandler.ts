@@ -19,6 +19,7 @@ export interface MppChargeHandlerOptions {
   manifest: RouteDockManifest
   store?: SessionStore
   onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
+  onCallbackError?: (err: unknown, cb: string) => void
 }
 
 export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHandler {
@@ -75,7 +76,10 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            await opts.onSettled(parsed.reference, opts.amount, 'mpp-charge')
+            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, opts.amount, 'mpp-charge')).catch(err => {
+              console.error('[mpp-charge] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
         } catch {
           // non-fatal
