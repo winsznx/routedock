@@ -733,7 +733,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
 
@@ -777,7 +777,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .last()
             .expect("expected at least one payment_authorized event");
@@ -807,7 +807,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .count();
         assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
@@ -851,7 +851,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
         assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
