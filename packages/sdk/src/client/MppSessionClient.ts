@@ -52,7 +52,7 @@ export class MppSessionClient {
     }
 
     const commitmentKey = Keypair.fromSecret(commitmentSecret)
-    const channelContract = pricing.channel_contract
+    const channelFactory = pricing.channel_factory
     const agentPublicKey = this.keypair.publicKey()
     const agentKeypair = this.keypair
 
@@ -77,7 +77,7 @@ export class MppSessionClient {
     const retryPolicy = this.retryPolicy
 
     const handle: SessionHandle = {
-      channelId: channelContract,
+      channelId: channelFactory,
       // The channel is pre-deployed and funded before the agent runs, so the
       // client never issues the channel-open transaction and has no hash for
       // it. Report null rather than the contract address (a non-transaction
@@ -120,7 +120,7 @@ export class MppSessionClient {
           await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         const account = await withRetry(async () => {
@@ -227,7 +227,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {
@@ -259,7 +259,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {
@@ -305,7 +305,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {

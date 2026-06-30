@@ -87,7 +87,56 @@ function startTestServer(
   }
 }
 
-// ── Test 2: ModeRouter — invalid manifest rejected ────────────────────────────
+// ── Test 2: ModeRouter — channel_factory manifest accepted ─────────────────
+
+{
+  const validFactoryManifest = {
+    routedock: '1.0',
+    name: 'Factory Provider',
+    description: 'Smoke test provider using channel_factory',
+    modes: ['mpp-session'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    pricing: {
+      'mpp-session': {
+        rate: '0.0001',
+        per: 'voucher',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+    },
+    endpoints: { stream: 'GET /stream/orderbook' },
+    tags: ['stream', 'stellar'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(validFactoryManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const manifest = await fetchManifest(server.url)
+    assert.equal(
+      manifest.pricing['mpp-session']?.channel_factory,
+      validFactoryManifest.pricing['mpp-session'].channel_factory,
+      'manifest should preserve channel_factory in mpp-session pricing',
+    )
+    console.log('✓ Test 2: channel_factory manifest acceptance PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 3: ModeRouter — invalid manifest rejected ────────────────────────────
 
 {
   const badManifest = { routedock: '2.0', name: 'bad' }
@@ -119,7 +168,7 @@ function startTestServer(
   }
 }
 
-// ── Test 3: SessionStore — monotonic invariant rejection ─────────────────────
+// ── Test 4: SessionStore — monotonic invariant rejection ─────────────────────
 
 {
   // Use an in-memory store implementation to test monotonic invariant
@@ -196,7 +245,7 @@ function startTestServer(
   console.log('✓ Test 3: SessionStore monotonic invariant rejection PASSED')
 }
 
-// ── Test 4: Error subclass hierarchy ─────────────────────────────────────────
+// ── Test 5: Error subclass hierarchy ─────────────────────────────────────────
 
 {
   const {

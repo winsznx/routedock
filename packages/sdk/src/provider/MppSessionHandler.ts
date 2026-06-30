@@ -14,7 +14,7 @@ const MPP_NETWORK: Record<Network, 'stellar:testnet' | 'stellar:pubnet'> = {
 export interface MppSessionHandlerOptions {
   payeeSecretKey: string
   network: Network
-  channelContract: string
+  channelFactory: string
   rate: string
   assetContract: string
   manifest: RouteDockManifest
@@ -28,7 +28,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   const networkId = MPP_NETWORK[opts.network]
   const rateHuman = opts.rate
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
-  const cumulativeKey = `stellar:channel:cumulative:${opts.channelContract}`
+  const cumulativeKey = `stellar:channel:cumulative:${opts.channelFactory}`
 
   const innerStore = Store.memory()
 
@@ -47,7 +47,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(opts.channelContract)
+            await opts.onSessionOpen(opts.channelFactory)
           }
         }
 
@@ -64,7 +64,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     secretKey: opts.payeeSecretKey,
     methods: [
       stellar.channel({
-        channel: opts.channelContract,
+        channel: opts.channelFactory,
         commitmentKey: opts.commitmentPublicKey,
         network: networkId,
         store: wrappedStore,
@@ -86,7 +86,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
         if (closeAmount > 0n && closeSig) {
           const closeTxHash = await channelClose({
-            channel: opts.channelContract,
+            channel: opts.channelFactory,
             amount: closeAmount,
             signature: Buffer.from(closeSig, 'hex'),
             feePayer: { envelopeSigner: payeeKeypair },
@@ -117,7 +117,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
               const { nativeToScVal, Address: StellarAddress } = await import('@stellar/stellar-sdk')
               const op = vault.call(
                 'record_session_settlement',
-                nativeToScVal(opts.channelContract, { type: 'address' }),
+                nativeToScVal(opts.channelFactory, { type: 'address' }),
                 nativeToScVal(payeeKeypair.publicKey(), { type: 'address' }),
                 nativeToScVal(payeeKeypair.publicKey(), { type: 'address' }),
                 nativeToScVal(closeAmount, { type: 'i128' }),
