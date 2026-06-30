@@ -1,0 +1,15 @@
+{
+  "name": "@routedock/example-price-oracle-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types --env-file-if-exists=.env index.ts"
+  },
+  "dependencies": {
+    "@routedock/sdk": "npm:@routedock/routedock@*"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}
