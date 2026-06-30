@@ -296,7 +296,7 @@ mod tests {
     use soroban_sdk::{
         auth::ContractContext,
         testutils::{Address as _, BytesN as _, Ledger},
-        IntoVal, TryFromVal,
+        IntoVal, FromVal,
     };
 
     // Use ed25519-dalek for signing in tests (same pattern as Crossmint/stellar-smart-account)
