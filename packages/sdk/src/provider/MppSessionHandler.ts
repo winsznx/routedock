@@ -4,6 +4,11 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 
+type Change<value, result> =
+  | { op: 'noop'; result: result }
+  | { op: 'set'; value: value; result: result }
+  | { op: 'delete'; result: result }
+
 type Network = 'testnet' | 'mainnet'
 
 const MPP_NETWORK: Record<Network, 'stellar:testnet' | 'stellar:pubnet'> = {
@@ -43,14 +48,12 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       if (key === cumulativeKey && value && typeof value === 'object' && 'amount' in (value as Record<string, unknown>)) {
         lastCumulativeAmount = BigInt((value as { amount: string }).amount)
         voucherCount++
-
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
             await opts.onSessionOpen(opts.channelContract)
           }
         }
-
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
           await opts.onVoucher(voucherCount, humanAmount)
@@ -58,6 +61,12 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
+    async update<key extends string, result>(
+      key: key,
+      fn: (current: unknown | null) => Change<unknown, result>
+    ): Promise<result> {
+      return innerStore.update(key, fn)
+    },
   }
 
   const mppx = Mppx.create({
