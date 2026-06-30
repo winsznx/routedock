@@ -189,6 +189,26 @@ impl AgentVault {
         admin.require_auth();
         storage.set(&FROZEN_KEY, &false);
     }
+
+    /// Return the global daily spend cap (view-only).
+    pub fn daily_cap(env: Env) -> i128 {
+        env.storage().instance().get(&CAP_KEY).unwrap_or(0)
+    }
+
+    /// Return the allowed payees and their sub-caps (view-only).
+    pub fn allowlist(env: Env) -> Map<Address, i128> {
+        env.storage().instance().get(&LIST_KEY).unwrap_or_else(|| Map::new(&env))
+    }
+
+    /// Return the session expiry ledger (view-only).
+    pub fn expiry_ledger(env: Env) -> u32 {
+        env.storage().instance().get(&EXPIRY_KEY).unwrap_or(0)
+    }
+
+    /// Return the authorized agent's Ed25519 public key (view-only).
+    pub fn agent_pubkey(env: Env) -> BytesN<32> {
+        env.storage().instance().get(&AGENT_KEY).unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
+    }
 }
 
 // ── CustomAccountInterface ────────────────────────────────────────────────────
@@ -1599,5 +1619,58 @@ mod tests {
             },
         }]);
         client.freeze();
+    }
+
+    /// Test 38: view functions return correct values
+    #[test]
+    fn test_view_functions() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        assert_eq!(client.daily_cap(), 5_000_000_i128);
+        
+        let fetched_allowlist = client.allowlist();
+        assert_eq!(fetched_allowlist.len(), 1);
+        assert_eq!(fetched_allowlist.get(provider_a.clone()).unwrap(), 5_000_000_i128);
+
+        assert_eq!(client.expiry_ledger(), 10_000_u32);
+        assert_eq!(client.agent_pubkey(), agent_pk.clone());
+
+        // Test updates
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_daily_cap",
+                args: (&10_000_000_i128,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_daily_cap(&10_000_000_i128);
+        assert_eq!(client.daily_cap(), 10_000_000_i128);
+
+        let provider_b = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "add_to_allowlist",
+                args: (&provider_b, &2_000_000_i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.add_to_allowlist(&provider_b, &2_000_000_i128);
+        
+        let updated_allowlist = client.allowlist();
+        assert_eq!(updated_allowlist.len(), 2);
+        assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
     }
 }
