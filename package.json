@@ -7,9 +7,14 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "stress:test": "pnpm exec tsx scripts/stress_test.ts"
+    "version": "changeset version",
+    "release": "changeset publish"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@changesets/cli": "^2.31.0"
   }
 }
