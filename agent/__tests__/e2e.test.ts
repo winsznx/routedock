@@ -141,9 +141,12 @@ async function runTests(): Promise<void> {
 
   assert(session, 'session handle should exist')
   assert(session.channelId, 'session should have channelId')
-  assert(session.openTxHash, 'session should have openTxHash')
+  // The channel is pre-deployed, so the client issues no open transaction and
+  // openTxHash is null — it must NOT be the contract address (channelId).
+  assert(session.openTxHash === null, 'session openTxHash should be null for a pre-deployed channel')
+  assert(session.openTxHash !== session.channelId, 'openTxHash must not be the contract address')
   log('mpp-session', `✓ Channel opened: ${session.channelId}`)
-  log('mpp-session', `✓ openTxHash=${session.openTxHash}`)
+  log('mpp-session', `✓ openTxHash=${session.openTxHash ?? 'null (pre-deployed channel)'}`)
 
   // Consume vouchers from stream
   let voucherCount = 0

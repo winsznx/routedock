@@ -54,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "d44040938228fc85ba2c80de045a0cb82d4678b80a6908237a2240e2f91e0d5c"
+                          "bytes": "4c611dc7d36a94e1479cf67f873040a56f22d247c498ff99c41790ce40cccb81"
                         }
                       },
                       {
@@ -62,9 +62,17 @@
                           "symbol": "allwlist"
                         },
                         "val": {
-                          "vec": [
+                          "map": [
                             {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              "key": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              },
+                              "val": {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 5000000
+                                }
+                              }
                             }
                           ]
                         }
