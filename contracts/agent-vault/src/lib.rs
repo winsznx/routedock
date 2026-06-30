@@ -5,7 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, FromVal, IntoVal, Map, Symbol, TryFromVal, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -917,6 +917,139 @@ mod tests {
         client.record_session_settlement(&channel, &payer, &provider_a, &500_000_i128, &10_u32);
     }
 
+    /// Test 19: payment within global cap but exceeding per-payee sub-cap is rejected
+    #[test]
+    fn test_per_payee_cap_enforced_below_global_cap() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+
+        // global cap = 5_000_000, per-payee sub-cap = 1_000_000
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        // 2_000_000 is within global cap but exceeds sub-cap of 1_000_000
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::PayeeCapExceeded,
+            "payment within global cap but exceeding per-payee sub-cap should fail"
+        );
+    }
+
+    /// Test 20: two payees with separate sub-caps do not share spend budget
+    #[test]
+    fn test_two_payees_independent_sub_caps() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let provider_b = Address::generate(&env);
+
+        // global cap = 5_000_000; provider_a sub-cap = 2_000_000; provider_b sub-cap = 2_000_000
+        let allowlist = Map::from_array(
+            &env,
+            [
+                (provider_a.clone(), 2_000_000_i128),
+                (provider_b.clone(), 2_000_000_i128),
+            ],
+        );
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        // Pay 2_000_000 to provider_a (hits their sub-cap exactly)
+        let p1 = BytesN::<32>::random(&env);
+        let s1 = sign_payload(&env, &agent_sk, &p1);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
+            "provider_a at sub-cap should succeed"
+        );
+
+        // Pay 2_000_000 to provider_b (their budget is independent — should still pass)
+        let p2 = BytesN::<32>::random(&env);
+        let s2 = sign_payload(&env, &agent_sk, &p2);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_b, 2_000_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).is_ok(),
+            "provider_b sub-cap is independent and should succeed"
+        );
+
+        // A further payment to provider_a now exceeds their sub-cap
+        let p3 = BytesN::<32>::random(&env);
+        let s3 = sign_payload(&env, &agent_sk, &p3);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
+        assert_eq!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
+                .unwrap_err()
+                .unwrap(),
+            Error::PayeeCapExceeded,
+            "provider_a over their sub-cap should fail"
+        );
+    }
+
+    /// Test 21: per-payee spend resets with the day bucket (same as global)
+    #[test]
+    fn test_per_payee_spend_resets_on_new_day() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+
+        // global cap = 5_000_000; provider_a sub-cap = 1_000_000
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &500_000_u32);
+
+        // Day 0: spend exactly the sub-cap
+        let p1 = BytesN::<32>::random(&env);
+        let s1 = sign_payload(&env, &agent_sk, &p1);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
+            "first payment should succeed"
+        );
+
+        // Day 0: any further spend exceeds sub-cap
+        let p2 = BytesN::<32>::random(&env);
+        let s2 = sign_payload(&env, &agent_sk, &p2);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
+        assert_eq!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
+                .unwrap_err()
+                .unwrap(),
+            Error::PayeeCapExceeded,
+            "second payment same day should fail"
+        );
+
+        // Advance to Day 1 — per-payee spend resets
+        env.ledger().set_sequence_number(17_280);
+        let p3 = BytesN::<32>::random(&env);
+        let s3 = sign_payload(&env, &agent_sk, &p3);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3).is_ok(),
+            "payment in new day bucket should succeed after per-payee reset"
+        );
+    }
+
     /// Test 19: transfer_admin and accept_admin happy path
     #[test]
     fn test_transfer_and_accept_admin_succeeds() {
@@ -1106,9 +1239,6 @@ mod tests {
     /// Test 24: freeze blocks subsequent calls
     #[test]
     fn test_freeze_blocks_transfers() {
-    /// Test 19: payment within global cap but exceeding per-payee sub-cap is rejected
-    #[test]
-    fn test_per_payee_cap_enforced_below_global_cap() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(&env, &vault_id);
@@ -1136,15 +1266,6 @@ mod tests {
         let sig = sign_payload(&env, &agent_sk, &payload);
         let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
 
-        // global cap = 5_000_000, per-payee sub-cap = 1_000_000
-        let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
-        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
-
-        // 2_000_000 is within global cap but exceeds sub-cap of 1_000_000
-        let payload = BytesN::<32>::random(&env);
-        let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
-
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload,
@@ -1161,14 +1282,6 @@ mod tests {
     /// Test 25: unfreeze restores normal operation
     #[test]
     fn test_unfreeze_restores_transfers() {
-            Error::PayeeCapExceeded,
-            "payment within global cap but exceeding per-payee sub-cap should fail"
-        );
-    }
-
-    /// Test 20: two payees with separate sub-caps do not share spend budget
-    #[test]
-    fn test_two_payees_independent_sub_caps() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(&env, &vault_id);
@@ -1221,52 +1334,6 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_freeze_requires_admin() {
-        let provider_b = Address::generate(&env);
-
-        // global cap = 5_000_000; provider_a sub-cap = 2_000_000; provider_b sub-cap = 2_000_000
-        let allowlist = Map::from_array(
-            &env,
-            [
-                (provider_a.clone(), 2_000_000_i128),
-                (provider_b.clone(), 2_000_000_i128),
-            ],
-        );
-        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
-
-        // Pay 2_000_000 to provider_a (hits their sub-cap exactly)
-        let p1 = BytesN::<32>::random(&env);
-        let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
-        assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
-            "provider_a at sub-cap should succeed"
-        );
-
-        // Pay 2_000_000 to provider_b (their budget is independent — should still pass)
-        let p2 = BytesN::<32>::random(&env);
-        let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_b, 2_000_000)]);
-        assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).is_ok(),
-            "provider_b sub-cap is independent and should succeed"
-        );
-
-        // A further payment to provider_a now exceeds their sub-cap
-        let p3 = BytesN::<32>::random(&env);
-        let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
-        assert_eq!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
-                .unwrap_err()
-                .unwrap(),
-            Error::PayeeCapExceeded,
-            "provider_a over their sub-cap should fail"
-        );
-    }
-
-    /// Test 21: per-payee spend resets with the day bucket (same as global)
-    #[test]
-    fn test_per_payee_spend_resets_on_new_day() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(&env, &vault_id);
@@ -1286,42 +1353,6 @@ mod tests {
             },
         }]);
         client.freeze();
-        let (agent_sk, agent_pk) = gen_keypair(&env);
-        let provider_a = Address::generate(&env);
-
-        // global cap = 5_000_000; provider_a sub-cap = 1_000_000
-        let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
-        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &500_000_u32);
-
-        // Day 0: spend exactly the sub-cap
-        let p1 = BytesN::<32>::random(&env);
-        let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
-        assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
-            "first payment should succeed"
-        );
-
-        // Day 0: any further spend exceeds sub-cap
-        let p2 = BytesN::<32>::random(&env);
-        let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
-        assert_eq!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
-                .unwrap_err()
-                .unwrap(),
-            Error::PayeeCapExceeded,
-            "second payment same day should fail"
-        );
-
-        // Advance to Day 1 — per-payee spend resets
-        env.ledger().set_sequence_number(17_280);
-        let p3 = BytesN::<32>::random(&env);
-        let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
-        assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3).is_ok(),
-            "payment in new day bucket should succeed after per-payee reset"
-        );
     }
+
 }
