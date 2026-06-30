@@ -17,6 +17,7 @@ const CAP_KEY: Symbol = symbol_short!("dailycap");
 const LIST_KEY: Symbol = symbol_short!("allwlist");
 const EXPIRY_KEY: Symbol = symbol_short!("expiry");
 const INIT_KEY: Symbol = symbol_short!("init");
+const FROZEN_KEY: Symbol = symbol_short!("frozen");
 
 // Global day-spend key: (SPEND_PREFIX, day_bucket) where day_bucket = seq / 17280
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
@@ -167,6 +168,26 @@ impl AgentVault {
         storage.set(&ADMIN_KEY, &pending_admin);
         storage.remove(&PENDING_ADMIN_KEY);
     }
+
+    /// Freeze the contract, preventing any agent transfers. Admin only.
+    pub fn freeze(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&FROZEN_KEY, &true);
+    }
+
+    /// Unfreeze the contract, allowing agent transfers again. Admin only.
+    pub fn unfreeze(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&FROZEN_KEY, &false);
+    }
 }
 
 // ── CustomAccountInterface ────────────────────────────────────────────────────
@@ -200,6 +221,13 @@ impl CustomAccountInterface for AgentVault {
         let storage = env.storage().instance();
         // Keep instance storage alive through the lifetime of auth calls
         storage.extend_ttl(2_000_000, 2_000_000);
+
+
+        // ── Emergency Stop Check ─────────────────────────────────────────────
+        let is_frozen: bool = storage.get(&FROZEN_KEY).unwrap_or(false);
+        if is_frozen {
+            return Err(Error::ContractFrozen);
+        }
 
         // ── Verify Ed25519 signature ─────────────────────────────────────────
         let agent_pk: BytesN<32> = storage.get(&AGENT_KEY).ok_or(Error::NotInitialized)?;
@@ -1453,4 +1481,122 @@ mod tests {
         client.accept_admin();
     }
 
+    /// Test 35: freeze blocks subsequent calls
+    #[test]
+    fn test_freeze_blocks_transfers() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Freeze the contract
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+
+        // Attempt a transfer, should fail
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::ContractFrozen,
+            "frozen contract should reject transfers"
+        );
+    }
+
+    /// Test 36: unfreeze restores normal operation
+    #[test]
+    fn test_unfreeze_restores_transfers() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Freeze
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+
+        // Unfreeze
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "unfreeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.unfreeze();
+
+        // Attempt a transfer, should succeed
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "unfrozen contract should allow transfers");
+    }
+
+    /// Test 37: only admin can toggle freeze/unfreeze
+    #[test]
+    #[should_panic]
+    fn test_freeze_requires_admin() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &soroban_sdk::Map::new(&env), &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+    }
 }
