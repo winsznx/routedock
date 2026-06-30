@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 2,
     "nonce": 0
   },
   "auth": [
@@ -10,7 +10,7 @@
   ],
   "ledger": {
     "protocol_version": 22,
-    "sequence_number": 10001,
+    "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -54,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "63ef2b4647b4372b675efe8ece664fc60bee4ec1cd63f73c9d8aa57acff559d2"
+                          "bytes": "6891c0dfbe14695578870f790478c80bcf9aa4174da137c0e5eb12cb460fefc4"
                         }
                       },
                       {
@@ -62,19 +62,7 @@
                           "symbol": "allwlist"
                         },
                         "val": {
-                          "map": [
-                            {
-                              "key": {
-                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                              },
-                              "val": {
-                                "i128": {
-                                  "hi": 0,
-                                  "lo": 5000000
-                                }
-                              }
-                            }
-                          ]
+                          "map": []
                         }
                       },
                       {
