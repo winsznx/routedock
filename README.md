@@ -259,6 +259,7 @@ One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.jso
 ```
 routedock/
 ├── packages/sdk/            # @routedock/routedock — npm
+├── packages/mcp-server/     # @routedock/mcp-server — MCP server for LLM agents
 ├── apps/web/                # Next.js 16 dashboard + landing — Vercel
 ├── apps/provider-a/         # Express price endpoint (x402 + MPP charge) — Railway
 ├── apps/provider-b/         # Express orderbook endpoint (MPP session) — Railway
@@ -282,6 +283,7 @@ routedock/
 | Dashboard Realtime | Supabase `postgres_changes` subscriptions on `sessions` and `tx_log` |
 | Discovery registry | `providers` table with `pg_trgm` trigram indexes for fuzzy capability search |
 | npm package | [`@routedock/routedock@0.1.0`](https://www.npmjs.com/package/@routedock/routedock) |
+| MCP server | [`@routedock/mcp-server`](packages/mcp-server) — LLM agent integration via Model Context Protocol |
 | Network support | `STELLAR_NETWORK=testnet|mainnet` — single env var switches all code paths |
 
 ---
