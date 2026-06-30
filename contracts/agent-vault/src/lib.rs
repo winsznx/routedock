@@ -5,7 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
+    Address, Bytes, BytesN, Env, FromVal, IntoVal, Symbol, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
