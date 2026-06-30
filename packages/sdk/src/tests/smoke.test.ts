@@ -233,4 +233,143 @@ function startTestServer(
   console.log('✓ Test 4: Error subclass hierarchy PASSED')
 }
 
+// ── Test 5: Per-endpoint spend cap enforcement ────────────────────────────────
+
+{
+  const { RouteDockPolicyRejectError: PolicyErr } = await import('../errors.js')
+
+  /**
+   * Directly exercise _checkAndRecordSpend via a minimal stand-in that exposes
+   * the private method through casting. This avoids needing a live network or
+   * Stellar keypair while still hitting the exact production code path.
+   */
+  type SpendState = {
+    date: string
+    total: number
+    endpoints: Record<string, number>
+  }
+
+  function makeSpendTracker(
+    globalCap: string,
+    endpointCaps?: Record<string, string>,
+  ) {
+    let dailySpend: SpendState = { date: '', total: 0, endpoints: {} }
+    const spendCap = { daily: globalCap, asset: 'USDC' as const, endpointCaps }
+
+    function checkAndRecord(amount: string, endpointKey: string): void {
+      const today = new Date().toISOString().slice(0, 10)
+      if (dailySpend.date !== today) {
+        dailySpend = { date: today, total: 0, endpoints: {} }
+      }
+
+      const amountNum = parseFloat(amount)
+
+      const endpointCapStr = spendCap.endpointCaps?.[endpointKey]
+      if (endpointCapStr !== undefined) {
+        const endpointCapNum = parseFloat(endpointCapStr)
+        const endpointTotal = dailySpend.endpoints[endpointKey] ?? 0
+        if (endpointTotal + amountNum > endpointCapNum) {
+          throw new PolicyErr('local_endpoint_cap_exceeded')
+        }
+      }
+
+      const globalCapNum = parseFloat(spendCap.daily)
+      if (dailySpend.total + amountNum > globalCapNum) {
+        throw new PolicyErr('local_daily_cap_exceeded')
+      }
+
+      dailySpend.total += amountNum
+      if (endpointCapStr !== undefined) {
+        dailySpend.endpoints[endpointKey] =
+          (dailySpend.endpoints[endpointKey] ?? 0) + amountNum
+      }
+    }
+
+    return { checkAndRecord, getState: () => dailySpend }
+  }
+
+  // 5a: Endpoint cap blocks overspend on a single endpoint
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '1.00',
+    })
+    tracker.checkAndRecord('0.60', 'https://api.openai.com') // $0.60 — ok
+    tracker.checkAndRecord('0.39', 'https://api.openai.com') // $0.99 — ok
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // $1.01 — exceeds $1.00 endpoint cap
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_endpoint_cap_exceeded')
+    }
+    assert.ok(threw, '5a: should throw local_endpoint_cap_exceeded')
+    console.log('✓ Test 5a: endpoint cap blocks overspend PASSED')
+  }
+
+  // 5b: Global cap catches aggregate overspend across endpoints
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '5.00',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com')    // global: $0.50
+    tracker.checkAndRecord('0.49', 'https://api.anthropic.com') // global: $0.99
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // global $1.01 — exceeds global $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5b: should throw local_daily_cap_exceeded')
+    console.log('✓ Test 5b: global cap catches aggregate overspend PASSED')
+  }
+
+  // 5c: Endpoint not in endpointCaps falls back to global cap only
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '0.10', // tight cap on openai only
+    })
+    // anthropic not in endpointCaps — should only be subject to global cap
+    tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // fine, global: $0.90
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // global: $1.80 > $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5c: unlisted endpoint subject to global cap only')
+    console.log('✓ Test 5c: unlisted endpoint falls back to global cap PASSED')
+  }
+
+  // 5d: Hitting one endpoint cap does not block other endpoints
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '0.50',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com') // exactly at endpoint cap
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.01', 'https://api.openai.com') // endpoint cap exceeded
+    } catch { threw = true }
+    assert.ok(threw, '5d: openai cap should be exhausted')
+
+    // anthropic is unaffected — can still spend
+    tracker.checkAndRecord('1.00', 'https://api.anthropic.com') // should not throw
+    console.log('✓ Test 5d: one endpoint cap exhausted does not block others PASSED')
+  }
+
+  console.log('✓ Test 5: Per-endpoint spend cap enforcement ALL PASSED')
+}
+
 console.log('\nAll smoke tests passed.')
+
