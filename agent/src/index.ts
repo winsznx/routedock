@@ -124,7 +124,9 @@ async function main(): Promise<void> {
   log('mpp-session', 'Opening MPP session channel...')
   const session = await client.openSession(`${PROVIDER_B_URL}/stream/orderbook`)
 
-  txHashes.channelOpen = session.openTxHash ?? undefined
+  if (session.openTxHash) {
+    txHashes.channelOpen = session.openTxHash
+  }
   log('mpp-session', `[Session] Opened. Channel: ${session.channelId} openTxHash: ${session.openTxHash ?? 'n/a (pre-deployed channel)'}`)
   if (session.openTxHash) {
     log('mpp-session', `Channel open explorer: ${explorerLink(session.openTxHash)}`)
