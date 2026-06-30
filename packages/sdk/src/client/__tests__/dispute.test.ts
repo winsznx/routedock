@@ -1,12 +1,17 @@
 /**
- * Unit tests for MppSessionClient dispute resolution methods.
- * Tests cover requestRefund(), settleWithLatestVoucher(), and getDisputeStatus()
- * with various state transitions and error scenarios.
+ * Behavioral unit tests for MppSessionClient dispute resolution.
+ *
+ * These tests drive requestRefund(), settleWithLatestVoucher(), and
+ * getDisputeStatus() against a mocked @stellar/stellar-sdk RPC layer so the
+ * methods' real control flow — simulation, send, response mapping, and error
+ * wrapping — is exercised without touching the network.
  *
  * Run with: pnpm --filter @routedock/routedock test
+ * (requires --experimental-test-module-mocks, set in the package test script)
  */
 
 import assert from 'node:assert/strict'
+import { before, after, beforeEach, describe, it, mock } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import { MppSessionClient } from '../MppSessionClient.js'
 import type { RouteDockManifest } from '../../types.js'
@@ -22,6 +27,7 @@ const payeeKeypair = Keypair.random()
 
 const CHANNEL_CONTRACT = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
 const ASSET_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+const SESSION_URL = 'https://provider.test/stream/orderbook'
 
 function buildManifest(): RouteDockManifest {
   return {
@@ -47,128 +53,231 @@ function buildManifest(): RouteDockManifest {
   }
 }
 
-// ── Test 1: requestRefund() returns transaction hash ────────────────────────
+// ── Mock Stellar RPC ──────────────────────────────────────────────────────────
+// A configurable fake of the parts of @stellar/stellar-sdk the dispute methods
+// use. Each test sets `rpc` to script getAccount/simulate/send behaviour; the
+// dynamic `import('@stellar/stellar-sdk')` inside the SUT resolves to this mock.
 
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
-
-  // In a real scenario, this would initialize a live session.
-  // For offline testing, we verify the method signature and error handling.
-  console.log('✓ Test 1: requestRefund() method signature verified')
+interface RpcScript {
+  getAccount?: (publicKey: string) => unknown
+  simulateTransaction?: (tx: unknown) => unknown
+  sendTransaction?: (tx: unknown) => unknown
+  isSimulationError?: (result: unknown) => boolean
 }
 
-// ── Test 2: settleWithLatestVoucher() returns transaction hash ──────────────
-
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
-
-  // Method signature and error path verification
-  console.log('✓ Test 2: settleWithLatestVoucher() method signature verified')
+const DEFAULT_ACCOUNT = {
+  accountId: () => agentKeypair.publicKey(),
+  sequenceNumber: () => '1',
+  incrementSequenceNumber: () => undefined,
 }
 
-// ── Test 3: getDisputeStatus() returns DisputeStatus union type ────────────
+let rpc: RpcScript = {}
 
-{
+function buildFakeSdk() {
+  class FakeServer {
+    constructor(_url: string) {}
+    async getAccount(publicKey: string) {
+      return (rpc.getAccount ?? (() => DEFAULT_ACCOUNT))(publicKey)
+    }
+    async simulateTransaction(tx: unknown) {
+      return (rpc.simulateTransaction ?? (() => ({})))(tx)
+    }
+    async sendTransaction(tx: unknown) {
+      return (rpc.sendTransaction ?? (() => ({ hash: 'DEFAULT_HASH' })))(tx)
+    }
+  }
+
+  class FakeContract {
+    constructor(_address: string) {}
+    call(fn: string, ...args: unknown[]) {
+      return { __op: fn, args }
+    }
+  }
+
+  class FakeTransactionBuilder {
+    constructor(_account: unknown, _opts: unknown) {}
+    addOperation() {
+      return this
+    }
+    setTimeout() {
+      return this
+    }
+    build() {
+      return { sign: (_kp: unknown) => undefined }
+    }
+  }
+
+  return {
+    rpc: {
+      Server: FakeServer,
+      Api: {
+        isSimulationError: (result: unknown) =>
+          (rpc.isSimulationError ?? (() => false))(result),
+      },
+    },
+    Contract: FakeContract,
+    TransactionBuilder: FakeTransactionBuilder,
+    BASE_FEE: '100',
+    nativeToScVal: (value: unknown) => ({ __scval: value }),
+  }
+}
+
+function openHandle() {
+  // MppSessionClient (and its @stellar/mpp graph) is imported statically above,
+  // binding to the real SDK before the mock is registered. Only the dispute
+  // methods' call-time dynamic stellar-sdk import resolves to the mock.
   const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
+  return client.openSession(SESSION_URL, buildManifest(), commitmentKeypair.secret())
+}
 
-  // Verify the return type includes all valid dispute statuses
-  const validStatuses: Array<'open' | 'in-refund-window' | 'refundable' | 'settled'> = [
-    'open',
-    'in-refund-window',
-    'refundable',
-    'settled',
+before(() => {
+  mock.module('@stellar/stellar-sdk', { namedExports: buildFakeSdk() })
+})
+
+after(() => {
+  mock.restoreAll()
+})
+
+beforeEach(() => {
+  rpc = {}
+})
+
+// ── requestRefund() ────────────────────────────────────────────────────────────
+
+describe('requestRefund()', () => {
+  it('returns the transaction hash when the refund is submitted', async () => {
+    rpc.sendTransaction = () => ({ hash: 'REFUND_TX_HASH' })
+    const handle = await openHandle()
+    const hash = await handle.requestRefund()
+    assert.equal(hash, 'REFUND_TX_HASH')
+  })
+
+  it('throws RouteDockDisputeError when there is no open channel (simulation fails)', async () => {
+    rpc.isSimulationError = () => true
+    rpc.simulateTransaction = () => ({ error: 'channel not open' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund(),
+      (err: unknown) => err instanceof RouteDockDisputeError,
+    )
+  })
+
+  it('throws RouteDockDisputeError when the transaction is not sent', async () => {
+    rpc.sendTransaction = () => ({}) // no hash
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /not sent/i.test((err as Error).message),
+    )
+  })
+
+  it('wraps unexpected RPC failures as RouteDockDisputeError', async () => {
+    rpc.getAccount = () => {
+      throw new Error('horizon unreachable')
+    }
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund(),
+      (err: unknown) => err instanceof RouteDockDisputeError,
+    )
+  })
+})
+
+// ── settleWithLatestVoucher() ──────────────────────────────────────────────────
+
+describe('settleWithLatestVoucher()', () => {
+  it('returns the settlement transaction hash on success', async () => {
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    rpc.sendTransaction = () => ({ hash: 'SETTLE_TX_HASH' })
+    const handle = await openHandle()
+    const hash = await handle.settleWithLatestVoucher()
+    assert.equal(hash, 'SETTLE_TX_HASH')
+  })
+
+  it('throws RouteDockDisputeError when prepare_commitment returns no bytes', async () => {
+    rpc.simulateTransaction = () => ({ result: { retval: { bytes: () => undefined } } })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.settleWithLatestVoucher(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /no bytes/i.test((err as Error).message),
+    )
+  })
+
+  it('throws RouteDockDisputeError when the commitment simulation fails', async () => {
+    rpc.isSimulationError = () => true
+    rpc.simulateTransaction = () => ({ error: 'sim failed' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.settleWithLatestVoucher(),
+      (err: unknown) => err instanceof RouteDockDisputeError,
+    )
+  })
+})
+
+// ── getDisputeStatus() ─────────────────────────────────────────────────────────
+
+describe('getDisputeStatus()', () => {
+  const cases: Array<[string, 'open' | 'in-refund-window' | 'refundable' | 'settled']> = [
+    ['open', 'open'],
+    ['in_refund_window', 'in-refund-window'],
+    ['refundable', 'refundable'],
+    ['settled', 'settled'],
   ]
 
-  assert.ok(validStatuses.length === 4, 'DisputeStatus should have 4 variants')
-  console.log('✓ Test 3: getDisputeStatus() returns valid DisputeStatus variants')
-}
+  for (const [contractStatus, expected] of cases) {
+    it(`maps contract status "${contractStatus}" to "${expected}"`, async () => {
+      rpc.simulateTransaction = () => ({ result: { retval: { status: contractStatus } } })
+      const handle = await openHandle()
+      const status = await handle.getDisputeStatus()
+      assert.equal(status, expected)
+    })
+  }
 
-// ── Test 4: SessionHandle.requestRefund() is callable ──────────────────────
-
-{
-  // Verify that SessionHandle has the requestRefund method in its interface
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
-
-  // This would be called on a real SessionHandle returned by openSession()
-  // Example: const session = await client.openSession(url, manifest, commitmentSecret)
-  //          const txHash = await session.requestRefund()
-  console.log('✓ Test 4: SessionHandle.requestRefund() is callable')
-}
-
-// ── Test 5: SessionHandle.settleWithLatestVoucher() is callable ──────────────
-
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
-
-  // This would be called on a real SessionHandle
-  // Example: const session = await client.openSession(url, manifest, commitmentSecret)
-  //          const txHash = await session.settleWithLatestVoucher()
-  console.log('✓ Test 5: SessionHandle.settleWithLatestVoucher() is callable')
-}
-
-// ── Test 6: SessionHandle.getDisputeStatus() is callable ────────────────────
-
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-  const manifest = buildManifest()
-
-  // This would be called on a real SessionHandle
-  // Example: const session = await client.openSession(url, manifest, commitmentSecret)
-  //          const status = await session.getDisputeStatus()
-  console.log('✓ Test 6: SessionHandle.getDisputeStatus() is callable')
-}
-
-// ── Test 7: Error types are properly exported ──────────────────────────────
-
-{
-  assert.ok(RouteDockDisputeError, 'RouteDockDisputeError should be exported')
-  assert.ok(RouteDockChannelStateError, 'RouteDockChannelStateError should be exported')
-  assert.ok(RouteDockRefundWindowError, 'RouteDockRefundWindowError should be exported')
-
-  const disputeErr = new RouteDockDisputeError('test')
-  assert.equal(disputeErr.name, 'RouteDockDisputeError', 'error name should match class')
-
-  const stateErr = new RouteDockChannelStateError('test')
-  assert.equal(stateErr.name, 'RouteDockChannelStateError', 'error name should match class')
-
-  const refundErr = new RouteDockRefundWindowError('test')
-  assert.equal(refundErr.name, 'RouteDockRefundWindowError', 'error name should match class')
-
-  console.log('✓ Test 7: All dispute error types are properly exported')
-}
-
-// ── Test 8: DisputeStatus type is exported from types module ──────────────
-
-{
-  import('../../types.js').then((mod) => {
-    // Verify DisputeStatus is part of the exports
-    // The type will be checked at compile time
-    console.log('✓ Test 8: DisputeStatus type is properly exported')
+  it('defaults to "open" for an unrecognized contract status', async () => {
+    rpc.simulateTransaction = () => ({ result: { retval: { status: 'something_new' } } })
+    const handle = await openHandle()
+    const status = await handle.getDisputeStatus()
+    assert.equal(status, 'open')
   })
-}
 
-// ── Test 9: requestRefund() handles RPC errors gracefully ────────────────
+  it('throws RouteDockChannelStateError when the state query simulation fails', async () => {
+    rpc.isSimulationError = () => true
+    rpc.simulateTransaction = () => ({ error: 'state query failed' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.getDisputeStatus(),
+      (err: unknown) => err instanceof RouteDockChannelStateError,
+    )
+  })
 
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
+  it('throws RouteDockChannelStateError when no channel state is returned', async () => {
+    rpc.simulateTransaction = () => ({ result: { retval: undefined } })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.getDisputeStatus(),
+      (err: unknown) =>
+        err instanceof RouteDockChannelStateError &&
+        /no channel state/i.test((err as Error).message),
+    )
+  })
+})
 
-  // Error handling is implemented to catch and re-throw as RouteDockDisputeError
-  console.log('✓ Test 9: requestRefund() error handling verified')
-}
+// ── Error type contract ────────────────────────────────────────────────────────
 
-// ── Test 10: settleWithLatestVoucher() uses latest cumulative amount ──────
+describe('dispute error types', () => {
+  it('exports the dispute error classes with matching names', () => {
+    assert.equal(new RouteDockDisputeError('x').name, 'RouteDockDisputeError')
+    assert.equal(new RouteDockChannelStateError('x').name, 'RouteDockChannelStateError')
+    assert.equal(new RouteDockRefundWindowError('x').name, 'RouteDockRefundWindowError')
+  })
 
-{
-  const client = new MppSessionClient(agentKeypair, 'testnet')
-
-  // Method captures currentCumulative from onProgress updates
-  // and uses it in the settle_with_signature call
-  console.log('✓ Test 10: settleWithLatestVoucher() uses latest cumulative amount')
-}
-
-console.log('\nAll dispute resolution tests passed.')
+  it('dispute errors are instances of Error', () => {
+    assert.ok(new RouteDockDisputeError('x') instanceof Error)
+  })
+})
