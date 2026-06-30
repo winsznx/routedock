@@ -1073,7 +1073,6 @@ mod tests {
         client.accept_admin();
     }
 
-    }
 
     /// Test 24: freeze blocks subsequent calls
     #[test]
