@@ -11,6 +11,7 @@ use soroban_sdk::{
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 const ADMIN_KEY: Symbol = symbol_short!("admin");
+const PENDING_ADMIN_KEY: Symbol = symbol_short!("p_admin");
 const AGENT_KEY: Symbol = symbol_short!("agentpk");
 const CAP_KEY: Symbol = symbol_short!("dailycap");
 const LIST_KEY: Symbol = symbol_short!("allwlist");
@@ -35,6 +36,7 @@ pub enum Error {
     SessionExpired = 3,
     DailyCapExceeded = 4,
     PayeeNotAllowed = 5,
+    NoPendingAdmin = 6,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -114,6 +116,27 @@ impl AgentVault {
             (Symbol::new(&env, EVT_SESSION_SETTLED), channel_id, payee),
             (payer, cumulative_amount, voucher_count),
         );
+    }
+
+    /// Initiate a transfer of admin rights to a new address. Admin only.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&PENDING_ADMIN_KEY, &new_admin);
+    }
+
+    /// Accept a pending transfer of admin rights. Pending admin only.
+    pub fn accept_admin(env: Env) {
+        let storage = env.storage().instance();
+        let pending_admin: Address = storage
+            .get(&PENDING_ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingAdmin));
+        pending_admin.require_auth();
+        storage.set(&ADMIN_KEY, &pending_admin);
+        storage.remove(&PENDING_ADMIN_KEY);
     }
 }
 
@@ -835,5 +858,190 @@ mod tests {
         let channel = Address::generate(&env);
         let payer = Address::generate(&env);
         client.record_session_settlement(&channel, &payer, &provider_a, &500_000_i128, &10_u32);
+    }
+
+    /// Test 19: transfer_admin and accept_admin happy path
+    #[test]
+    fn test_transfer_and_accept_admin_succeeds() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let allowlist = Vec::new(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        let new_admin = Address::generate(&env);
+
+        // 1. Transfer admin
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.transfer_admin(&new_admin);
+        
+        // 2. Accept admin
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &new_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.accept_admin();
+
+        // 3. Verify new admin has access
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &new_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_daily_cap",
+                args: (&10_000_000_i128,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_daily_cap(&10_000_000_i128);
+    }
+
+    /// Test 20: old admin loses access immediately after acceptance
+    #[test]
+    #[should_panic]
+    fn test_old_admin_loses_access() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let allowlist = Vec::new(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        let new_admin = Address::generate(&env);
+        
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.transfer_admin(&new_admin);
+        
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &new_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.accept_admin();
+
+        // Old admin attempts to change daily cap
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_daily_cap",
+                args: (&10_000_000_i128,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_daily_cap(&10_000_000_i128);
+    }
+
+    /// Test 21: accept_admin without pending admin fails
+    #[test]
+    #[should_panic(expected = "Error(Contract, #6)")]
+    fn test_accept_admin_no_pending_admin_fails() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let allowlist = Vec::new(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        env.mock_all_auths();
+        client.accept_admin(); // Should panic with NoPendingAdmin
+    }
+
+    /// Test 22: transfer initiation by non-admin fails
+    #[test]
+    #[should_panic]
+    fn test_transfer_admin_requires_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let allowlist = Vec::new(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        let new_admin = Address::generate(&env);
+        let stranger = Address::generate(&env);
+        
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &stranger,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.transfer_admin(&new_admin);
+    }
+
+    /// Test 23: accept by wrong address fails
+    #[test]
+    #[should_panic]
+    fn test_accept_admin_wrong_address_fails() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let allowlist = Vec::new(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
+
+        let new_admin = Address::generate(&env);
+        
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.transfer_admin(&new_admin);
+
+        let wrong_address = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &wrong_address,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.accept_admin();
     }
 }
