@@ -1059,7 +1059,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        let allowlist = Vec::new(&env);
+        let allowlist = Map::new(&env);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         let new_admin = Address::generate(&env);
@@ -1111,7 +1111,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        let allowlist = Vec::new(&env);
+        let allowlist = Map::new(&env);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         let new_admin = Address::generate(&env);
@@ -1161,7 +1161,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        let allowlist = Vec::new(&env);
+        let allowlist = Map::new(&env);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         env.mock_all_auths();
@@ -1178,7 +1178,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        let allowlist = Vec::new(&env);
+        let allowlist = Map::new(&env);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         let new_admin = Address::generate(&env);
@@ -1206,7 +1206,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        let allowlist = Vec::new(&env);
+        let allowlist = Map::new(&env);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         let new_admin = Address::generate(&env);
@@ -1246,7 +1246,7 @@ mod tests {
         let admin = Address::generate(&env);
         let (agent_sk, agent_pk) = gen_keypair(&env);
         let provider_a = Address::generate(&env);
-        let allowlist = Vec::from_array(&env, [provider_a.clone()]);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         // Freeze the contract
@@ -1289,7 +1289,7 @@ mod tests {
         let admin = Address::generate(&env);
         let (agent_sk, agent_pk) = gen_keypair(&env);
         let provider_a = Address::generate(&env);
-        let allowlist = Vec::from_array(&env, [provider_a.clone()]);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32);
 
         // Freeze
@@ -1340,7 +1340,7 @@ mod tests {
 
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        client.initialize(&admin, &agent_pk, &5_000_000_i128, &Vec::new(&env), &10_000_u32);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &Map::new(&env), &10_000_u32);
 
         let non_admin = Address::generate(&env);
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
