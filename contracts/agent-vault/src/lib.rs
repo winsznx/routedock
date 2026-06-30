@@ -5,7 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Symbol, TryFromVal, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -705,7 +705,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
             })
             .collect();
 
@@ -749,7 +749,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
             })
             .last()
             .expect("expected at least one payment_authorized event");
@@ -779,7 +779,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
             })
             .count();
         assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
@@ -823,7 +823,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| t == evt_name.clone().into_val(&env))
+                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
             })
             .collect();
         assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
