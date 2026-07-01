@@ -46,7 +46,7 @@ const manifest: RouteDockManifest = {
     'mpp-session': {
       rate: '0.0001',
       per: 'voucher',
-      channel_contract: CHANNEL_CONTRACT_ID,
+      channel_factory: CHANNEL_CONTRACT_ID,
       min_deposit: '0.10',
       refund_waiting_period_ledgers: 17280,
     },
@@ -108,7 +108,7 @@ app.use(
     pricing: {
       'mpp-session': {
         rate: '0.0001',
-        channelContract: CHANNEL_CONTRACT_ID,
+        channelFactory: CHANNEL_CONTRACT_ID,
       },
     },
     asset: 'USDC',
