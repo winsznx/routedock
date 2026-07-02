@@ -31,4 +31,4 @@ jobs:
         env:
           AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
           NODE_ENV: test
-        run: npm run test:e2e
+        run: pnpm run test:e2e
