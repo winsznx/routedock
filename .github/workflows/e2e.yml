@@ -31,4 +31,4 @@ jobs:
         env:
           AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
           NODE_ENV: test
-        run: pnpm run test:e2e
+        run: pnpm --filter agent test:e2e
