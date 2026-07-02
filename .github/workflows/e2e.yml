@@ -15,14 +15,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-with-version: '20'
-          cache: 'npm'
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: pnpm install
 
       - name: Run E2E Test Suite
         env:
