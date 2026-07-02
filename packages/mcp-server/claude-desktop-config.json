@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "routedock": {
+      "command": "node",
+      "args": ["<REPLACE_WITH_ABSOLUTE_PATH_TO>/packages/mcp-server/dist/index.js"],
+      "env": {
+        "STELLAR_SECRET": "<YOUR_STELLAR_SECRET_KEY>",
+        "STELLAR_NETWORK": "testnet",
+        "COMMITMENT_SECRET": "<YOUR_COMMITMENT_SECRET_KEY>",
+        "SUPABASE_URL": "<YOUR_SUPABASE_URL>",
+        "SUPABASE_KEY": "<YOUR_SUPABASE_SERVICE_KEY>"
+      }
+    }
+  }
+}

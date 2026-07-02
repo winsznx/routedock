@@ -74,12 +74,15 @@ export class MppSessionClient {
       ],
     })
 
-    const openTxHash = channelContract
     const retryPolicy = this.retryPolicy
 
     const handle: SessionHandle = {
       channelId: channelContract,
-      openTxHash,
+      // The channel is pre-deployed and funded before the agent runs, so the
+      // client never issues the channel-open transaction and has no hash for
+      // it. Report null rather than the contract address (a non-transaction
+      // identifier that produces broken explorer links downstream).
+      openTxHash: null,
 
       async *stream(): AsyncIterable<unknown> {
         while (true) {

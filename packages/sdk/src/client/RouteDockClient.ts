@@ -1,5 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk'
-import { fetchManifest, selectMode, type ModeSelectOptions } from './ModeRouter.js'
+import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
@@ -11,6 +11,15 @@ export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
   daily: string
   asset: 'USDC'
+  /**
+   * Optional per-endpoint daily spend caps, keyed by endpoint origin URL
+   * (e.g. "https://api.openai.com"). Checked before the global `daily` cap.
+   * An endpoint not listed here is only subject to the global cap.
+   * Both limits are enforced independently — hitting an endpoint cap does
+   * not prevent spend on other endpoints, but all spend still counts toward
+   * the global cap.
+   */
+  endpointCaps?: Record<string, string>
 }
 
 export interface RouteDockClientConfig {
@@ -23,6 +32,8 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /** Structured logger for SDK events. Defaults to no-op (silent). */
+  logger?: RouteDockLogger
 }
 
 /**
@@ -52,9 +63,16 @@ export class RouteDockClient {
   private readonly spendCap: SpendCap | undefined
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
+  private readonly logger: RouteDockLogger | undefined
 
-  /** Local daily accumulator keyed by YYYY-MM-DD, total in microUSDC (1 USDC = 10^7) */
-  private dailySpend: { date: string; total: bigint } = { date: '', total: 0n }
+  /** Local daily accumulator keyed by YYYY-MM-DD, totals in microUSDC (1 USDC = 10^7) */
+  private dailySpend: {
+    date: string
+    /** Global accumulated spend for the day */
+    total: bigint
+    /** Per-endpoint accumulated spend for the day, keyed by origin URL */
+    endpoints: Record<string, bigint>
+  } = { date: '', total: 0n, endpoints: {} }
 
   private readonly x402: X402Client
   private readonly charge: MppChargeClient
@@ -67,6 +85,7 @@ export class RouteDockClient {
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
+    this.logger = config.logger
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -81,7 +100,7 @@ export class RouteDockClient {
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy)
-    const mode = selectMode(manifest, options)
+    const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     let result: PaymentResult
 
@@ -100,7 +119,7 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
-    this._checkAndRecordSpend(result.amount)
+    this._checkAndRecordSpend(result.amount, new URL(url).origin)
     return result
   }
 
@@ -127,22 +146,51 @@ export class RouteDockClient {
     return this.session.openSession(url, manifest, this.commitmentSecret)
   }
 
-  /** Check local daily cap and record the spend. Throws if cap exceeded. */
-  private _checkAndRecordSpend(amount: string): void {
+  /**
+   * Check local daily caps and record the spend. Throws if any cap is exceeded.
+   *
+   * Enforcement order:
+   *   1. Per-endpoint cap (if `endpointCaps[endpointKey]` is set) — checked first.
+   *   2. Global daily cap — checked second.
+   *
+   * Both limits are independent: a payment is only recorded after **both** pass.
+   * All spend (regardless of endpoint) counts toward the global accumulator.
+   *
+   * All arithmetic is done in exact integer microUSDC (bigint) to avoid
+   * floating point precision loss from repeated decimal additions.
+   */
+  private _checkAndRecordSpend(amount: string, endpointKey: string): void {
     if (!this.spendCap) return
 
     const today = new Date().toISOString().slice(0, 10)
     if (this.dailySpend.date !== today) {
-      this.dailySpend = { date: today, total: 0n }
+      this.dailySpend = { date: today, total: 0n, endpoints: {} }
     }
 
     const amountMicros = usdcToMicros(amount)
-    const capMicros = usdcToMicros(this.spendCap.daily)
 
-    if (this.dailySpend.total + amountMicros > capMicros) {
+    // 1. Per-endpoint cap check
+    const endpointCapStr = this.spendCap.endpointCaps?.[endpointKey]
+    let endpointCapMicros: bigint | undefined
+    if (endpointCapStr !== undefined) {
+      endpointCapMicros = usdcToMicros(endpointCapStr)
+      const endpointTotal = this.dailySpend.endpoints[endpointKey] ?? 0n
+      if (endpointTotal + amountMicros > endpointCapMicros) {
+        throw new RouteDockPolicyRejectError('local_endpoint_cap_exceeded')
+      }
+    }
+
+    // 2. Global daily cap check
+    const globalCapMicros = usdcToMicros(this.spendCap.daily)
+    if (this.dailySpend.total + amountMicros > globalCapMicros) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
+    // Both checks passed — record the spend
     this.dailySpend.total += amountMicros
+    if (endpointCapStr !== undefined) {
+      this.dailySpend.endpoints[endpointKey] =
+        (this.dailySpend.endpoints[endpointKey] ?? 0n) + amountMicros
+    }
   }
 }

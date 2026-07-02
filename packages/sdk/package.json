@@ -25,6 +25,9 @@
       ],
       "provider/hono": [
         "dist/provider/hono.d.ts"
+      ],
+      "provider/fastify": [
+        "dist/provider/fastify.d.ts"
       ]
     }
   },
@@ -53,13 +56,18 @@
       "types": "./dist/provider/hono.d.ts",
       "import": "./dist/provider/hono.js",
       "require": "./dist/provider/hono.cjs"
+    },
+    "./provider/fastify": {
+      "types": "./dist/provider/fastify.d.ts",
+      "import": "./dist/provider/fastify.js",
+      "require": "./dist/provider/fastify.cjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
+    "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/client/__tests__/dispute.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
     "@stellar/mpp": "^0.4.0",
@@ -73,6 +81,7 @@
   "peerDependencies": {
     "express": "^4.18.0",
     "hono": "^4.0.0",
+    "fastify": "^4.0.0 || ^5.0.0",
     "react": "^18.0.0 || ^19.0.0"
   },
   "peerDependenciesMeta": {
@@ -80,6 +89,9 @@
       "optional": true
     },
     "hono": {
+      "optional": true
+    },
+    "fastify": {
       "optional": true
     },
     "react": {
@@ -94,6 +106,7 @@
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "hono": "^4.12.23",
+    "fastify": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsup": "^8.0.0",
