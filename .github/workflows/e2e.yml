@@ -31,7 +31,12 @@ jobs:
         run: pnpm --filter @routedock/routedock build
 
       - name: Run E2E Test Suite
+        if: ${{ secrets.AGENT_SECRET != '' }}
         env:
           AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
           NODE_ENV: test
         run: pnpm --filter agent test:e2e
+
+      - name: Skip E2E — no AGENT_SECRET
+        if: ${{ secrets.AGENT_SECRET == '' }}
+        run: echo "AGENT_SECRET not set — skipping e2e tests"
