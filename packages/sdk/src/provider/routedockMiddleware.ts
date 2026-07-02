@@ -53,6 +53,8 @@ export interface RouteDockMiddlewareOptions {
 const MPP_MODES: readonly PaymentMode[] = ['mpp-session', 'mpp-charge']
 
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
+  const startTime = Date.now()
+
   // Register each handler under its payment mode so routing is explicit and
   // never depends on insertion order.
   const handlerMap = new Map<PaymentMode, RequestHandler>()
