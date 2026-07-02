@@ -3,7 +3,7 @@ import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
-import type { PaymentResult, SessionHandle } from '../types.js'
+import type { PaymentResult, SessionHandle, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 
@@ -72,6 +72,17 @@ export class RouteDockClient {
     this.session = new MppSessionClient(this.keypair, this.network, this.retryPolicy)
   }
 
+  /** Fetch manifest and select mode — shared by pay() and estimateCost(). */
+  private async _resolveManifest(
+    url: string,
+    options?: ModeSelectOptions,
+  ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
+    const baseUrl = new URL(url).origin
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const mode = selectMode(manifest, options)
+    return { manifest, mode }
+  }
+
   /**
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
    * checks local spend cap, executes payment, returns result.
@@ -100,6 +111,32 @@ export class RouteDockClient {
 
     this._checkAndRecordSpend(result.amount, new URL(url).origin)
     return result
+  }
+
+  /**
+   * Resolve manifest and compute the expected charge WITHOUT submitting any
+   * transaction. Safe to call before committing — for approval gates and
+   * budget-aware routing.
+   */
+  async estimateCost(url: string, options?: ModeSelectOptions): Promise<EstimateCostResult> {
+    const { manifest, mode } = await this._resolveManifest(url, options)
+
+    let amount: string
+    switch (mode) {
+      case 'x402':
+        amount = manifest.pricing.x402!.amount
+        break
+      case 'mpp-charge':
+        amount = manifest.pricing['mpp-charge']!.amount
+        break
+      case 'mpp-session':
+        amount = manifest.pricing['mpp-session']!.rate
+        break
+      default:
+        throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+    }
+
+    return { amount, asset: manifest.asset, mode, manifest }
   }
 
   /**
