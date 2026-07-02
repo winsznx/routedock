@@ -10,6 +10,7 @@ export type RouteDockErrorCode =
   | 'CHANNEL_STATE'
   | 'DISPUTE'
   | 'REFUND_WINDOW'
+  | 'CLIENT_VERSION_TOO_OLD'
 
 export interface RouteDockErrorOptions {
   cause?: unknown
@@ -52,6 +53,14 @@ export class RouteDockNoSupportedModeError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'NO_SUPPORTED_MODE', false, options)
     this.name = 'RouteDockNoSupportedModeError'
+  }
+}
+
+/** This client's SDK version is below the manifest's min_client_version. Upgrade the SDK to proceed. */
+export class RouteDockClientVersionError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'CLIENT_VERSION_TOO_OLD', false, options)
+    this.name = 'RouteDockClientVersionError'
   }
 }
 
