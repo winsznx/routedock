@@ -61,6 +61,8 @@ export interface RouteDockMiddlewareOptions {
 const MPP_MODES: readonly PaymentMode[] = ['mpp-session', 'mpp-charge']
 
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
+  const startTime = Date.now()
+
   // Register each handler under its payment mode so routing is explicit and
   // never depends on insertion order.
   const handlerMap = new Map<PaymentMode, RequestHandler>()
@@ -134,6 +136,19 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     // Serve manifest at /.well-known/routedock.json
     if (req.path === '/.well-known/routedock.json') {
       res.json(opts.manifest)
+      return
+    }
+
+    // Serve health check endpoint
+    if (req.path === '/health') {
+      res.json({
+        status: 'ok',
+        routedock: opts.manifest.routedock,
+        network: opts.network,
+        payee: opts.payee,
+        modesActive: opts.modes,
+        uptime: Math.floor((Date.now() - startTime) / 1000),
+      })
       return
     }
 
