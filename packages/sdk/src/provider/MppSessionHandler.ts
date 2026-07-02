@@ -19,8 +19,8 @@ export interface MppSessionHandlerOptions {
   assetContract: string
   manifest: RouteDockManifest
   commitmentPublicKey: string
-  onSettled?: (txHash: string, totalPaid: string, mode: string) => Promise<void>
-  onSessionOpen?: (channelId: string) => Promise<void>
+  onSettled?: (txHash: string, totalPaid: string, mode: string, payer: string | null) => Promise<void>
+  onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
 
@@ -35,6 +35,9 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   let lastCumulativeAmount = 0n
   let voucherCount = 0
   let sessionOpened = false
+  // Payer address captured from the first Payment authorization header.
+  // Persisted for onSessionOpen and onSettled calls.
+  let sessionPayerAddress: string | null = null
 
   const wrappedStore: ReturnType<typeof Store.memory> = {
     async get(key: string) { return innerStore.get(key) },
@@ -47,7 +50,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(opts.channelContract)
+            await opts.onSessionOpen(opts.channelContract, sessionPayerAddress)
           }
         }
 
@@ -95,7 +98,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session')
+            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)
           }
 
           // Optionally record session_settled on the agent vault.
@@ -146,23 +149,34 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         sessionOpened = false
         voucherCount = 0
         lastCumulativeAmount = 0n
+        sessionPayerAddress = null
         return
       }
 
-      // Extract the signature from the authorization header before passing to mppx
+      // Extract the signature (and payer address) from the authorization header before passing to mppx
       const authHeader = req.headers['authorization']
       if (typeof authHeader === 'string' && authHeader.startsWith('Payment ')) {
         try {
           const credB64 = authHeader.replace(/^Payment\s+/, '').split(',').find(p => p.trim().startsWith('credential='))
           if (credB64) {
             const credJson = Buffer.from(credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''), 'base64').toString('utf8')
-            const cred = JSON.parse(credJson) as { payload?: { signature?: string } }
+            const cred = JSON.parse(credJson) as {
+              sender?: string
+              payload?: { signature?: string; sender?: string; from?: string }
+            }
             if (cred.payload?.signature) {
               lastSignatureHex = cred.payload.signature
             }
+            // Capture payer address on first voucher (before sessionOpened is set)
+            if (!sessionPayerAddress) {
+              const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
+              if (typeof key === 'string' && key.startsWith('G')) {
+                sessionPayerAddress = key
+              }
+            }
           }
         } catch {
-          // non-fatal — signature extraction is best-effort
+          // non-fatal — signature/payer extraction is best-effort
         }
       }
 

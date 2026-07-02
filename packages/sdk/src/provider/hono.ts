@@ -39,8 +39,8 @@ export interface RouteDockHonoOptions {
   facilitatorApiKey?: string
   commitmentPublicKey?: string
   manifest: RouteDockManifest
-  onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
-  onSessionOpen?: (channelId: string) => Promise<void>
+  onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
+  onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
 
@@ -114,6 +114,21 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
+      // Extract payer public key from the x402 Stellar payload.
+      let payerAddress: string | null = null
+      try {
+        const creds = (
+          payload as unknown as {
+            authorization?: { credentials?: Array<{ publicKey?: string }> }
+          }
+        ).authorization?.credentials
+        const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
+        if (typeof key === 'string' && key.startsWith('G')) {
+          payerAddress = key
+        }
+      } catch {
+        // non-fatal
+      }
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
@@ -156,7 +171,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, x402Price, 'x402')
+        await opts.onSettled(txHash, x402Price, 'x402', payerAddress)
       }
 
       await next()
@@ -185,6 +200,32 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
   return async (c, next) => {
     try {
+      // Extract payer public key from the mppx Payment authorization header.
+      let payerAddress: string | null = null
+      try {
+        const authHeader = c.req.header('authorization')
+        if (authHeader?.startsWith('Payment ')) {
+          const credPart = authHeader
+            .replace(/^Payment\s+/, '')
+            .split(',')
+            .find((p) => p.trim().startsWith('credential='))
+          if (credPart) {
+            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
+            const credJson = Buffer.from(b64, 'base64').toString('utf8')
+            const cred = JSON.parse(credJson) as {
+              sender?: string
+              payload?: { sender?: string; from?: string }
+            }
+            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
+            if (typeof key === 'string' && key.startsWith('G')) {
+              payerAddress = key
+            }
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+
       const handler = (
         mppx as unknown as {
           'stellar/charge': (o: {
@@ -224,7 +265,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            await opts.onSettled(parsed.reference, chargePrice, 'mpp-charge')
+            await opts.onSettled(parsed.reference, chargePrice, 'mpp-charge', payerAddress)
           }
         } catch {
           // non-fatal
@@ -249,6 +290,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
   let voucherCount = 0
   let sessionOpened = false
   let lastSignatureHex = ''
+  let sessionPayerAddress: string | null = null
 
   const wrappedStore: ReturnType<typeof Store.memory> = {
     async get(key: string) { return innerStore.get(key) },
@@ -266,7 +308,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(sessionPricing.channelContract)
+            await opts.onSessionOpen(sessionPricing.channelContract, sessionPayerAddress)
           }
         }
 
@@ -317,12 +359,13 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session')
+            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)
           }
 
           sessionOpened = false
           voucherCount = 0
           lastCumulativeAmount = 0n
+          sessionPayerAddress = null
 
           return c.json({ closeTxHash })
         }
@@ -342,9 +385,18 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
               credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
               'base64',
             ).toString('utf8')
-            const cred = JSON.parse(credJson) as { payload?: { signature?: string } }
+            const cred = JSON.parse(credJson) as {
+              sender?: string
+              payload?: { signature?: string; sender?: string; from?: string }
+            }
             if (cred.payload?.signature) {
               lastSignatureHex = cred.payload.signature
+            }
+            if (!sessionPayerAddress) {
+              const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
+              if (typeof key === 'string' && key.startsWith('G')) {
+                sessionPayerAddress = key
+              }
             }
           }
         } catch {

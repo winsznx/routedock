@@ -28,7 +28,7 @@ export interface X402HandlerOptions {
   assetContract: string
   facilitatorApiKey?: string
   manifest: RouteDockManifest
-  onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
+  onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
 }
 
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
@@ -112,6 +112,26 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
+      // Extract payer public key defensively from the decoded x402 payload.
+      // In the @x402/stellar ExactStellarScheme, the payer's G... address is at
+      // payload.authorization.credentials[0].publicKey (StrKey-encoded G...).
+      // Fall back to null if the path is absent — non-fatal for settlement.
+      let payerAddress: string | null = null
+      try {
+        const creds = (
+          payload as unknown as {
+            authorization?: {
+              credentials?: Array<{ publicKey?: string }>
+            }
+          }
+        ).authorization?.credentials
+        const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
+        if (typeof key === 'string' && key.startsWith('G')) {
+          payerAddress = key
+        }
+      } catch {
+        // non-fatal
+      }
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
@@ -152,7 +172,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, opts.amount, 'x402')
+        await opts.onSettled(txHash, opts.amount, 'x402', payerAddress)
       }
 
       next()
