@@ -1,4 +1,4 @@
-// Full SDK — types, client, provider, store
+// Full SDK — types, client, provider, store, registry
 export * from './types.js'
 export * from './errors.js'
 export type { RetryPolicy } from './internal/retry.js'
@@ -10,3 +10,4 @@ export * from './client/MppChargeClient.js'
 export * from './client/MppSessionClient.js'
 export * from './store/SessionStore.js'
 export * from './provider/routedockMiddleware.js'
+export * from './registry/index.js'

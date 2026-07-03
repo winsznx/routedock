@@ -118,13 +118,13 @@ app.use(
     payeeSecretKey: STELLAR_PAYEE_SECRET,
     manifest,
     commitmentPublicKey: COMMITMENT_PUBLIC_KEY,
-    onSessionOpen: async (channelId: string) => {
+    onSessionOpen: async (channelId: string, payer: string | null) => {
       if (!supabase) return
       activeSessionChannelId = `${channelId}:${Date.now()}`
       const { error } = await supabase.from('sessions').insert({
         channel_id: activeSessionChannelId,
         payee: STELLAR_PAYEE_ADDRESS,
-        payer: process.env['AGENT_PUBLIC_KEY'] ?? 'unknown',
+        payer: payer ?? 'unknown',
         cumulative_amount: 0,
         status: 'open',
         channel_contract: channelId,
@@ -132,7 +132,7 @@ app.use(
         voucher_count: 0,
       })
       if (error) console.error('[supabase] session insert failed:', error.message)
-      else console.log('[supabase] session opened:', activeSessionChannelId)
+      else console.log(`[supabase] session opened: ${activeSessionChannelId} payer=${payer ?? 'unknown'}`)
     },
     onVoucher: async (voucherIndex: number, cumulativeAmount: string) => {
       if (!supabase || !activeSessionChannelId) return
@@ -145,8 +145,8 @@ app.use(
         .eq('channel_id', activeSessionChannelId)
       if (error) console.error('[supabase] session voucher update failed:', error.message)
     },
-    onSettled: async (txHash: string, totalPaid: string, mode: string) => {
-      console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid}`)
+    onSettled: async (txHash: string, totalPaid: string, mode: string, payer: string | null) => {
+      console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid} payer=${payer ?? 'unknown'}`)
       if (!supabase) return
 
       if (activeSessionChannelId) {
@@ -166,7 +166,7 @@ app.use(
         mode,
         network: STELLAR_NETWORK,
         provider_url: `http://localhost:${PORT}/stream/orderbook`,
-        agent_address: null,
+        agent_address: payer,
         metadata: { settled_at: new Date().toISOString() },
       })
       if (error) console.error('[supabase] tx_log insert failed:', error.message)

@@ -2,7 +2,7 @@
 
 **Unified payment execution layer for autonomous agents on Stellar**
 
-[![npm](https://img.shields.io/npm/v/@routedock/routedock)](https://www.npmjs.com/package/@routedock/routedock) ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Network: Stellar](https://img.shields.io/badge/network-Stellar%20testnet%20%2B%20mainnet-brightgreen)
+[![npm](https://img.shields.io/npm/v/@routedock/routedock)](https://www.npmjs.com/package/@routedock/routedock) [![CI](https://github.com/winsznx/routedock/actions/workflows/ci.yml/badge.svg)](https://github.com/winsznx/routedock/actions/workflows/ci.yml) ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Network: Stellar](https://img.shields.io/badge/network-Stellar%20testnet%20%2B%20mainnet-brightgreen)
 
 ---
 
@@ -67,6 +67,10 @@ graph LR
 ### Security Notice
 
 The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
+
+**Audit Status:**
+- Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
+- SCF Audit Bank application: Submitted
 
 ## Soroban Events
 
@@ -255,6 +259,7 @@ One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.jso
 ```
 routedock/
 ├── packages/sdk/            # @routedock/routedock — npm
+├── packages/mcp-server/     # @routedock/mcp-server — MCP server for LLM agents
 ├── apps/web/                # Next.js 16 dashboard + landing — Vercel
 ├── apps/provider-a/         # Express price endpoint (x402 + MPP charge) — Railway
 ├── apps/provider-b/         # Express orderbook endpoint (MPP session) — Railway
@@ -278,6 +283,7 @@ routedock/
 | Dashboard Realtime | Supabase `postgres_changes` subscriptions on `sessions` and `tx_log` |
 | Discovery registry | `providers` table with `pg_trgm` trigram indexes for fuzzy capability search |
 | npm package | [`@routedock/routedock@0.1.0`](https://www.npmjs.com/package/@routedock/routedock) |
+| MCP server | [`@routedock/mcp-server`](packages/mcp-server) — LLM agent integration via Model Context Protocol |
 | Network support | `STELLAR_NETWORK=testnet|mainnet` — single env var switches all code paths |
 
 ---
@@ -298,6 +304,14 @@ routedock/
 ## Full Technical Brief
 
 For a detailed walkthrough of the architecture, protocol conformance, security model, and design decisions, see the [Submission Brief](https://github.com/winsznx/routedock/blob/main/docs/SUBMISSION_ONEPAGER.md).
+
+---
+
+## What's next
+
+RouteDock is a **chain-agnostic agent payment protocol with Stellar as its canonical home.** The protocols it unifies aren't Stellar-bound — x402, which RouteDock wraps, was designed multi-chain and already settles on EVM.
+
+The [**Multi-Chain Roadmap**](docs/MULTICHAIN_ROADMAP.md) sketches a `ChainAdapter` interface with the existing Stellar clients as the reference implementation and **EVM (via x402) as the first extension target** — keeping the single-call agent experience (`client.pay(url)`) identical across chains. The plan is additive: the manifest's `chain` field is optional and defaults to `stellar`, so every existing provider and agent keeps working.
 
 ---
 

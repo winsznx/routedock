@@ -76,6 +76,17 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /** Optional protocol features this provider supports */
+  capabilities?: {
+    /** Supported streaming transports */
+    streaming?: ('sse' | 'websocket')[]
+    /** Whether webhook callbacks are supported */
+    webhooks?: boolean
+    /** Whether idempotency keys are supported */
+    idempotency_keys?: boolean
+    /** Supported content types for request/response */
+    content_types?: string[]
+  }
 }
 
 /** Result returned by client.pay() for any payment mode */
@@ -92,6 +103,18 @@ export interface PaymentResult {
   timestamp: number
 }
 
+/** Result returned by client.estimateCost() — the expected charge without submitting any transaction */
+export interface EstimateCostResult {
+  /** Expected charge in the payment asset (decimal string, e.g. "0.001") */
+  amount: string
+  /** Payment asset ticker, e.g. "USDC" */
+  asset: string
+  /** Payment mode that would be used */
+  mode: PaymentMode
+  /** Full manifest — available for approval-gate / budget-routing decisions */
+  manifest: RouteDockManifest
+}
+
 /** Result returned by session.close() */
 export interface SessionCloseResult {
   /** On-chain transaction hash for the channel close */
@@ -106,8 +129,13 @@ export interface SessionCloseResult {
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
   channelId: string
-  /** Transaction hash from the channel-open on-chain call */
-  openTxHash: string
+  /**
+   * Transaction hash of the on-chain channel-open call, or null.
+   * The one-way-channel contract is deployed and funded before the agent
+   * runs, so openSession() performs no on-chain open and has no hash to
+   * report — it returns null rather than a non-transaction identifier.
+   */
+  openTxHash: string | null
   /**
    * Async generator of server-sent event data.
    * Each iteration sends a voucher and yields the parsed response.
