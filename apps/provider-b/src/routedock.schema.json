@@ -96,6 +96,36 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Optional protocol features this provider supports",
+      "properties": {
+        "streaming": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["sse", "websocket"]
+          },
+          "description": "Supported streaming transports"
+        },
+        "webhooks": {
+          "type": "boolean",
+          "description": "Whether webhook callbacks are supported"
+        },
+        "idempotency_keys": {
+          "type": "boolean",
+          "description": "Whether idempotency keys are supported"
+        },
+        "content_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Supported content types for request/response"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "definitions": {

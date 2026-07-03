@@ -40,6 +40,34 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      // Extract payer public key from the mppx Payment authorization header before
+      // the mppx library consumes it. The Payment bearer credential JSON contains
+      // a `sender` field with the payer's Stellar G... public key.
+      let payerAddress: string | null = null
+      try {
+        const authHeader = req.headers['authorization']
+        if (typeof authHeader === 'string' && authHeader.startsWith('Payment ')) {
+          const credPart = authHeader
+            .replace(/^Payment\s+/, '')
+            .split(',')
+            .find((p) => p.trim().startsWith('credential='))
+          if (credPart) {
+            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
+            const credJson = Buffer.from(b64, 'base64').toString('utf8')
+            const cred = JSON.parse(credJson) as {
+              sender?: string
+              payload?: { sender?: string; from?: string }
+            }
+            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
+            if (typeof key === 'string' && key.startsWith('G')) {
+              payerAddress = key
+            }
+          }
+        }
+      } catch {
+        // non-fatal — payer extraction is best-effort
+      }
+
       const fetchReq = MppxRequest.fromNodeListener(req, res)
       // `mppx['stellar/charge']` — method key is `name/intent`
       const handler = (
