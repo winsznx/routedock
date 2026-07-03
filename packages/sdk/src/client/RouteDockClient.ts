@@ -4,6 +4,7 @@ import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
+import { prepareCovenantSigner, type CovenantZkVaultConfig } from './CovenantZkVault.js'
 import type { PaymentResult, SessionHandle, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
