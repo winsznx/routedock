@@ -14,6 +14,7 @@ import { stellar as mppCharge } from '@stellar/mpp/charge/server'
 import { stellar as mppChannel, close as channelClose, Store } from '@stellar/mpp/channel/server'
 import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { resolvePayee } from './payee.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -77,7 +78,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
     network: caip2,
     asset: opts.assetContract,
     amount: amountInBaseUnits,
-    payTo: opts.manifest.payee,
+    payTo: resolvePayee(opts.manifest, 'x402'),
     maxTimeoutSeconds: 60,
     extra: {
       areFeesSponsored: true,
@@ -185,12 +186,13 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const chargePrice = opts.pricing['mpp-charge']!
+  const recipient = resolvePayee(opts.manifest, 'mpp-charge')
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       mppCharge({
-        recipient: opts.manifest.payee,
+        recipient,
         currency: opts.assetContract,
         network: networkId,
         feePayer: { envelopeSigner: opts.payeeSecretKey },
@@ -244,7 +246,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       const result = await handler({
         amount: chargePrice,
         currency: opts.assetContract,
-        recipient: opts.manifest.payee,
+        recipient,
         description: opts.manifest.name,
       })(c.req.raw)
 

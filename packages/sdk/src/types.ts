@@ -14,6 +14,14 @@ export interface PricingConfig {
   per: 'request'
   /** x402 facilitator URL (OpenZeppelin Channels). Required for x402 mode. */
   facilitator?: string
+  /**
+   * Optional per-mode payee override (Stellar G... address). When set, payments
+   * for this mode are directed here instead of the top-level manifest `payee`,
+   * enabling treasury separation by settlement type (e.g. x402 → facilitator
+   * hot wallet, mpp-charge → direct-settlement account). Falls back to the
+   * top-level `payee` when omitted.
+   */
+  payee?: string
 }
 
 /** Per-voucher pricing config — used by mpp-session (one-way-channel) mode */
@@ -49,7 +57,14 @@ export interface RouteDockManifest {
   asset: string
   /** Stellar Asset Contract (SAC) address for the payment asset */
   asset_contract: string
-  /** Stellar address (G...) that receives payments */
+  /**
+   * Stellar address (G...) that receives payments. Used as the default
+   * recipient for all modes. Individual per-request modes (x402, mpp-charge)
+   * may override this via `pricing.<mode>.payee` for treasury separation.
+   * Note: mpp-session settlements always land in the server signer's account
+   * (the channel pays out to the closer), so they cannot be redirected by a
+   * manifest field and always use this top-level `payee` for discovery display.
+   */
   payee: string
   /** Pricing configuration per supported payment mode */
   pricing: {
