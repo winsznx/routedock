@@ -1,4 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk'
+import { CovenantPolicyError } from '@routedock/covenant-sdk'
 import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
@@ -37,6 +38,11 @@ export interface RouteDockClientConfig {
   retryPolicy?: RetryPolicy
   /** Structured logger for SDK events. Defaults to no-op (silent). */
   logger?: RouteDockLogger
+  /**
+   * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
+   * with off-chain ZK proofs attached as auth signatures.
+   */
+  vault?: VaultConfig
 }
 
 export class RouteDockClient {
@@ -46,6 +52,7 @@ export class RouteDockClient {
   private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
+  private readonly vault: VaultConfig | undefined
 
   /** Local daily accumulator keyed by YYYY-MM-DD */
   private dailySpend: {
@@ -68,6 +75,7 @@ export class RouteDockClient {
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
     this.logger = config.logger
+    this.vault = config.vault
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -128,7 +136,7 @@ export class RouteDockClient {
       return result
     } catch (err) {
       if (err instanceof CovenantPolicyError) {
-        throw new RouteDockPolicyRejectError(err.code)
+        throw new RouteDockPolicyRejectError((err as CovenantPolicyError).code)
       }
       throw err
     }

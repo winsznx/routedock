@@ -64,6 +64,16 @@ export interface RouteDockManifest {
   endpoints: Record<string, string>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * Optional vault custody mode declared by the provider.
+   * When set to `covenant-zk`, the provider accepts payers using Covenant smart accounts.
+   */
+  vault?: VaultMode
+  /**
+   * Optional Covenant smart account address (C...) that this provider is linked to.
+   * Used by the client to verify the covenant_account before sending proofs.
+   */
+  covenant_account?: string
   /** Optional protocol features this provider supports */
   capabilities?: {
     /** Supported streaming transports */
