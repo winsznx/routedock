@@ -126,6 +126,24 @@
         }
       },
       "additionalProperties": false
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 10
+      },
+      "uniqueItems": true,
+      "description": "IATA airport codes or UN/LOCODE identifiers for regions where this provider has infrastructure (e.g. ['IAD', 'AMS']). Used by agents to select the nearest provider."
+    },
+    "latency_hints": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      },
+      "description": "Provider-declared p50 latency in milliseconds per region code. Keys must be a subset of 'regions'. Example: { 'IAD': 14, 'AMS': 22 }."
     }
   },
   "definitions": {

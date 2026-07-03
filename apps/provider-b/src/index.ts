@@ -53,6 +53,8 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { stream: 'GET /stream/orderbook' },
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
+  regions: ['FRA', 'SIN'],
+  latency_hints: { FRA: 11, SIN: 19 },
 }
 
 // Required env var check
