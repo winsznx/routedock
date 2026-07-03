@@ -1,4 +1,5 @@
 import Ajv from 'ajv'
+import addFormats from 'ajv-formats'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
@@ -13,6 +14,7 @@ import schema from '../schemas/routedock.schema.json' assert { type: 'json' }
 import pkg from '../../package.json' assert { type: 'json' }
 
 const ajv = new Ajv()
+addFormats(ajv)
 const validateManifest = ajv.compile(schema)
 
 const SDK_VERSION = pkg.version as string
