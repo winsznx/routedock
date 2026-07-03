@@ -6,7 +6,7 @@
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "stress:test": "pnpm exec tsx scripts/stress_test.ts"
+    "stress:test": "pnpm exec tsx scripts/stress_test.ts",
     "version": "changeset version",
     "release": "changeset publish"
   },
