@@ -14,7 +14,11 @@ import type {
   SessionHandle,
   SessionCloseResult,
   DisputeStatus,
+  SessionOptions,
+  SessionEvent,
+  SessionTimeoutPayload,
 } from '../types.js'
+import { DEFAULT_MAX_SESSION_DURATION_MS } from '../types.js'
 import {
   RouteDockManifestError,
   RouteDockChannelStateError,
@@ -38,6 +42,7 @@ export class MppSessionClient {
     url: string,
     manifest: RouteDockManifest,
     commitmentSecret: string,
+    options?: SessionOptions,
   ): Promise<SessionHandle> {
     const pricing = manifest.pricing['mpp-session']
     if (!pricing) {
@@ -75,6 +80,35 @@ export class MppSessionClient {
     })
 
     const retryPolicy = this.retryPolicy
+
+    // ── Wall-clock lifetime guard ────────────────────────────────────────────
+    // An orphaned session (e.g. a stalled agent loop) keeps channel collateral
+    // locked on-chain. Auto-close after maxDurationMs so funds are never
+    // stranded indefinitely. The timer is cleared as soon as the session is
+    // closed manually so a normal lifecycle never triggers the guard.
+    const maxDurationMs = options?.maxDurationMs ?? DEFAULT_MAX_SESSION_DURATION_MS
+    const listeners = new Map<SessionEvent, Set<(payload: SessionTimeoutPayload) => void>>()
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let closed = false
+
+    const emit = (event: SessionEvent, payload: SessionTimeoutPayload): void => {
+      const set = listeners.get(event)
+      if (!set) return
+      for (const listener of set) {
+        try {
+          listener(payload)
+        } catch {
+          // A misbehaving listener must not break session teardown.
+        }
+      }
+    }
+
+    const clearSessionTimer = (): void => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+        timeoutId = undefined
+      }
+    }
 
     const handle: SessionHandle = {
       channelId: channelContract,
@@ -116,6 +150,10 @@ export class MppSessionClient {
       },
 
       async close(): Promise<SessionCloseResult> {
+        // Manual close — cancel the lifetime guard so it can't fire later.
+        clearSessionTimer()
+        closed = true
+
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
           await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
@@ -339,6 +377,37 @@ export class MppSessionClient {
           throw new RouteDockChannelStateError(`Failed to get dispute status: ${err instanceof Error ? err.message : String(err)}`)
         }
       },
+
+      on(
+        event: SessionEvent,
+        listener: (payload: SessionTimeoutPayload) => void,
+      ): () => void {
+        let set = listeners.get(event)
+        if (!set) {
+          set = new Set()
+          listeners.set(event, set)
+        }
+        set.add(listener)
+        return () => {
+          set?.delete(listener)
+        }
+      },
+    }
+
+    // Arm the lifetime guard once the handle exists. A non-finite or <= 0
+    // budget disables the guard (caller opted out).
+    if (Number.isFinite(maxDurationMs) && maxDurationMs > 0) {
+      timeoutId = setTimeout(() => {
+        if (closed) return
+        emit('session:timeout', { maxDurationMs })
+        // Best-effort auto-close; errors are surfaced to listeners via the
+        // event, not thrown into the timer callback (no one would catch them).
+        void handle.close().catch(() => {
+          /* auto-close failed — channel may need manual recovery via refund */
+        })
+      }, maxDurationMs)
+      // Don't keep a Node process alive solely for this safety timer.
+      ;(timeoutId as { unref?: () => void }).unref?.()
     }
 
     return handle
