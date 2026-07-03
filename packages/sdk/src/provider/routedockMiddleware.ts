@@ -24,10 +24,18 @@ export interface RouteDockMiddlewareOptions {
   commitmentPublicKey?: string
   /** Full RouteDock manifest — served at /.well-known/routedock.json */
   manifest: RouteDockManifest
-  /** Called after each successful on-chain settlement */
-  onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
-  /** Called when a new mpp-session is opened (first voucher received) */
-  onSessionOpen?: (channelId: string) => Promise<void>
+  /**
+   * Called after each successful on-chain settlement.
+   * `payer` is the Stellar G... public key of the agent that paid.
+   * May be `null` if the payer address could not be extracted from the payment headers.
+   */
+  onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
+  /**
+   * Called when a new mpp-session is opened (first voucher received).
+   * `payer` is the Stellar G... public key of the agent that opened the channel.
+   * May be `null` if the payer address could not be extracted.
+   */
+  onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   /** Called after each verified voucher in an mpp-session */
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
@@ -53,6 +61,8 @@ export interface RouteDockMiddlewareOptions {
 const MPP_MODES: readonly PaymentMode[] = ['mpp-session', 'mpp-charge']
 
 export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
+  const startTime = Date.now()
+
   // Register each handler under its payment mode so routing is explicit and
   // never depends on insertion order.
   const handlerMap = new Map<PaymentMode, RequestHandler>()
@@ -126,6 +136,19 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     // Serve manifest at /.well-known/routedock.json
     if (req.path === '/.well-known/routedock.json') {
       res.json(opts.manifest)
+      return
+    }
+
+    // Serve health check endpoint
+    if (req.path === '/health') {
+      res.json({
+        status: 'ok',
+        routedock: opts.manifest.routedock,
+        network: opts.network,
+        payee: opts.payee,
+        modesActive: opts.modes,
+        uptime: Math.floor((Date.now() - startTime) / 1000),
+      })
       return
     }
 

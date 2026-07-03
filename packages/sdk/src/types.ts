@@ -88,6 +88,18 @@ export interface PaymentResult {
   timestamp: number
 }
 
+/** Result returned by client.estimateCost() — the expected charge without submitting any transaction */
+export interface EstimateCostResult {
+  /** Expected charge in the payment asset (decimal string, e.g. "0.001") */
+  amount: string
+  /** Payment asset ticker, e.g. "USDC" */
+  asset: string
+  /** Payment mode that would be used */
+  mode: PaymentMode
+  /** Full manifest — available for approval-gate / budget-routing decisions */
+  manifest: RouteDockManifest
+}
+
 /** Result returned by session.close() */
 export interface SessionCloseResult {
   /** On-chain transaction hash for the channel close */
