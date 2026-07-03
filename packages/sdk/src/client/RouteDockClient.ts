@@ -48,7 +48,7 @@ function usdcToMicros(decimal: string): bigint {
     throw new RouteDockPolicyRejectError(`invalid_usdc_amount:${decimal}`)
   }
 
-  const [, whole, fraction = ''] = match
+  const [, whole = '0', fraction = ''] = match
   if (fraction.length > 7) {
     throw new RouteDockPolicyRejectError(`usdc_amount_too_precise:${decimal}`)
   }
