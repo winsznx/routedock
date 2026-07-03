@@ -172,7 +172,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       }
 
       if (txHash && opts.onSettled) {
-        Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402')).catch(err => {
+        Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402', payerAddress)).catch(err => {
           console.error('[x402] onSettled callback error:', err)
           opts.onCallbackError?.(err, 'onSettled')
         })
