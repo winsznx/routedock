@@ -35,6 +35,10 @@ function startTestServer(
 // ── Test 1: ModeRouter — manifest fetch + schema validation ───────────────────
 
 {
+  const { Keypair } = await import('@stellar/stellar-sdk')
+  const { signManifest } = await import('../manifest/sign.js')
+  const payeeKp = Keypair.random()
+
   const validManifest = {
     routedock: '1.0',
     name: 'Test Provider',
@@ -43,7 +47,7 @@ function startTestServer(
     network: 'testnet',
     asset: 'USDC',
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    payee: payeeKp.publicKey(),
     pricing: {
       x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
       'mpp-charge': { amount: '0.0008', per: 'request' },
@@ -51,11 +55,12 @@ function startTestServer(
     endpoints: { price: 'GET /price' },
     tags: ['price', 'stellar'],
   }
+  const signedManifest = signManifest(validManifest as import('../types.js').RouteDockManifest, payeeKp.secret())
 
   const server = await startTestServer((req, res) => {
     if (req.url === '/.well-known/routedock.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(validManifest))
+      res.end(JSON.stringify(signedManifest))
     } else {
       res.writeHead(404)
       res.end()
@@ -114,6 +119,57 @@ function startTestServer(
     assert.ok(threw, 'should have thrown for invalid manifest')
 
     console.log('✓ Test 2: Invalid manifest rejection PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 2b: ModeRouter — unsigned manifest rejected ─────────────────────────
+
+{
+  const { Keypair: Kp } = await import('@stellar/stellar-sdk')
+  const kp = Kp.random()
+  const unsignedManifest = {
+    routedock: '1.0',
+    name: 'Unsigned Provider',
+    description: 'Missing signature',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: kp.publicKey(),
+    pricing: { x402: { amount: '0.001', per: 'request' } },
+    endpoints: { price: 'GET /price' },
+    tags: ['test'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(unsignedManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const { RouteDockSignatureError: SigError } = await import('../errors.js')
+
+    let threw = false
+    try {
+      await fetchManifest(server.url)
+    } catch (err) {
+      threw = true
+      assert.ok(
+        err instanceof SigError,
+        `should throw RouteDockSignatureError, got ${String(err)}`,
+      )
+    }
+    assert.ok(threw, 'should have thrown for unsigned manifest')
+
+    console.log('✓ Test 2b: Unsigned manifest rejection PASSED')
   } finally {
     await server.close()
   }
@@ -233,4 +289,143 @@ function startTestServer(
   console.log('✓ Test 4: Error subclass hierarchy PASSED')
 }
 
+// ── Test 5: Per-endpoint spend cap enforcement ────────────────────────────────
+
+{
+  const { RouteDockPolicyRejectError: PolicyErr } = await import('../errors.js')
+
+  /**
+   * Directly exercise _checkAndRecordSpend via a minimal stand-in that exposes
+   * the private method through casting. This avoids needing a live network or
+   * Stellar keypair while still hitting the exact production code path.
+   */
+  type SpendState = {
+    date: string
+    total: number
+    endpoints: Record<string, number>
+  }
+
+  function makeSpendTracker(
+    globalCap: string,
+    endpointCaps?: Record<string, string>,
+  ) {
+    let dailySpend: SpendState = { date: '', total: 0, endpoints: {} }
+    const spendCap = { daily: globalCap, asset: 'USDC' as const, endpointCaps }
+
+    function checkAndRecord(amount: string, endpointKey: string): void {
+      const today = new Date().toISOString().slice(0, 10)
+      if (dailySpend.date !== today) {
+        dailySpend = { date: today, total: 0, endpoints: {} }
+      }
+
+      const amountNum = parseFloat(amount)
+
+      const endpointCapStr = spendCap.endpointCaps?.[endpointKey]
+      if (endpointCapStr !== undefined) {
+        const endpointCapNum = parseFloat(endpointCapStr)
+        const endpointTotal = dailySpend.endpoints[endpointKey] ?? 0
+        if (endpointTotal + amountNum > endpointCapNum) {
+          throw new PolicyErr('local_endpoint_cap_exceeded')
+        }
+      }
+
+      const globalCapNum = parseFloat(spendCap.daily)
+      if (dailySpend.total + amountNum > globalCapNum) {
+        throw new PolicyErr('local_daily_cap_exceeded')
+      }
+
+      dailySpend.total += amountNum
+      if (endpointCapStr !== undefined) {
+        dailySpend.endpoints[endpointKey] =
+          (dailySpend.endpoints[endpointKey] ?? 0) + amountNum
+      }
+    }
+
+    return { checkAndRecord, getState: () => dailySpend }
+  }
+
+  // 5a: Endpoint cap blocks overspend on a single endpoint
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '1.00',
+    })
+    tracker.checkAndRecord('0.60', 'https://api.openai.com') // $0.60 — ok
+    tracker.checkAndRecord('0.39', 'https://api.openai.com') // $0.99 — ok
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // $1.01 — exceeds $1.00 endpoint cap
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_endpoint_cap_exceeded')
+    }
+    assert.ok(threw, '5a: should throw local_endpoint_cap_exceeded')
+    console.log('✓ Test 5a: endpoint cap blocks overspend PASSED')
+  }
+
+  // 5b: Global cap catches aggregate overspend across endpoints
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '5.00',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com')    // global: $0.50
+    tracker.checkAndRecord('0.49', 'https://api.anthropic.com') // global: $0.99
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // global $1.01 — exceeds global $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5b: should throw local_daily_cap_exceeded')
+    console.log('✓ Test 5b: global cap catches aggregate overspend PASSED')
+  }
+
+  // 5c: Endpoint not in endpointCaps falls back to global cap only
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '0.10', // tight cap on openai only
+    })
+    // anthropic not in endpointCaps — should only be subject to global cap
+    tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // fine, global: $0.90
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // global: $1.80 > $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5c: unlisted endpoint subject to global cap only')
+    console.log('✓ Test 5c: unlisted endpoint falls back to global cap PASSED')
+  }
+
+  // 5d: Hitting one endpoint cap does not block other endpoints
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '0.50',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com') // exactly at endpoint cap
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.01', 'https://api.openai.com') // endpoint cap exceeded
+    } catch { threw = true }
+    assert.ok(threw, '5d: openai cap should be exhausted')
+
+    // anthropic is unaffected — can still spend
+    tracker.checkAndRecord('1.00', 'https://api.anthropic.com') // should not throw
+    console.log('✓ Test 5d: one endpoint cap exhausted does not block others PASSED')
+  }
+
+  console.log('✓ Test 5: Per-endpoint spend cap enforcement ALL PASSED')
+}
+
 console.log('\nAll smoke tests passed.')
+

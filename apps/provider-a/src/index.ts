@@ -52,6 +52,8 @@ const manifest: RouteDockManifest = {
   },
   endpoints: { price: 'GET /price' },
   tags: ['price', 'stellar', 'dex', 'orderbook', 'usdc'],
+  regions: ['IAD', 'AMS'],
+  latency_hints: { IAD: 14, AMS: 22 },
 }
 
 // Required env var check — abort with clear message rather than a deep stack trace
@@ -103,8 +105,8 @@ app.use(
     payeeSecretKey: STELLAR_PAYEE_SECRET,
     manifest,
     ...(OPENZEPPELIN_API_KEY ? { facilitatorApiKey: OPENZEPPELIN_API_KEY } : {}),
-    onSettled: async (txHash: string, amount: string, mode: string) => {
-      console.log(`[settled] mode=${mode} txHash=${txHash} amount=${amount}`)
+    onSettled: async (txHash: string, amount: string, mode: string, payer: string | null) => {
+      console.log(`[settled] mode=${mode} txHash=${txHash} amount=${amount} payer=${payer ?? 'unknown'}`)
       if (!supabase) return
       const txType = mode === 'mpp-charge' ? 'mpp_charge' : 'x402_settle'
       const { error } = await supabase.from('tx_log').insert({
@@ -114,7 +116,7 @@ app.use(
         mode,
         network: STELLAR_NETWORK,
         provider_url: `http://localhost:${PORT}/price`,
-        agent_address: null,
+        agent_address: payer,
         metadata: { settled_at: new Date().toISOString() },
       })
       if (error) console.error('[supabase] tx_log insert failed:', error.message)
