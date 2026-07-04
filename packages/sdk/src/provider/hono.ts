@@ -14,6 +14,8 @@ import { stellar as mppCharge } from '@stellar/mpp/charge/server'
 import { stellar as mppChannel, close as channelClose, Store } from '@stellar/mpp/channel/server'
 import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { signManifest } from '../manifest/sign.js'
+import { resolvePayee } from './payee.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -77,7 +79,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
     network: caip2,
     asset: opts.assetContract,
     amount: amountInBaseUnits,
-    payTo: opts.manifest.payee,
+    payTo: resolvePayee(opts.manifest, 'x402'),
     maxTimeoutSeconds: 60,
     extra: {
       areFeesSponsored: true,
@@ -185,12 +187,13 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const chargePrice = opts.pricing['mpp-charge']!
+  const recipient = resolvePayee(opts.manifest, 'mpp-charge')
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       mppCharge({
-        recipient: opts.manifest.payee,
+        recipient,
         currency: opts.assetContract,
         network: networkId,
         feePayer: { envelopeSigner: opts.payeeSecretKey },
@@ -244,7 +247,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       const result = await handler({
         amount: chargePrice,
         currency: opts.assetContract,
-        recipient: opts.manifest.payee,
+        recipient,
         description: opts.manifest.name,
       })(c.req.raw)
 
@@ -452,25 +455,26 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
-    handlers.push(createX402HonoHandler(opts))
+    handlers.push(createX402HonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   if (opts.modes.includes('mpp-charge') && opts.pricing['mpp-charge']) {
-    handlers.push(createMppChargeHonoHandler(opts))
+    handlers.push(createMppChargeHonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   if (opts.modes.includes('mpp-session') && opts.pricing['mpp-session']) {
     if (!opts.commitmentPublicKey) {
       throw new Error('routedockHono: mpp-session mode requires commitmentPublicKey')
     }
-    handlers.push(createMppSessionHonoHandler(opts))
+    handlers.push(createMppSessionHonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   return async (c, next) => {
     if (c.req.path === '/.well-known/routedock.json') {
-      return c.json(opts.manifest)
+      return c.json(signedManifest)
     }
 
     if (handlers.length === 0) {
