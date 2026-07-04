@@ -100,6 +100,12 @@ export interface RouteDockManifest {
    * Example: { "IAD": 14, "AMS": 22 }
    */
   latency_hints?: Record<string, number>
+  /**
+   * Base64 Ed25519 signature of the payee keypair over the SHA-256 digest of
+   * this manifest with the `signature` field omitted. Clients must verify this
+   * before trusting any routing field (payee, endpoints, pricing).
+   */
+  signature?: string
 }
 
 /** Result returned by client.pay() for any payment mode */
