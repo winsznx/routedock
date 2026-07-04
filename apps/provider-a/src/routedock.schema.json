@@ -144,6 +144,10 @@
         "minimum": 0
       },
       "description": "Provider-declared p50 latency in milliseconds per region code. Keys must be a subset of 'regions'. Example: { 'IAD': 14, 'AMS': 22 }."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
     }
   },
   "definitions": {
