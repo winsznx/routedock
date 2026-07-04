@@ -1,9 +1,17 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/** Daily spend accumulator, keyed by an ISO date (YYYY-MM-DD). */
+/**
+ * Daily spend accumulator, keyed by an ISO date (YYYY-MM-DD).
+ *
+ * Totals are decimal strings of integer microUSDC (1 USDC = 10^7 units) so
+ * the record stays JSON-serializable with no floating point precision loss.
+ */
 export interface DailySpend {
   date: string
-  total: number
+  /** Global accumulated spend for the day, in microUSDC (e.g. "5000000") */
+  totalMicros: string
+  /** Per-endpoint accumulated spend for the day, keyed by origin URL, in microUSDC */
+  endpoints: Record<string, string>
 }
 
 // ── Interface ──────────────────────────────────────────────────────────────────
@@ -49,10 +57,10 @@ export class InMemorySpendStore implements SpendStore {
   }
 
   async read(): Promise<DailySpend | null> {
-    return this.state ? { ...this.state } : null
+    return this.state ? { ...this.state, endpoints: { ...this.state.endpoints } } : null
   }
 
   async write(state: DailySpend): Promise<void> {
-    this.state = { ...state }
+    this.state = { ...state, endpoints: { ...state.endpoints } }
   }
 }

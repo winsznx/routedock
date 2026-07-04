@@ -54,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "826f06a4fc0b8502636213bf737133a0ba71d8fc65fc3d45b0bba2473aed4c6d"
+                          "bytes": "008fec9bc1559b555d7bae0ab583380fe86d7de0143d855bc7469d8039ff3b76"
                         }
                       },
                       {
@@ -62,9 +62,17 @@
                           "symbol": "allwlist"
                         },
                         "val": {
-                          "vec": [
+                          "map": [
                             {
-                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              "key": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              },
+                              "val": {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 5000000
+                                }
+                              }
                             }
                           ]
                         }
@@ -94,6 +102,28 @@
                         },
                         "val": {
                           "bool": true
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "ltcap"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "ltspend"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
                         }
                       }
                     ]
