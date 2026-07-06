@@ -6,6 +6,7 @@ import { MppSessionClient } from './MppSessionClient.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
+import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 
 export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
@@ -32,6 +33,12 @@ export interface RouteDockClientConfig {
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
+  /**
+   * Durable backing store for the daily spend cap accumulator. Defaults to a
+   * non-durable in-memory store that resets on restart (with a startup warning).
+   * Inject a persistent implementation for production safety.
+   */
+  spendStore?: SpendStore
   /** Structured logger for SDK events. Defaults to no-op (silent). */
   logger?: RouteDockLogger
 }
@@ -65,14 +72,12 @@ export class RouteDockClient {
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
 
-  /** Local daily accumulator keyed by YYYY-MM-DD, totals in microUSDC (1 USDC = 10^7) */
-  private dailySpend: {
-    date: string
-    /** Global accumulated spend for the day */
-    total: bigint
-    /** Per-endpoint accumulated spend for the day, keyed by origin URL */
-    endpoints: Record<string, bigint>
-  } = { date: '', total: 0n, endpoints: {} }
+  /**
+   * Durable backing store for the local daily spend accumulator (keyed by
+   * YYYY-MM-DD). Totals are persisted as decimal strings of microUSDC
+   * (1 USDC = 10^7) so stores stay JSON-safe with no precision loss.
+   */
+  private readonly spendStore: SpendStore
 
   private readonly x402: X402Client
   private readonly charge: MppChargeClient
@@ -85,6 +90,8 @@ export class RouteDockClient {
     this.spendCap = config.spendCap
     this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
+    // Only warn about non-durability when a spend cap is actually configured.
+    this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
     this.logger = config.logger
 
     const secretKey = this.keypair.secret()
@@ -130,7 +137,7 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
-    this._checkAndRecordSpend(result.amount, new URL(url).origin)
+    await this._checkAndRecordSpend(result.amount, new URL(url).origin)
     return result
   }
 
@@ -198,24 +205,28 @@ export class RouteDockClient {
    * All spend (regardless of endpoint) counts toward the global accumulator.
    *
    * All arithmetic is done in exact integer microUSDC (bigint) to avoid
-   * floating point precision loss from repeated decimal additions.
+   * floating point precision loss from repeated decimal additions. The
+   * accumulator is read from and written back to the injected SpendStore so
+   * the cap survives process restarts when a durable store is configured.
    */
-  private _checkAndRecordSpend(amount: string, endpointKey: string): void {
+  private async _checkAndRecordSpend(amount: string, endpointKey: string): Promise<void> {
     if (!this.spendCap) return
 
     const today = new Date().toISOString().slice(0, 10)
-    if (this.dailySpend.date !== today) {
-      this.dailySpend = { date: today, total: 0n, endpoints: {} }
-    }
+    const persisted = await this.spendStore.read()
+    const current: DailySpend =
+      persisted && persisted.date === today
+        ? persisted
+        : { date: today, totalMicros: '0', endpoints: {} }
 
     const amountMicros = usdcToMicros(amount)
+    const total = BigInt(current.totalMicros)
 
     // 1. Per-endpoint cap check
     const endpointCapStr = this.spendCap.endpointCaps?.[endpointKey]
-    let endpointCapMicros: bigint | undefined
     if (endpointCapStr !== undefined) {
-      endpointCapMicros = usdcToMicros(endpointCapStr)
-      const endpointTotal = this.dailySpend.endpoints[endpointKey] ?? 0n
+      const endpointCapMicros = usdcToMicros(endpointCapStr)
+      const endpointTotal = BigInt(current.endpoints[endpointKey] ?? '0')
       if (endpointTotal + amountMicros > endpointCapMicros) {
         throw new RouteDockPolicyRejectError('local_endpoint_cap_exceeded')
       }
@@ -223,15 +234,16 @@ export class RouteDockClient {
 
     // 2. Global daily cap check
     const globalCapMicros = usdcToMicros(this.spendCap.daily)
-    if (this.dailySpend.total + amountMicros > globalCapMicros) {
+    if (total + amountMicros > globalCapMicros) {
       throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
     }
 
     // Both checks passed — record the spend
-    this.dailySpend.total += amountMicros
+    current.totalMicros = (total + amountMicros).toString()
     if (endpointCapStr !== undefined) {
-      this.dailySpend.endpoints[endpointKey] =
-        (this.dailySpend.endpoints[endpointKey] ?? 0n) + amountMicros
+      current.endpoints[endpointKey] =
+        (BigInt(current.endpoints[endpointKey] ?? '0') + amountMicros).toString()
     }
+    await this.spendStore.write(current)
   }
 }
