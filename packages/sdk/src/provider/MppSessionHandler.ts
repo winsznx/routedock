@@ -22,6 +22,7 @@ export interface MppSessionHandlerOptions {
   onSettled?: (txHash: string, totalPaid: string, mode: string, payer: string | null) => Promise<void>
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onCallbackError?: (err: unknown, cb: string) => void
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -49,12 +50,18 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(opts.channelContract, sessionPayerAddress)
+            Promise.resolve().then(() => opts.onSessionOpen!(opts.channelContract, null)).catch(err => {
+              console.error('[mpp-session] onSessionOpen callback error:', err)
+              opts.onCallbackError?.(err, 'onSessionOpen')
+            })
           }
         }
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-          await opts.onVoucher(voucherCount, humanAmount)
+          Promise.resolve().then(() => opts.onVoucher!(voucherCount, humanAmount)).catch(err => {
+            console.error('[mpp-session] onVoucher callback error:', err)
+            opts.onCallbackError?.(err, 'onVoucher')
+          })
         }
       }
     },
@@ -97,7 +104,10 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', null)).catch(err => {
+              console.error('[mpp-session] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
 
           // Optionally record session_settled on the agent vault.
