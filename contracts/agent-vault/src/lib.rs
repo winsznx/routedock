@@ -145,6 +145,27 @@ impl AgentVault {
             .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
             .unwrap_or(0)
     }
+
+    /// Initiate a transfer of admin rights to a new address. Admin only.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&PENDING_ADMIN_KEY, &new_admin);
+    }
+
+    /// Accept a pending transfer of admin rights. Pending admin only.
+    pub fn accept_admin(env: Env) {
+        let storage = env.storage().instance();
+        let pending_admin: Address = storage
+            .get(&PENDING_ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingAdmin));
+        pending_admin.require_auth();
+        storage.set(&ADMIN_KEY, &pending_admin);
+        storage.remove(&PENDING_ADMIN_KEY);
+    }
 }
 
 // ── CustomAccountInterface ────────────────────────────────────────────────────
