@@ -4,7 +4,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
   RouteDockManifestError,
-  RouteDockNoSupportedModeError,
+  RouteDockNoSupportedModeError, 
   RouteDockClientVersionError,
   httpStatusToError,
   wrapFetchError,
@@ -24,6 +24,37 @@ const SDK_VERSION = pkg.version as string
 //      RouteDockLogger, parseMajorMinor, isVersionBelow, assertClientVersionSupported,
 //      ModeSelectOptions all stay exactly as in the fix/manifest-versioning-50 branch)
 
+/**
+ * Override the manifest cache's max size (default 512). Affects the shared,
+ * process-wide cache used by all RouteDockClient instances.
+ */
+export function configureManifestCache(maxSize: number): void {
+  if (!Number.isInteger(maxSize) || maxSize <= 0) {
+    throw new RouteDockManifestError('Invalid manifest cache size: ' + maxSize)
+  }
+  manifestCache.setMaxSize(maxSize)
+}
+
+export type RouteDockLogger = (message: string) => void
+
+export interface ModeSelectOptions {
+  /** Force mpp-session if the provider supports it */
+  sustained?: boolean
+  session?: boolean
+  /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
+  optimize?: 'cost' | 'reliability' | 'latency'
+  /** Optional maximum acceptable per-request amount for cost-based selection. */
+  budget_per_request?: string
+  /**
+   * Override mode selection and use this specific mode.
+   * Throws RouteDockNoSupportedModeError if the provider does not support it.
+   */
+  forceMode?: PaymentMode
+  /** Structured logger for mode selection events. Defaults to no-op. */
+  logger?: RouteDockLogger
+}
+
+/** Fetch, validate, and cache a RouteDock manifest from `baseUrl`. */
 export async function fetchManifest(
   baseUrl: string,
   retryPolicy?: RetryPolicy,
@@ -71,4 +102,80 @@ export async function fetchManifest(
   }, retryPolicy)
 }
 
-// ... selectMode unchanged
+/**
+ * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
+ *
+ * By default, a provider that supports mpp-charge is preferred over x402.
+ * If { optimize: 'cost' } is provided, the supported per-request mode with the
+ * lowest declared amount is selected instead, optionally respecting a
+ * budget_per_request cap.
+ */
+export function selectMode(
+  manifest: RouteDockManifest,
+  options: ModeSelectOptions = {},
+): PaymentMode {
+  const modes = manifest.modes
+  const log = options.logger ?? (() => {})
+
+  if (options.forceMode) {
+    if (!modes.includes(options.forceMode)) {
+      throw new RouteDockNoSupportedModeError(
+        `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
+      )
+    }
+    log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
+    return options.forceMode
+  }
+
+  if ((options.sustained || options.session) && modes.includes('mpp-session')) {
+    const mode: PaymentMode = 'mpp-session'
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
+    return mode
+  }
+
+  if (options.optimize === 'cost') {
+    const candidates = (['x402', 'mpp-charge'] as Array<'x402' | 'mpp-charge'>)
+      .filter((mode) => modes.includes(mode))
+      .map((mode) => {
+        const pricing = manifest.pricing[mode]
+        const amount = pricing?.amount
+        const parsedAmount = typeof amount === 'string' ? Number.parseFloat(amount) : Number.NaN
+        return {
+          mode: mode as PaymentMode,
+          amount: Number.isFinite(parsedAmount) ? parsedAmount : Number.POSITIVE_INFINITY,
+        }
+      })
+      .filter((candidate) => Number.isFinite(candidate.amount))
+
+    if (candidates.length > 0) {
+      const budget = options.budget_per_request
+        ? Number.parseFloat(options.budget_per_request)
+        : Number.POSITIVE_INFINITY
+      const affordableCandidates = Number.isFinite(budget)
+        ? candidates.filter((candidate) => candidate.amount <= budget)
+        : candidates
+
+      const cheapestCandidate = [...affordableCandidates].sort((a, b) => a.amount - b.amount)[0]
+      if (cheapestCandidate) {
+        console.log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
+        return cheapestCandidate.mode
+      }
+    }
+  }
+
+  if (modes.includes('mpp-charge')) {
+    const mode: PaymentMode = 'mpp-charge'
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
+    return mode
+  }
+
+  if (modes.includes('x402')) {
+    const mode: PaymentMode = 'x402'
+    log(`[RouteDock] ${manifest.name} → ${mode}`)
+    return mode
+  }
+
+  throw new RouteDockNoSupportedModeError(
+    `No supported payment mode found in manifest (modes: ${modes.join(', ')})`,
+  )
+}

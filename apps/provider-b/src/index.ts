@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import express from 'express'
 import type { Request, Response } from 'express'
 import { createClient } from '@supabase/supabase-js'
@@ -51,10 +52,11 @@ const manifest: RouteDockManifest = {
       refund_waiting_period_ledgers: 17280,
     },
   },
-  endpoints: { stream: 'GET /stream/orderbook' },
+  endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
   regions: ['FRA', 'SIN'],
   latency_hints: { FRA: 11, SIN: 19 },
+  categories: ['data/stream/crypto'],
 }
 
 // Required env var check
