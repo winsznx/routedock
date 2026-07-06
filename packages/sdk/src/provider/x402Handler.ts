@@ -29,7 +29,7 @@ export interface X402HandlerOptions {
   assetContract: string
   facilitatorApiKey?: string
   manifest: RouteDockManifest
-  onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
+  onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onCallbackError?: (err: unknown, cb: string) => void
 }
 
@@ -175,7 +175,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
       }
 
       if (txHash && opts.onSettled) {
-        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402')).catch(err => {
+        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402', null)).catch(err => {
           console.error('[x402] onSettled callback error:', err)
           opts.onCallbackError?.(err, 'onSettled')
         })

@@ -50,7 +50,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            Promise.resolve().then(() => opts.onSessionOpen!(opts.channelContract)).catch(err => {
+            Promise.resolve().then(() => opts.onSessionOpen!(opts.channelContract, null)).catch(err => {
               console.error('[mpp-session] onSessionOpen callback error:', err)
               opts.onCallbackError?.(err, 'onSessionOpen')
             })
@@ -104,7 +104,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session')).catch(err => {
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', null)).catch(err => {
               console.error('[mpp-session] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
             })

@@ -272,7 +272,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, chargePrice, 'mpp-charge')).catch(err => {
+            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, chargePrice, 'mpp-charge', null)).catch(err => {
               console.error('[mpp-charge] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
             })
@@ -318,7 +318,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract)).catch(err => {
+            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract, null)).catch(err => {
               console.error('[mpp-session] onSessionOpen callback error:', err)
               opts.onCallbackError?.(err, 'onSessionOpen')
             })
@@ -375,7 +375,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session')).catch(err => {
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', null)).catch(err => {
               console.error('[mpp-session] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
             })
