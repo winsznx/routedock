@@ -23,6 +23,9 @@
       "react": [
         "dist/react.d.ts"
       ],
+      "testing": [
+        "dist/testing.d.ts"
+      ],
       "provider/hono": [
         "dist/provider/hono.d.ts"
       ],
@@ -51,6 +54,11 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
     },
     "./provider/hono": {
       "types": "./dist/provider/hono.d.ts",

@@ -52,7 +52,7 @@ function startTestServer(
       x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
       'mpp-charge': { amount: '0.0008', per: 'request' },
     },
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['price', 'stellar'],
   }
   const signedManifest = signManifest(validManifest as import('../types.js').RouteDockManifest, payeeKp.secret())
@@ -82,6 +82,17 @@ function startTestServer(
     // Mode selection
     const mode = selectMode(manifest)
     assert.equal(mode, 'mpp-charge', 'mpp-charge should be preferred over x402')
+
+    const costAwareManifest = {
+      ...validManifest,
+      pricing: {
+        x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+        'mpp-charge': { amount: '0.005', per: 'request' },
+      },
+    }
+
+    const costOptimizedMode = selectMode(costAwareManifest, { optimize: 'cost' })
+    assert.equal(costOptimizedMode, 'x402', 'cost optimization should prefer the lower-cost per-request mode')
 
     const modeForced = selectMode(manifest, { sustained: true })
     assert.equal(modeForced, 'mpp-charge', 'sustained without mpp-session falls back to mpp-charge')
@@ -139,7 +150,7 @@ function startTestServer(
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     payee: kp.publicKey(),
     pricing: { x402: { amount: '0.001', per: 'request' } },
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['test'],
   }
 
