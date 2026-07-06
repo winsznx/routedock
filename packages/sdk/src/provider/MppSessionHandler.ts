@@ -46,14 +46,12 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       if (key === cumulativeKey && value && typeof value === 'object' && 'amount' in (value as Record<string, unknown>)) {
         lastCumulativeAmount = BigInt((value as { amount: string }).amount)
         voucherCount++
-
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
             await opts.onSessionOpen(opts.channelContract, sessionPayerAddress)
           }
         }
-
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
           await opts.onVoucher(voucherCount, humanAmount)
@@ -61,6 +59,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
+  
   }
 
   const mppx = Mppx.create({
@@ -209,3 +208,4 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     }
   }
 }
+
