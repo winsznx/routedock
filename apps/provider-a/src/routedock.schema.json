@@ -126,6 +126,28 @@
         }
       },
       "additionalProperties": false
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 10
+      },
+      "uniqueItems": true,
+      "description": "IATA airport codes or UN/LOCODE identifiers for regions where this provider has infrastructure (e.g. ['IAD', 'AMS']). Used by agents to select the nearest provider."
+    },
+    "latency_hints": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      },
+      "description": "Provider-declared p50 latency in milliseconds per region code. Keys must be a subset of 'regions'. Example: { 'IAD': 14, 'AMS': 22 }."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
     }
   },
   "definitions": {
@@ -152,6 +174,10 @@
         "facilitator": {
           "type": "string",
           "description": "x402 facilitator URL (required for x402 mode). OpenZeppelin Channels endpoint."
+        },
+        "payee": {
+          "type": "string",
+          "description": "Optional per-mode payee override (Stellar G... address). Directs settlements for this mode to a separate account for treasury separation. Falls back to the top-level 'payee' when omitted."
         }
       }
     },
