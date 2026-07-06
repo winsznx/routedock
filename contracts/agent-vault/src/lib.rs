@@ -1366,7 +1366,7 @@ mod tests {
 
     /// Test 21: accept_admin without pending admin fails
     #[test]
-    #[should_panic(expected = "Error(Contract, #6)")]
+    #[should_panic(expected = "Error(Contract, #8)")]
     fn test_accept_admin_no_pending_admin_fails() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
