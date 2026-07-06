@@ -81,6 +81,10 @@ export interface ModeSelectOptions {
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
+  /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
+  optimize?: 'cost' | 'reliability' | 'latency'
+  /** Optional maximum acceptable per-request amount for cost-based selection. */
+  budget_per_request?: string
   /**
    * Override mode selection and use this specific mode.
    * Throws RouteDockNoSupportedModeError if the provider does not support it.
@@ -137,11 +141,12 @@ export async function fetchManifest(
 }
 
 /**
- * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md:
- * 1. If { sustained | session } AND manifest supports mpp-session → mpp-session
- * 2. Else if manifest supports mpp-charge AND network is Stellar → mpp-charge
- * 3. Else if manifest supports x402 → x402
- * 4. Else throw RouteDockNoSupportedModeError
+ * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
+ *
+ * By default, a provider that supports mpp-charge is preferred over x402.
+ * If { optimize: 'cost' } is provided, the supported per-request mode with the
+ * lowest declared amount is selected instead, optionally respecting a
+ * budget_per_request cap.
  */
 export function selectMode(
   manifest: RouteDockManifest,
@@ -164,6 +169,36 @@ export function selectMode(
     const mode: PaymentMode = 'mpp-session'
     log(`[RouteDock] ${manifest.name} → ${mode}`)
     return mode
+  }
+
+  if (options.optimize === 'cost') {
+    const candidates = (['x402', 'mpp-charge'] as Array<'x402' | 'mpp-charge'>)
+      .filter((mode) => modes.includes(mode))
+      .map((mode) => {
+        const pricing = manifest.pricing[mode]
+        const amount = pricing?.amount
+        const parsedAmount = typeof amount === 'string' ? Number.parseFloat(amount) : Number.NaN
+        return {
+          mode: mode as PaymentMode,
+          amount: Number.isFinite(parsedAmount) ? parsedAmount : Number.POSITIVE_INFINITY,
+        }
+      })
+      .filter((candidate) => Number.isFinite(candidate.amount))
+
+    if (candidates.length > 0) {
+      const budget = options.budget_per_request
+        ? Number.parseFloat(options.budget_per_request)
+        : Number.POSITIVE_INFINITY
+      const affordableCandidates = Number.isFinite(budget)
+        ? candidates.filter((candidate) => candidate.amount <= budget)
+        : candidates
+
+      const cheapestCandidate = [...affordableCandidates].sort((a, b) => a.amount - b.amount)[0]
+      if (cheapestCandidate) {
+        console.log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
+        return cheapestCandidate.mode
+      }
+    }
   }
 
   if (modes.includes('mpp-charge')) {
