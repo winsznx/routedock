@@ -252,6 +252,30 @@ export default app
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
 
+### Testing your settlement callbacks
+
+Provider authors wiring `onSettled` (e.g. a Supabase write) shouldn't have to mock the whole middleware chain or sign real payments to test that callback. `@routedock/routedock/testing` is the `msw`-equivalent for RouteDock providers: a mock middleware that drives your callbacks with synthetic data.
+
+```ts
+import express from 'express'
+import request from 'supertest'
+import { createMockRoutedockMiddleware } from '@routedock/routedock/testing'
+
+const onSettled = vi.fn() // your real Supabase-writing callback under test
+
+const app = express()
+app.use('/price', createMockRoutedockMiddleware({ mode: 'x402', payment: 'auto-pass', onSettled }))
+app.get('/price', (_req, res) => res.json({ price: '42' }))
+
+await request(app).get('/price').expect(200)
+expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
+```
+
+- `payment: 'auto-pass'` (default) invokes the callbacks with synthetic data, then runs your route handler. `'auto-fail'` responds `402` and skips both — exactly like a rejected payment.
+- `mode: 'mpp-session'` drives the full `onSessionOpen → onVoucher* → onSettled` sequence.
+- Override synthetic values via `synthetic: { txHash, amount, channelId, rate, voucherCount }`.
+- To test a callback with no HTTP server at all, call `runMockSettlement(opts)` directly — it returns the synthetic settlement record.
+
 ---
 
 ## Monorepo Structure

@@ -6,6 +6,7 @@ export default defineConfig({
     client: 'src/client/index.ts',
     provider: 'src/provider/index.ts',
     react: 'src/react/index.ts',
+    testing: 'src/testing/index.ts',
     'provider/hono': 'src/provider/hono.ts',
     'provider/fastify': 'src/provider/fastify.ts',
   },
