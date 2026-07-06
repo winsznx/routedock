@@ -72,6 +72,7 @@ CREATE TABLE providers (
   base_url      TEXT        NOT NULL UNIQUE,
   modes         TEXT[]      NOT NULL,
   tags          TEXT[]      NOT NULL DEFAULT '{}',
+  categories    TEXT[]      NOT NULL DEFAULT '{}',
   network       TEXT        NOT NULL DEFAULT 'testnet',
   payee         TEXT        NOT NULL,
   manifest      JSONB       NOT NULL,
@@ -91,6 +92,11 @@ CREATE INDEX idx_providers_description_trgm
 -- GIN index on tags array for exact tag lookups
 CREATE INDEX idx_providers_tags
   ON providers USING GIN (tags);
+
+-- GIN index on categories array for exact category lookups
+CREATE INDEX idx_providers_categories
+  ON providers USING GIN (categories);
+
 
 -- JSONB index for manifest queries
 CREATE INDEX idx_providers_manifest
