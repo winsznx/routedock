@@ -1,10 +1,9 @@
 {
   "generators": {
-    "address": 5,
+    "address": 2,
     "nonce": 0
   },
   "auth": [
-    [],
     [],
     [],
     []
@@ -55,7 +54,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "2c1f3543a76131d20051348a18e32ce84ba2c2a233401fc6c6169093657b4323"
+                          "bytes": "f8f8433413642d6b0444942c62140069b191a848746976e2f0ec3d0847033dbf"
                         }
                       },
                       {
@@ -63,19 +62,7 @@
                           "symbol": "allwlist"
                         },
                         "val": {
-                          "map": [
-                            {
-                              "key": {
-                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                              },
-                              "val": {
-                                "i128": {
-                                  "hi": 0,
-                                  "lo": 5000000
-                                }
-                              }
-                            }
-                          ]
+                          "map": []
                         }
                       },
                       {
@@ -94,7 +81,7 @@
                           "symbol": "expiry"
                         },
                         "val": {
-                          "u32": 500000
+                          "u32": 10000
                         }
                       },
                       {
