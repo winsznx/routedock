@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { stellar } from '@stellar/mpp/charge/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
+import { resolvePayee } from './payee.js'
 import type { SessionStore } from '../store/SessionStore.js'
 
 type Network = 'testnet' | 'mainnet'
@@ -19,17 +20,19 @@ export interface MppChargeHandlerOptions {
   manifest: RouteDockManifest
   store?: SessionStore
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
+  onCallbackError?: (err: unknown, cb: string) => void
 }
 
 export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHandler {
   const networkId = MPP_NETWORK[opts.network]
   const amountHumanReadable = opts.amount
+  const recipient = resolvePayee(opts.manifest, 'mpp-charge')
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       stellar.charge({
-        recipient: opts.manifest.payee,
+        recipient,
         currency: opts.assetContract,
         network: networkId,
         feePayer: { envelopeSigner: opts.payeeSecretKey },
@@ -79,7 +82,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       const result = await handler({
         amount: amountHumanReadable,
         currency: opts.assetContract,
-        recipient: opts.manifest.payee,
+        recipient,
         description: opts.manifest.name,
       })(fetchReq)
 
@@ -103,7 +106,10 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            await opts.onSettled(parsed.reference, opts.amount, 'mpp-charge', payerAddress)
+            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, opts.amount, 'mpp-charge', null)).catch(err => {
+              console.error('[mpp-charge] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
         } catch {
           // non-fatal

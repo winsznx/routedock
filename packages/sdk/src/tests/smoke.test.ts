@@ -35,6 +35,10 @@ function startTestServer(
 // ── Test 1: ModeRouter — manifest fetch + schema validation ───────────────────
 
 {
+  const { Keypair } = await import('@stellar/stellar-sdk')
+  const { signManifest } = await import('../manifest/sign.js')
+  const payeeKp = Keypair.random()
+
   const validManifest = {
     routedock: '1.0',
     name: 'Test Provider',
@@ -43,19 +47,20 @@ function startTestServer(
     network: 'testnet',
     asset: 'USDC',
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    payee: payeeKp.publicKey(),
     pricing: {
       x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
       'mpp-charge': { amount: '0.0008', per: 'request' },
     },
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['price', 'stellar'],
   }
+  const signedManifest = signManifest(validManifest as import('../types.js').RouteDockManifest, payeeKp.secret())
 
   const server = await startTestServer((req, res) => {
     if (req.url === '/.well-known/routedock.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(validManifest))
+      res.end(JSON.stringify(signedManifest))
     } else {
       res.writeHead(404)
       res.end()
@@ -77,6 +82,17 @@ function startTestServer(
     // Mode selection
     const mode = selectMode(manifest)
     assert.equal(mode, 'mpp-charge', 'mpp-charge should be preferred over x402')
+
+    const costAwareManifest = {
+      ...validManifest,
+      pricing: {
+        x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+        'mpp-charge': { amount: '0.005', per: 'request' },
+      },
+    }
+
+    const costOptimizedMode = selectMode(costAwareManifest, { optimize: 'cost' })
+    assert.equal(costOptimizedMode, 'x402', 'cost optimization should prefer the lower-cost per-request mode')
 
     const modeForced = selectMode(manifest, { sustained: true })
     assert.equal(modeForced, 'mpp-charge', 'sustained without mpp-session falls back to mpp-charge')
@@ -108,7 +124,7 @@ function startTestServer(
         refund_waiting_period_ledgers: 17280,
       },
     },
-    endpoints: { stream: 'GET /stream/orderbook' },
+    endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
     tags: ['stream', 'stellar'],
   }
 
@@ -168,7 +184,58 @@ function startTestServer(
   }
 }
 
-// ── Test 4: SessionStore — monotonic invariant rejection ─────────────────────
+// ── Test 4: ModeRouter — unsigned manifest rejected ───────────────────────
+
+{
+  const { Keypair: Kp } = await import('@stellar/stellar-sdk')
+  const kp = Kp.random()
+  const unsignedManifest = {
+    routedock: '1.0',
+    name: 'Unsigned Provider',
+    description: 'Missing signature',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: kp.publicKey(),
+    pricing: { x402: { amount: '0.001', per: 'request' } },
+    endpoints: { price: { method: 'GET', path: '/price' } },
+    tags: ['test'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(unsignedManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const { RouteDockSignatureError: SigError } = await import('../errors.js')
+
+    let threw = false
+    try {
+      await fetchManifest(server.url)
+    } catch (err) {
+      threw = true
+      assert.ok(
+        err instanceof SigError,
+        `should throw RouteDockSignatureError, got ${String(err)}`,
+      )
+    }
+    assert.ok(threw, 'should have thrown for unsigned manifest')
+
+    console.log('✓ Test 4: Unsigned manifest rejection PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 5: SessionStore — monotonic invariant rejection ─────────────────────
 
 {
   // Use an in-memory store implementation to test monotonic invariant

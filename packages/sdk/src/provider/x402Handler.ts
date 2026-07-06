@@ -11,6 +11,7 @@ import {
 } from '@x402/core/http'
 import type { Network as X402Network } from '@x402/core/types'
 import type { RouteDockManifest } from '../types.js'
+import { resolvePayee } from './payee.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -29,6 +30,7 @@ export interface X402HandlerOptions {
   facilitatorApiKey?: string
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
+  onCallbackError?: (err: unknown, cb: string) => void
 }
 
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
@@ -60,12 +62,13 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
   }
 
   const amountInBaseUnits = String(Math.round(parseFloat(opts.amount) * 1e7))
+  const payTo = resolvePayee(opts.manifest, 'x402')
   const requirements = {
     scheme: 'exact' as const,
     network: caip2,
     asset: opts.assetContract,
     amount: amountInBaseUnits,
-    payTo: opts.manifest.payee,
+    payTo,
     maxTimeoutSeconds: 60,
     extra: {
       areFeesSponsored: true,
@@ -172,7 +175,10 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, opts.amount, 'x402', payerAddress)
+        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402', null)).catch(err => {
+          console.error('[x402] onSettled callback error:', err)
+          opts.onCallbackError?.(err, 'onSettled')
+        })
       }
 
       next()

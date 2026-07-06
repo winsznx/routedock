@@ -32,7 +32,7 @@ const manifest: RouteDockManifest = {
       refund_waiting_period_ledgers: 17280,
     },
   },
-  endpoints: { price: 'GET /price' },
+  endpoints: { price: { method: 'GET', path: '/price' } },
   tags: ['test'],
 }
 
