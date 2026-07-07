@@ -31,6 +31,9 @@
       ],
       "provider/fastify": [
         "dist/provider/fastify.d.ts"
+      ],
+      "schema": [
+        "dist/schema.d.ts"
       ]
     }
   },
@@ -69,13 +72,18 @@
       "types": "./dist/provider/fastify.d.ts",
       "import": "./dist/provider/fastify.js",
       "require": "./dist/provider/fastify.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/__tests__/manifest-sign.test.ts src/internal/__tests__/usdc.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/session-timeout.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
+    "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/__tests__/manifest-sign.test.ts src/internal/__tests__/usdc.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/session-timeout.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/provider/__tests__/encoding.test.ts src/provider/__tests__/SeenTxStore.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
     "@stellar/mpp": "^0.4.0",

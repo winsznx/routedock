@@ -12,6 +12,11 @@ import {
 import type { Network as X402Network } from '@x402/core/types'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
+import {
+  InMemorySeenTxStore,
+  paymentIdempotencyKey,
+  type SeenTxStore,
+} from './SeenTxStore.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -31,12 +36,18 @@ export interface X402HandlerOptions {
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onCallbackError?: (err: unknown, cb: string) => void
+  /**
+   * Idempotency store guarding against duplicate settlement when an agent
+   * retries the same signed payment. Defaults to a per-handler in-memory store.
+   */
+  seenTxStore?: SeenTxStore
 }
 
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
   const caip2 = CAIP2[opts.network]
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const signer = createEd25519Signer(opts.payeeSecretKey, caip2)
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
 
   const useOzFacilitator = opts.network === 'mainnet' && opts.facilitatorApiKey
 
@@ -113,6 +124,25 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         return
       }
 
+      // Idempotency: a retry of an already-settled payment replays the cached
+      // settlement response instead of settling (and billing) a second time.
+      const idempotencyKey = paymentIdempotencyKey((name) => {
+        const v = req.headers[name.toLowerCase()]
+        return Array.isArray(v) ? v[0] : (v as string | undefined)
+      })
+      if (idempotencyKey) {
+        const cached = await seenTxStore.get(idempotencyKey)
+        if (cached) {
+          if (cached.headers) {
+            for (const [k, val] of Object.entries(cached.headers)) {
+              res.setHeader(k, val)
+            }
+          }
+          next()
+          return
+        }
+      }
+
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
       // Extract payer public key defensively from the decoded x402 payload.
@@ -174,8 +204,18 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         }
       }
 
+      // Record the settlement so a retry of this exact payment is deduped.
+      if (idempotencyKey) {
+        const headers: Record<string, string> = {}
+        const paymentResponse = res.getHeader('X-Payment-Response')
+        if (typeof paymentResponse === 'string') {
+          headers['X-Payment-Response'] = paymentResponse
+        }
+        await seenTxStore.set(idempotencyKey, { txHash, headers })
+      }
+
       if (txHash && opts.onSettled) {
-        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402', null)).catch(err => {
+        Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402', payerAddress)).catch(err => {
           console.error('[x402] onSettled callback error:', err)
           opts.onCallbackError?.(err, 'onSettled')
         })

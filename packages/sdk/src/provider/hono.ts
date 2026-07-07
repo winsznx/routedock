@@ -16,6 +16,13 @@ import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
+import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import { base64ToUtf8, hexToBytes } from './encoding.js'
+import {
+  InMemorySeenTxStore,
+  paymentIdempotencyKey,
+  type SeenTxStore,
+} from './SeenTxStore.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -45,6 +52,18 @@ export interface RouteDockHonoOptions {
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
   onCallbackError?: (err: unknown, cbName: string) => void
+  /**
+   * Called when an mpp-session connection aborts or goes idle before a clean
+   * close. Persist the session as `closing` for the SessionReconciler.
+   */
+  onOrphaned?: (channelId: string, info: OrphanedSessionInfo) => Promise<void>
+  /** Idle timeout (ms) after which an mpp-session is flagged orphaned. */
+  idleTimeoutMs?: number
+  /**
+   * Idempotency store guarding against duplicate settlement when an agent
+   * retries the same payment. Defaults to a per-handler in-memory store.
+   */
+  seenTxStore?: SeenTxStore
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -52,6 +71,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const signer = createEd25519Signer(opts.payeeSecretKey, caip2)
   const x402Price = opts.pricing.x402!
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
 
   const useOzFacilitator = opts.network === 'mainnet' && opts.facilitatorApiKey
 
@@ -115,8 +135,25 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
         }
       }
 
+      // Idempotency: a retry of an already-settled payment replays the cached
+      // settlement response instead of settling (and billing) a second time.
+      const idempotencyKey = paymentIdempotencyKey((name) => c.req.header(name))
+      if (idempotencyKey) {
+        const cached = await seenTxStore.get(idempotencyKey)
+        if (cached) {
+          if (cached.headers) {
+            for (const [k, val] of Object.entries(cached.headers)) {
+              c.header(k, val)
+            }
+          }
+          await next()
+          return
+        }
+      }
+
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
+      let paymentResponseHeader: string | undefined
       // Extract payer public key from the x402 Stellar payload.
       let payerAddress: string | null = null
       try {
@@ -137,12 +174,10 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
         const settleResult = await ozServer.settlePayment(payload, requirements)
         txHash = (settleResult as { transaction?: string }).transaction ?? null
         if (settleResult) {
-          c.header(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
+          paymentResponseHeader = encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
           )
+          c.header('X-Payment-Response', paymentResponseHeader)
         }
       } else {
         const verifyResult = await localFacilitator.verify(
@@ -164,13 +199,18 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
         )
         txHash = (settleResult as { transaction?: string }).transaction ?? null
         if (settleResult) {
-          c.header(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
+          paymentResponseHeader = encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
           )
+          c.header('X-Payment-Response', paymentResponseHeader)
         }
+      }
+
+      // Record the settlement so a retry of this exact payment is deduped.
+      if (idempotencyKey) {
+        const headers: Record<string, string> = {}
+        if (paymentResponseHeader) headers['X-Payment-Response'] = paymentResponseHeader
+        await seenTxStore.set(idempotencyKey, { txHash, headers })
       }
 
       if (txHash && opts.onSettled) {
@@ -192,6 +232,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const chargePrice = opts.pricing['mpp-charge']!
   const recipient = resolvePayee(opts.manifest, 'mpp-charge')
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
@@ -218,7 +259,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
             .find((p) => p.trim().startsWith('credential='))
           if (credPart) {
             const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = Buffer.from(b64, 'base64').toString('utf8')
+            const credJson = base64ToUtf8(b64)
             const cred = JSON.parse(credJson) as {
               sender?: string
               payload?: { sender?: string; from?: string }
@@ -231,6 +272,22 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
         }
       } catch {
         // non-fatal
+      }
+
+      // Idempotency: a retry of an already-settled charge replays the cached
+      // receipt headers instead of settling (and billing) a second time.
+      const idempotencyKey = paymentIdempotencyKey((name) => c.req.header(name))
+      if (idempotencyKey) {
+        const cached = await seenTxStore.get(idempotencyKey)
+        if (cached) {
+          if (cached.headers) {
+            for (const [k, val] of Object.entries(cached.headers)) {
+              c.header(k, val)
+            }
+          }
+          await next()
+          return
+        }
       }
 
       const handler = (
@@ -263,23 +320,36 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       }
 
       const receipt = result.withReceipt!(new Response(''))
-      receipt.headers.forEach((v: string, k: string) => c.header(k, v))
+      const receiptHeaders: Record<string, string> = {}
+      receipt.headers.forEach((v: string, k: string) => {
+        c.header(k, v)
+        receiptHeaders[k] = v
+      })
 
       const receiptHeader = receipt.headers.get('payment-receipt')
-      if (receiptHeader && opts.onSettled) {
+      let reference: string | undefined
+      if (receiptHeader) {
         try {
-          const parsed = JSON.parse(
-            Buffer.from(receiptHeader, 'base64').toString('utf8'),
-          ) as { reference?: string }
-          if (parsed.reference) {
-            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, chargePrice, 'mpp-charge', null)).catch(err => {
-              console.error('[mpp-charge] onSettled callback error:', err)
-              opts.onCallbackError?.(err, 'onSettled')
-            })
-          }
+          const parsed = JSON.parse(base64ToUtf8(receiptHeader)) as { reference?: string }
+          reference = parsed.reference
         } catch {
-          // non-fatal
+          // non-fatal — receipt is opaque/unparseable
         }
+      }
+
+      // Record the settlement so a retry of this exact charge is deduped.
+      if (idempotencyKey) {
+        await seenTxStore.set(idempotencyKey, {
+          txHash: reference ?? null,
+          headers: receiptHeaders,
+        })
+      }
+
+      if (reference && opts.onSettled) {
+        Promise.resolve().then(() => opts.onSettled!(reference!, chargePrice, 'mpp-charge', payerAddress)).catch(err => {
+          console.error('[mpp-charge] onSettled callback error:', err)
+          opts.onCallbackError?.(err, 'onSettled')
+        })
       }
 
       await next()
@@ -301,6 +371,50 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
   let sessionOpened = false
   let lastSignatureHex = ''
   let sessionPayerAddress: string | null = null
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let settledCleanly = false
+  let abortListenerArmed = false
+
+  function clearIdleTimer(): void {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+
+  function armIdleTimer(): void {
+    if (!opts.idleTimeoutMs) return
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      void flagOrphan('idle-timeout')
+    }, opts.idleTimeoutMs)
+    // `unref` exists on Node's Timeout but not the Web `number` handle — call it
+    // defensively so the timer never keeps a Node process alive.
+    const maybeUnref = idleTimer as unknown as { unref?: () => void }
+    if (typeof maybeUnref.unref === 'function') maybeUnref.unref()
+  }
+
+  // Flag an open-but-unsettled session for the reconciler. Idempotent.
+  async function flagOrphan(reason: 'connection-closed' | 'idle-timeout'): Promise<void> {
+    if (!sessionOpened || settledCleanly) return
+    sessionOpened = false
+    abortListenerArmed = false
+    clearIdleTimer()
+
+    const cumulativeAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+    if (opts.onOrphaned) {
+      try {
+        await opts.onOrphaned(sessionPricing.channelFactory, {
+          cumulativeAmount,
+          lastSignature: lastSignatureHex,
+          voucherCount,
+          reason,
+        })
+      } catch (err) {
+        console.error('[mpp-session] onOrphaned handler failed:', err)
+      }
+    }
+  }
 
   const wrappedStore: any = {
     async get(key: string) { return innerStore.get(key) },
@@ -314,6 +428,9 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
       ) {
         lastCumulativeAmount = BigInt((value as { amount: string }).amount)
         voucherCount++
+        // Voucher activity — this session is alive again.
+        settledCleanly = false
+        armIdleTimer()
 
         if (!sessionOpened) {
           sessionOpened = true
@@ -368,10 +485,14 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         const closeSig = body?.signature ?? lastSignatureHex
 
         if (closeAmount > 0n && closeSig) {
+          // Clean close — suppress any orphan flagging for this session.
+          settledCleanly = true
+          clearIdleTimer()
+
           const closeTxHash = await channelClose({
             channel: sessionPricing.channelFactory,
             amount: closeAmount,
-            signature: Buffer.from(closeSig, 'hex'),
+            signature: hexToBytes(closeSig),
             feePayer: { envelopeSigner: payeeKeypair },
             network: networkId,
           })
@@ -388,6 +509,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
           voucherCount = 0
           lastCumulativeAmount = 0n
           sessionPayerAddress = null
+          abortListenerArmed = false
 
           return c.json({ closeTxHash })
         }
@@ -403,10 +525,9 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
             .split(',')
             .find((p) => p.trim().startsWith('credential='))
           if (credB64) {
-            const credJson = Buffer.from(
+            const credJson = base64ToUtf8(
               credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
-              'base64',
-            ).toString('utf8')
+            )
             const cred = JSON.parse(credJson) as {
               sender?: string
               payload?: { signature?: string; sender?: string; from?: string }
@@ -448,6 +569,20 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         return new Response(await challenge.text(), { status: 402, headers })
       }
 
+      // Payment verified. The Workers/edge runtime exposes connection teardown
+      // via the request's AbortSignal — use it (in place of Node's
+      // `req.on('close')`) so a client crash mid-session flags the channel for
+      // the reconciler instead of leaking state.
+      const signal = c.req.raw.signal
+      if (signal && !abortListenerArmed) {
+        abortListenerArmed = true
+        signal.addEventListener(
+          'abort',
+          () => { void flagOrphan('connection-closed') },
+          { once: true },
+        )
+      }
+
       await next()
     } catch (err) {
       throw err
@@ -458,7 +593,13 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 /**
  * Hono middleware factory for RouteDock provider endpoints.
  *
- * Compatible with Cloudflare Workers, Bun, Deno Deploy, and any Hono deployment target.
+ * **Workers-safe entry point.** This module uses only Web-standard APIs
+ * (`atob`/`TextDecoder` via {@link base64ToUtf8}, {@link hexToBytes}, and the
+ * request `AbortSignal`) and runs on Cloudflare Workers, Bun, Deno Deploy, and
+ * any Hono deployment target. The Express `routedock()` middleware
+ * (`@routedock/routedock/provider`) is Node.js-only — it relies on Node's
+ * `Buffer` and `req.on('close')`.
+ *
  * Exposes the same configuration surface as the Express `routedock()` middleware.
  *
  * @example

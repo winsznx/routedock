@@ -6,9 +6,7 @@ import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
 import Ajv from 'ajv'
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
-const schema = require('./routedock.schema.json') as Record<string, unknown>
+import schema from '@routedock/routedock/schema'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
