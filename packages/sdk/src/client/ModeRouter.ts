@@ -4,7 +4,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
   RouteDockManifestError,
-  RouteDockNoSupportedModeError, 
+  RouteDockNoSupportedModeError,
   RouteDockClientVersionError,
   httpStatusToError,
   wrapFetchError,
@@ -20,9 +20,75 @@ const validateManifest = ajv.compile(schema)
 
 const SDK_VERSION = pkg.version as string
 
-// ... (unchanged: CacheEntry, LruCache, manifestCache, configureManifestCache,
-//      RouteDockLogger, parseMajorMinor, isVersionBelow, assertClientVersionSupported,
-//      ModeSelectOptions all stay exactly as in the fix/manifest-versioning-50 branch)
+function parseMajorMinor(version: string): [number, number] {
+  const parts = version.split('.')
+  return [Number.parseInt(parts[0], 10), Number.parseInt(parts[1], 10)]
+}
+
+function isVersionBelow(a: string, b: string): boolean {
+  const [aMajor, aMinor] = parseMajorMinor(a)
+  const [bMajor, bMinor] = parseMajorMinor(b)
+  return aMajor < bMajor || (aMajor === bMajor && aMinor < bMinor)
+}
+
+function assertClientVersionSupported(manifest: RouteDockManifest, baseUrl: string): void {
+  const minVersion = manifest.min_client_version
+  if (minVersion && isVersionBelow(SDK_VERSION, minVersion)) {
+    throw new RouteDockClientVersionError(
+      `SDK version ${SDK_VERSION} is below the minimum required version ${minVersion} for provider at ${baseUrl}. Please upgrade the SDK.`,
+    )
+  }
+}
+
+interface CacheEntry {
+  manifest: RouteDockManifest
+  fetchedAt: number
+}
+
+const CACHE_TTL_MS = 60_000
+const DEFAULT_MANIFEST_CACHE_MAX_SIZE = 512
+
+/**
+ * Simple LRU cache backed by Map's insertion-order guarantee.
+ * Bounds memory for long-running agents that contact many unique endpoints.
+ */
+class LruCache<K, V> {
+  private map = new Map<K, V>()
+
+  constructor(private maxSize: number) {}
+
+  get(key: K): V | undefined {
+    if (!this.map.has(key)) return undefined
+    const value = this.map.get(key) as V
+    this.map.delete(key)
+    this.map.set(key, value)
+    return value
+  }
+
+  set(key: K, value: V): void {
+    if (this.map.has(key)) {
+      this.map.delete(key)
+    } else if (this.map.size >= this.maxSize) {
+      const oldestKey = this.map.keys().next().value
+      if (oldestKey !== undefined) {
+        this.map.delete(oldestKey)
+      }
+    }
+    this.map.set(key, value)
+  }
+
+  setMaxSize(maxSize: number): void {
+    this.maxSize = maxSize
+    while (this.map.size > this.maxSize) {
+      const oldestKey = this.map.keys().next().value
+      if (oldestKey === undefined) break
+      this.map.delete(oldestKey)
+    }
+  }
+}
+
+/** In-memory manifest cache keyed by base URL, bounded to avoid unbounded heap growth. */
+const manifestCache = new LruCache<string, CacheEntry>(DEFAULT_MANIFEST_CACHE_MAX_SIZE)
 
 /**
  * Override the manifest cache's max size (default 512). Affects the shared,
@@ -74,24 +140,24 @@ export async function fetchManifest(
       if (!resp.ok) {
         if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
           throw httpStatusToError(
-            'Manifest fetch failed: HTTP ' + resp.status + ' from ' + url,
+            `Manifest fetch failed: HTTP ${resp.status} from ${url}`,
             resp.status,
             resp,
           )
         }
         throw new RouteDockManifestError(
-          'Manifest fetch failed: HTTP ' + resp.status + ' from ' + url,
+          `Manifest fetch failed: HTTP ${resp.status} from ${url}`,
         )
       }
       raw = await resp.json()
     } catch (err) {
       if (err instanceof RouteDockError) throw err
-      throw wrapFetchError(err, 'Manifest fetch error from ' + url)
+      throw wrapFetchError(err, `Manifest fetch error from ${url}`)
     }
 
     if (!validateManifest(raw)) {
       const msgs = ajv.errorsText(validateManifest.errors)
-      throw new RouteDockManifestError('Invalid manifest at ' + url + ': ' + msgs)
+      throw new RouteDockManifestError(`Invalid manifest at ${url}: ${msgs}`)
     }
 
     const manifest = raw as unknown as RouteDockManifest
@@ -157,7 +223,7 @@ export function selectMode(
 
       const cheapestCandidate = [...affordableCandidates].sort((a, b) => a.amount - b.amount)[0]
       if (cheapestCandidate) {
-        console.log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
+        log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
         return cheapestCandidate.mode
       }
     }
