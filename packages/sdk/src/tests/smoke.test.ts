@@ -103,7 +103,65 @@ function startTestServer(
   }
 }
 
-// ── Test 2: ModeRouter — invalid manifest rejected ────────────────────────────
+// ── Test 2: ModeRouter — channel_factory manifest accepted ─────────────────
+
+{
+  const { Keypair } = await import('@stellar/stellar-sdk')
+  const { signManifest } = await import('../manifest/sign.js')
+  const payeeKp = Keypair.random()
+
+  const validFactoryManifest = {
+    routedock: '1.0',
+    name: 'Factory Provider',
+    description: 'Smoke test provider using channel_factory',
+    modes: ['mpp-session'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: payeeKp.publicKey(),
+    pricing: {
+      'mpp-session': {
+        rate: '0.0001',
+        per: 'voucher',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+    },
+    endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
+    tags: ['stream', 'stellar'],
+  }
+
+  const signedFactoryManifest = signManifest(
+    validFactoryManifest as import('../types.js').RouteDockManifest,
+    payeeKp.secret(),
+  )
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(signedFactoryManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const manifest = await fetchManifest(server.url)
+    assert.equal(
+      manifest.pricing['mpp-session']?.channel_factory,
+      signedFactoryManifest.pricing['mpp-session'].channel_factory,
+      'manifest should preserve channel_factory in mpp-session pricing',
+    )
+    console.log('✓ Test 2: channel_factory manifest acceptance PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 3: ModeRouter — invalid manifest rejected ────────────────────────────
 
 {
   const badManifest = { routedock: '2.0', name: 'bad' }
@@ -135,7 +193,7 @@ function startTestServer(
   }
 }
 
-// ── Test 2b: ModeRouter — unsigned manifest rejected ─────────────────────────
+// ── Test 4: ModeRouter — unsigned manifest rejected ───────────────────────
 
 {
   const { Keypair: Kp } = await import('@stellar/stellar-sdk')
@@ -180,13 +238,13 @@ function startTestServer(
     }
     assert.ok(threw, 'should have thrown for unsigned manifest')
 
-    console.log('✓ Test 2b: Unsigned manifest rejection PASSED')
+    console.log('✓ Test 4: Unsigned manifest rejection PASSED')
   } finally {
     await server.close()
   }
 }
 
-// ── Test 3: SessionStore — monotonic invariant rejection ─────────────────────
+// ── Test 5: SessionStore — monotonic invariant rejection ─────────────────────
 
 {
   // Use an in-memory store implementation to test monotonic invariant
@@ -263,7 +321,7 @@ function startTestServer(
   console.log('✓ Test 3: SessionStore monotonic invariant rejection PASSED')
 }
 
-// ── Test 4: Error subclass hierarchy ─────────────────────────────────────────
+// ── Test 5: Error subclass hierarchy ─────────────────────────────────────────
 
 {
   const {

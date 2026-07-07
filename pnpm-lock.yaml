@@ -194,6 +194,25 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/covenant-sdk:
+    dependencies:
+      '@stellar/stellar-sdk':
+        specifier: ^14.6.1
+        version: 14.6.1
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.8.3)
+      tsx:
+        specifier: ^4.22.3
+        version: 4.22.3
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   packages/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -221,6 +240,9 @@ importers:
 
   packages/sdk:
     dependencies:
+      '@routedock/covenant-sdk':
+        specifier: workspace:*
+        version: link:../covenant-sdk
       '@stellar/mpp':
         specifier: ^0.4.0
         version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))

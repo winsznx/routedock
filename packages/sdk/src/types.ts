@@ -7,6 +7,9 @@
 
 export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
 
+/** Agent custody mode — declared in routedock.json when provider accepts ZK vault payers */
+export type VaultMode = 'local-key' | 'agent-vault' | 'covenant-zk'
+
 /** Per-request pricing config — used by x402 and mpp-charge modes */
 export interface PricingConfig {
   /** Cost per request in the payment asset, e.g. "0.001" */
@@ -29,8 +32,8 @@ export interface SessionPricingConfig {
   /** Cost per voucher, e.g. "0.0001" */
   rate: string
   per: 'voucher'
-  /** Soroban contract address (C...) for the one-way-channel contract */
-  channel_contract: string
+  /** Stable Soroban factory address (C...) used to deploy a per-session channel */
+  channel_factory: string
   /** Minimum initial deposit to open a channel, e.g. "0.10" */
   min_deposit: string
   /**
@@ -113,6 +116,16 @@ export interface RouteDockManifest {
   endpoints: Record<string, EndpointDescriptor>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * Optional vault custody mode declared by the provider.
+   * When set to `covenant-zk`, the provider accepts payers using Covenant smart accounts.
+   */
+  vault?: VaultMode
+  /**
+   * Optional Covenant smart account address (C...) that this provider is linked to.
+   * Used by the client to verify the covenant_account before sending proofs.
+   */
+  covenant_account?: string
   /** Optional protocol features this provider supports */
   capabilities?: {
     /** Supported streaming transports */
@@ -207,6 +220,19 @@ export interface SessionTimeoutPayload {
   maxDurationMs: number
 }
 
+/**
+ * Options for SessionHandle.stream().
+ */
+export interface StreamOptions {
+  /**
+   * Maximum number of voucher requests outstanding at once before backpressure
+   * is applied. Default: 1 (strictly sequential — safe for all providers).
+   * Increase only when the provider explicitly advertises support for concurrent
+   * vouchers; out-of-order sequence numbers will cause payment failures otherwise.
+   */
+  concurrency?: number
+}
+
 /** Handle for a live MPP session returned by client.openSession() */
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
@@ -221,9 +247,11 @@ export interface SessionHandle {
   /**
    * Async generator of server-sent event data.
    * Each iteration sends a voucher and yields the parsed response.
+   * With default concurrency (1) the next voucher is not issued until the
+   * provider returns HTTP 200 for the previous one.
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
-  stream(): AsyncIterable<unknown>
+  stream(options?: StreamOptions): AsyncIterable<unknown>
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */

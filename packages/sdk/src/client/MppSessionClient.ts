@@ -13,6 +13,7 @@ import type {
   RouteDockManifest,
   SessionHandle,
   SessionCloseResult,
+  StreamOptions,
   DisputeStatus,
   SessionOptions,
   SessionEvent,
@@ -57,7 +58,7 @@ export class MppSessionClient {
     }
 
     const commitmentKey = Keypair.fromSecret(commitmentSecret)
-    const channelContract = pricing.channel_contract
+    const channelFactory = pricing.channel_factory
     const agentPublicKey = this.keypair.publicKey()
     const agentKeypair = this.keypair
 
@@ -111,23 +112,25 @@ export class MppSessionClient {
     }
 
     const handle: SessionHandle = {
-      channelId: channelContract,
+      channelId: channelFactory,
       // The channel is pre-deployed and funded before the agent runs, so the
       // client never issues the channel-open transaction and has no hash for
       // it. Report null rather than the contract address (a non-transaction
       // identifier that produces broken explorer links downstream).
       openTxHash: null,
 
-      async *stream(): AsyncIterable<unknown> {
-        while (true) {
-          const data = await withRetry(async () => {
+      async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        const concurrency = Math.max(1, options?.concurrency ?? 1)
+
+        // Shared fetch-one helper — retries on transient errors.
+        const doFetch = (): Promise<unknown> =>
+          withRetry(async () => {
             let resp: Response
             try {
               resp = await mppx.fetch(url)
             } catch (err) {
               throw wrapFetchError(err, 'Voucher request')
             }
-
             if (!resp.ok) {
               if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
                 throw httpStatusToError(
@@ -140,12 +143,33 @@ export class MppSessionClient {
                 `Voucher request failed: HTTP ${resp.status}`,
               )
             }
-
             return resp.json()
           }, retryPolicy)
 
-          vouchersIssued++
-          yield data
+        if (concurrency === 1) {
+          // Default: strictly sequential.
+          // The next voucher is not issued until the provider returns HTTP 200
+          // for the current one, preventing out-of-order sequence numbers.
+          while (true) {
+            const data = await doFetch()
+            vouchersIssued++
+            yield data
+          }
+        } else {
+          // Pipelined: maintain a sliding window of `concurrency` in-flight
+          // requests. Results are yielded in issue order to preserve voucher
+          // sequence integrity. The caller opts in knowing the provider supports
+          // concurrent vouchers.
+          const queue: Array<Promise<unknown>> = []
+          for (let i = 0; i < concurrency; i++) queue.push(doFetch())
+
+          while (true) {
+            const data = await queue.shift()!
+            // Replenish the window immediately after draining one slot.
+            queue.push(doFetch())
+            vouchersIssued++
+            yield data
+          }
         }
       },
 
@@ -158,7 +182,7 @@ export class MppSessionClient {
           await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         const account = await withRetry(async () => {
@@ -265,7 +289,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {
@@ -297,7 +321,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {
@@ -343,7 +367,7 @@ export class MppSessionClient {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = 'https://soroban-testnet.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelContract)
+        const contract = new Contract(channelFactory)
         const passphrase = 'Test SDF Network ; September 2015'
 
         try {

@@ -6,9 +6,7 @@ import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
 import Ajv from 'ajv'
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
-const schema = require('./routedock.schema.json') as Record<string, unknown>
+import schema from '@routedock/routedock/schema'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +45,7 @@ const manifest: RouteDockManifest = {
     'mpp-session': {
       rate: '0.0001',
       per: 'voucher',
-      channel_contract: CHANNEL_CONTRACT_ID,
+      channel_factory: CHANNEL_CONTRACT_ID,
       min_deposit: '0.10',
       refund_waiting_period_ledgers: 17280,
     },
@@ -112,7 +110,7 @@ app.use(
     pricing: {
       'mpp-session': {
         rate: '0.0001',
-        channelContract: CHANNEL_CONTRACT_ID,
+        channelFactory: CHANNEL_CONTRACT_ID,
       },
     },
     asset: 'USDC',
