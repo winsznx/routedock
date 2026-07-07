@@ -164,6 +164,11 @@
     }
   },
   "definitions": {
+    "VaultMode": {
+      "type": "string",
+      "enum": ["local-key", "agent-vault", "covenant-zk"],
+      "description": "Agent vault / custody mode for payments from this provider"
+    },
     "PaymentMode": {
       "type": "string",
       "enum": ["x402", "mpp-charge", "mpp-session"],

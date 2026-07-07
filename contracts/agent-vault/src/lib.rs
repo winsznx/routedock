@@ -333,6 +333,11 @@ mod tests {
         BytesN::<64>::from_array(env, &sig.to_bytes())
     }
 
+    fn event_topic_matches(env: &Env, topic: soroban_sdk::Val, expected: &Symbol) -> bool {
+        let sym: Symbol = topic.into_val(env);
+        sym == *expected
+    }
+
     fn setup(env: &Env) -> (AgentVaultClient<'_>, SigningKey, Address, Address) {
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(env, &vault_id);

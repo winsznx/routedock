@@ -86,6 +86,7 @@
     "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/__tests__/manifest-sign.test.ts src/internal/__tests__/usdc.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/session-timeout.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/provider/__tests__/encoding.test.ts src/provider/__tests__/SeenTxStore.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
+    "@routedock/covenant-sdk": "workspace:*",
     "@stellar/mpp": "^0.4.0",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0",

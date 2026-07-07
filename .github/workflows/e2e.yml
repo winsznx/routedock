@@ -29,6 +29,9 @@ jobs:
       - name: Install Dependencies
         run: pnpm install
 
+      - name: Build covenant-sdk (workspace dependency)
+        run: pnpm --filter @routedock/covenant-sdk build
+
       - name: Build SDK
         run: pnpm --filter @routedock/routedock build
 

@@ -29,6 +29,8 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
+      - name: Build covenant-sdk (required by sdk at runtime)
+        run: pnpm --filter @routedock/covenant-sdk build
       - name: Run SDK tests
         run: pnpm --filter @routedock/routedock test
 
@@ -45,5 +47,9 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
-      - name: Build apps
-        run: pnpm -r build
+      - name: Build covenant-sdk first (workspace dependency)
+        run: pnpm --filter @routedock/covenant-sdk build
+      - name: Build sdk (depends on covenant-sdk types)
+        run: pnpm --filter @routedock/routedock build
+      - name: Build remaining packages
+        run: pnpm -r --filter '!@routedock/covenant-sdk' --filter '!@routedock/routedock' build
