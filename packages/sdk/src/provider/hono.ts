@@ -14,6 +14,8 @@ import { stellar as mppCharge } from '@stellar/mpp/charge/server'
 import { stellar as mppChannel, close as channelClose, Store } from '@stellar/mpp/channel/server'
 import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { signManifest } from '../manifest/sign.js'
+import { resolvePayee } from './payee.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -42,6 +44,7 @@ export interface RouteDockHonoOptions {
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onCallbackError?: (err: unknown, cbName: string) => void
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -77,7 +80,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
     network: caip2,
     asset: opts.assetContract,
     amount: amountInBaseUnits,
-    payTo: opts.manifest.payee,
+    payTo: resolvePayee(opts.manifest, 'x402'),
     maxTimeoutSeconds: 60,
     extra: {
       areFeesSponsored: true,
@@ -171,7 +174,10 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       }
 
       if (txHash && opts.onSettled) {
-        await opts.onSettled(txHash, x402Price, 'x402', payerAddress)
+        Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402', payerAddress)).catch(err => {
+          console.error('[x402] onSettled callback error:', err)
+          opts.onCallbackError?.(err, 'onSettled')
+        })
       }
 
       await next()
@@ -185,12 +191,13 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const chargePrice = opts.pricing['mpp-charge']!
+  const recipient = resolvePayee(opts.manifest, 'mpp-charge')
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       mppCharge({
-        recipient: opts.manifest.payee,
+        recipient,
         currency: opts.assetContract,
         network: networkId,
         feePayer: { envelopeSigner: opts.payeeSecretKey },
@@ -244,7 +251,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       const result = await handler({
         amount: chargePrice,
         currency: opts.assetContract,
-        recipient: opts.manifest.payee,
+        recipient,
         description: opts.manifest.name,
       })(c.req.raw)
 
@@ -265,7 +272,10 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
             Buffer.from(receiptHeader, 'base64').toString('utf8'),
           ) as { reference?: string }
           if (parsed.reference) {
-            await opts.onSettled(parsed.reference, chargePrice, 'mpp-charge', payerAddress)
+            Promise.resolve().then(() => opts.onSettled!(parsed.reference!, chargePrice, 'mpp-charge', null)).catch(err => {
+              console.error('[mpp-charge] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
         } catch {
           // non-fatal
@@ -292,7 +302,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
   let lastSignatureHex = ''
   let sessionPayerAddress: string | null = null
 
-  const wrappedStore: ReturnType<typeof Store.memory> = {
+  const wrappedStore: any = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
@@ -308,17 +318,24 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            await opts.onSessionOpen(sessionPricing.channelContract, sessionPayerAddress)
+            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract, sessionPayerAddress)).catch(err => {
+              console.error('[mpp-session] onSessionOpen callback error:', err)
+              opts.onCallbackError?.(err, 'onSessionOpen')
+            })
           }
         }
 
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-          await opts.onVoucher(voucherCount, humanAmount)
+          Promise.resolve().then(() => opts.onVoucher!(voucherCount, humanAmount)).catch(err => {
+            console.error('[mpp-session] onVoucher callback error:', err)
+            opts.onCallbackError?.(err, 'onVoucher')
+          })
         }
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
+    update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
   }
 
   const mppx = Mppx.create({
@@ -359,7 +376,10 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            await opts.onSettled(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)).catch(err => {
+              console.error('[mpp-session] onSettled callback error:', err)
+              opts.onCallbackError?.(err, 'onSettled')
+            })
           }
 
           sessionOpened = false
@@ -452,25 +472,26 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
-    handlers.push(createX402HonoHandler(opts))
+    handlers.push(createX402HonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   if (opts.modes.includes('mpp-charge') && opts.pricing['mpp-charge']) {
-    handlers.push(createMppChargeHonoHandler(opts))
+    handlers.push(createMppChargeHonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   if (opts.modes.includes('mpp-session') && opts.pricing['mpp-session']) {
     if (!opts.commitmentPublicKey) {
       throw new Error('routedockHono: mpp-session mode requires commitmentPublicKey')
     }
-    handlers.push(createMppSessionHonoHandler(opts))
+    handlers.push(createMppSessionHonoHandler({ ...opts, manifest: signedManifest }))
   }
 
   return async (c, next) => {
     if (c.req.path === '/.well-known/routedock.json') {
-      return c.json(opts.manifest)
+      return c.json(signedManifest)
     }
 
     if (handlers.length === 0) {

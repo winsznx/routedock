@@ -17,6 +17,14 @@ export interface PricingConfig {
   per: 'request'
   /** x402 facilitator URL (OpenZeppelin Channels). Required for x402 mode. */
   facilitator?: string
+  /**
+   * Optional per-mode payee override (Stellar G... address). When set, payments
+   * for this mode are directed here instead of the top-level manifest `payee`,
+   * enabling treasury separation by settlement type (e.g. x402 → facilitator
+   * hot wallet, mpp-charge → direct-settlement account). Falls back to the
+   * top-level `payee` when omitted.
+   */
+  payee?: string
 }
 
 /** Per-voucher pricing config — used by mpp-session (one-way-channel) mode */
@@ -36,6 +44,29 @@ export interface SessionPricingConfig {
   refund_waiting_period_ledgers: number
 }
 
+/** SLA configuration */
+export interface SLAConfig {
+  uptime_30d_percent: number
+  p95_latency_ms: number
+  maintenance_windows?: {
+    cron: string
+    duration_minutes: number
+  }[]
+}
+
+/** Endpoint descriptor */
+export interface EndpointDescriptor {
+  method: string
+  path: string
+  headers?: Record<string, string>
+  request_schema?: unknown
+  response_schema?: unknown
+  rate_limit?: {
+    requests: number
+    window_seconds: number
+  }
+}
+
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
 export interface RouteDockManifest {
   /** Schema version — always "1.0" */
@@ -52,7 +83,14 @@ export interface RouteDockManifest {
   asset: string
   /** Stellar Asset Contract (SAC) address for the payment asset */
   asset_contract: string
-  /** Stellar address (G...) that receives payments */
+  /**
+   * Stellar address (G...) that receives payments. Used as the default
+   * recipient for all modes. Individual per-request modes (x402, mpp-charge)
+   * may override this via `pricing.<mode>.payee` for treasury separation.
+   * Note: mpp-session settlements always land in the server signer's account
+   * (the channel pays out to the closer), so they cannot be redirected by a
+   * manifest field and always use this top-level `payee` for discovery display.
+   */
   payee: string
   /** Pricing configuration per supported payment mode */
   pricing: {
@@ -60,8 +98,10 @@ export interface RouteDockManifest {
     'mpp-charge'?: PricingConfig
     'mpp-session'?: SessionPricingConfig
   }
-  /** Map of endpoint name to HTTP method + path, e.g. { price: "GET /price" } */
-  endpoints: Record<string, string>
+  /** Service Level Agreement for the provider */
+  sla?: SLAConfig
+  /** Map of endpoint name to endpoint descriptors */
+  endpoints: Record<string, EndpointDescriptor>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
   /**
@@ -85,6 +125,27 @@ export interface RouteDockManifest {
     /** Supported content types for request/response */
     content_types?: string[]
   }
+  /**
+   * IATA airport codes or UN/LOCODE identifiers for regions where this provider
+   * has infrastructure (e.g. ["IAD", "AMS"]). Used by agents to select the
+   * nearest provider and reduce mpp-session round-trip latency.
+   */
+  regions?: string[]
+  /**
+   * Provider-declared p50 latency in milliseconds per region code.
+   * Keys must be a subset of `regions`. Agents can use these hints to
+   * rank providers by expected round-trip cost before opening a session.
+   * Example: { "IAD": 14, "AMS": 22 }
+   */
+  latency_hints?: Record<string, number>
+  /**
+   * Base64 Ed25519 signature of the payee keypair over the SHA-256 digest of
+   * this manifest with the `signature` field omitted. Clients must verify this
+   * before trusting any routing field (payee, endpoints, pricing).
+   */
+  signature?: string
+  /** Optional hierarchical categories from a published taxonomy (e.g. "data/price/crypto") */
+  categories?: string[]
 }
 
 /** Result returned by client.pay() for any payment mode */
@@ -123,6 +184,43 @@ export interface SessionCloseResult {
   vouchersIssued: number
 }
 
+/** Default wall-clock lifetime of a session before it auto-closes (1h). */
+export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
+
+/** Options accepted by client.openSession() */
+export interface SessionOptions {
+  /**
+   * Maximum wall-clock lifetime of the session in milliseconds. When the
+   * timer fires, the session emits 'session:timeout' and auto-closes so an
+   * orphaned channel cannot keep collateral locked on-chain indefinitely.
+   * Defaults to {@link DEFAULT_MAX_SESSION_DURATION_MS} (1h). Pass 0 or
+   * Infinity to disable the guard (not recommended).
+   */
+  maxDurationMs?: number
+}
+
+/** Lifecycle events emitted by a SessionHandle. */
+export type SessionEvent = 'session:timeout'
+
+/** Payload delivered with the 'session:timeout' event. */
+export interface SessionTimeoutPayload {
+  /** The wall-clock budget (ms) that elapsed before auto-close was triggered. */
+  maxDurationMs: number
+}
+
+/**
+ * Options for SessionHandle.stream().
+ */
+export interface StreamOptions {
+  /**
+   * Maximum number of voucher requests outstanding at once before backpressure
+   * is applied. Default: 1 (strictly sequential — safe for all providers).
+   * Increase only when the provider explicitly advertises support for concurrent
+   * vouchers; out-of-order sequence numbers will cause payment failures otherwise.
+   */
+  concurrency?: number
+}
+
 /** Handle for a live MPP session returned by client.openSession() */
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
@@ -137,9 +235,11 @@ export interface SessionHandle {
   /**
    * Async generator of server-sent event data.
    * Each iteration sends a voucher and yields the parsed response.
+   * With default concurrency (1) the next voucher is not issued until the
+   * provider returns HTTP 200 for the previous one.
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
-  stream(): AsyncIterable<unknown>
+  stream(options?: StreamOptions): AsyncIterable<unknown>
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */
@@ -148,6 +248,11 @@ export interface SessionHandle {
   settleWithLatestVoucher(): Promise<string>
   /** Get the current dispute status of the channel */
   getDisputeStatus(): Promise<DisputeStatus>
+  /**
+   * Subscribe to a session lifecycle event (e.g. 'session:timeout').
+   * Returns an unsubscribe function.
+   */
+  on(event: SessionEvent, listener: (payload: SessionTimeoutPayload) => void): () => void
 }
 
 /**
