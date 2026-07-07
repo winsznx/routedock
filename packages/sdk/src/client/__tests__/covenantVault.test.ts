@@ -9,7 +9,7 @@ import {
 } from '../CovenantZkVault.js'
 import type { RouteDockManifest } from '../../types.js'
 import { RouteDockManifestError } from '../../errors.js'
-import { decodeAuthSignature } from '@routedock/covenant-sdk'
+import { decodeAuthSignature } from '../CovenantZkVault.js'
 
 const COVENANT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
