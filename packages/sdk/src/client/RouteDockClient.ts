@@ -8,6 +8,12 @@ import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js
 import type { RetryPolicy } from '../internal/retry.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 
+// Commitment secrets are stored here instead of on the instance so they never
+// appear in JSON.stringify, structured-clone, or console.log object dumps.
+// The WeakMap key is the client instance, so secrets are GC-eligible once the
+// instance is collected (or after dispose() is called).
+const _secrets = new WeakMap<RouteDockClient, string>()
+
 export interface SpendCap {
   /** Maximum total USDC spend per day (decimal string, e.g. "1.00") */
   daily: string
@@ -29,7 +35,13 @@ export interface RouteDockClientConfig {
   network: 'testnet' | 'mainnet'
   /** Optional local daily spend cap — checked before every payment */
   spendCap?: SpendCap
-  /** Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session. */
+  /**
+   * Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session.
+   *
+   * WARNING: Do not log or serialize the config object — it contains this secret in plaintext.
+   * The RouteDockClient stores it outside the instance to prevent leakage via JSON.stringify
+   * or console.log, but the raw config object is not protected.
+   */
   commitmentSecret?: string | undefined
   /** Retry policy for transient failures (network, facilitator 5xx). */
   retryPolicy?: RetryPolicy
@@ -68,7 +80,6 @@ export class RouteDockClient {
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
   private readonly spendCap: SpendCap | undefined
-  private readonly commitmentSecret: string | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
 
@@ -88,11 +99,14 @@ export class RouteDockClient {
       typeof config.wallet === 'string' ? Keypair.fromSecret(config.wallet) : config.wallet
     this.network = config.network
     this.spendCap = config.spendCap
-    this.commitmentSecret = config.commitmentSecret
     this.retryPolicy = config.retryPolicy
     // Only warn about non-durability when a spend cap is actually configured.
     this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
     this.logger = config.logger
+
+    if (config.commitmentSecret) {
+      _secrets.set(this, config.commitmentSecret)
+    }
 
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
@@ -185,13 +199,23 @@ export class RouteDockClient {
       )
     }
 
-    if (!this.commitmentSecret) {
+    const secret = _secrets.get(this)
+    if (!secret) {
       throw new RouteDockManifestError(
         'commitmentSecret is required in RouteDockClientConfig for mpp-session mode',
       )
     }
 
-    return this.session.openSession(url, manifest, this.commitmentSecret, options)
+    return this.session.openSession(url, manifest, secret, options)
+  }
+
+  /**
+   * Remove the commitment secret from memory and make it eligible for GC.
+   * Call when this client instance is no longer needed — particularly in
+   * long-lived processes or Worker threads.
+   */
+  dispose(): void {
+    _secrets.delete(this)
   }
 
   /**

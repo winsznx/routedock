@@ -40,7 +40,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // Persisted for onSessionOpen and onSettled calls.
   let sessionPayerAddress: string | null = null
 
-  const wrappedStore: ReturnType<typeof Store.memory> = {
+  const wrappedStore: any = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
@@ -68,7 +68,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
-  
+    update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
   }
 
   const mppx = Mppx.create({
@@ -106,7 +106,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', null)).catch(err => {
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)).catch(err => {
               console.error('[mpp-session] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
             })

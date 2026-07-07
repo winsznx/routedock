@@ -13,6 +13,7 @@ import type {
   RouteDockManifest,
   SessionHandle,
   SessionCloseResult,
+  StreamOptions,
   DisputeStatus,
   SessionOptions,
   SessionEvent,
@@ -118,16 +119,18 @@ export class MppSessionClient {
       // identifier that produces broken explorer links downstream).
       openTxHash: null,
 
-      async *stream(): AsyncIterable<unknown> {
-        while (true) {
-          const data = await withRetry(async () => {
+      async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        const concurrency = Math.max(1, options?.concurrency ?? 1)
+
+        // Shared fetch-one helper — retries on transient errors.
+        const doFetch = (): Promise<unknown> =>
+          withRetry(async () => {
             let resp: Response
             try {
               resp = await mppx.fetch(url)
             } catch (err) {
               throw wrapFetchError(err, 'Voucher request')
             }
-
             if (!resp.ok) {
               if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
                 throw httpStatusToError(
@@ -140,12 +143,33 @@ export class MppSessionClient {
                 `Voucher request failed: HTTP ${resp.status}`,
               )
             }
-
             return resp.json()
           }, retryPolicy)
 
-          vouchersIssued++
-          yield data
+        if (concurrency === 1) {
+          // Default: strictly sequential.
+          // The next voucher is not issued until the provider returns HTTP 200
+          // for the current one, preventing out-of-order sequence numbers.
+          while (true) {
+            const data = await doFetch()
+            vouchersIssued++
+            yield data
+          }
+        } else {
+          // Pipelined: maintain a sliding window of `concurrency` in-flight
+          // requests. Results are yielded in issue order to preserve voucher
+          // sequence integrity. The caller opts in knowing the provider supports
+          // concurrent vouchers.
+          const queue: Array<Promise<unknown>> = []
+          for (let i = 0; i < concurrency; i++) queue.push(doFetch())
+
+          while (true) {
+            const data = await queue.shift()!
+            // Replenish the window immediately after draining one slot.
+            queue.push(doFetch())
+            vouchersIssued++
+            yield data
+          }
         }
       },
 
