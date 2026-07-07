@@ -69,8 +69,20 @@ export interface EndpointDescriptor {
 
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
 export interface RouteDockManifest {
-  /** Schema version — always "1.0" */
-  routedock: '1.0'
+  /** Manifest schema version (major.minor), e.g. "1.0", "1.1", "2.0" */
+  routedock: string
+  /**
+   * Minimum SDK client version (major.minor) required to use this manifest.
+   * Clients below this version must refuse to pay.
+   */
+  min_client_version?: string
+  /**
+   * Payment modes still listed in `modes` for backwards compatibility
+   * but deprecated for new integrations.
+   */
+  deprecated_modes?: PaymentMode[]
+  /** ISO 8601 timestamp after which this manifest version is no longer supported. */
+  sunset_at?: string
   /** Human-readable provider name */
   name: string
   /** Human-readable description of the provider's data or service */
@@ -278,6 +290,7 @@ export {
   RouteDockError,
   RouteDockManifestError,
   RouteDockNoSupportedModeError,
+  RouteDockClientVersionError,
   RouteDockFacilitatorError,
   RouteDockNetworkError,
   RouteDockSignatureError,
