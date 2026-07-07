@@ -194,7 +194,7 @@
     "SessionPricingConfig": {
       "type": "object",
       "description": "Per-voucher pricing for mpp-session (one-way-channel) mode",
-      "required": ["rate", "per", "channel_contract", "min_deposit", "refund_waiting_period_ledgers"],
+      "required": ["rate", "per", "channel_factory", "min_deposit", "refund_waiting_period_ledgers"],
       "additionalProperties": false,
       "properties": {
         "rate": {
@@ -206,9 +206,9 @@
           "const": "voucher",
           "description": "Billing unit — always 'voucher' for session mode"
         },
-        "channel_contract": {
+        "channel_factory": {
           "type": "string",
-          "description": "Soroban contract address (C...) for the one-way-channel contract"
+          "description": "Stable Soroban factory address (C...) used to deploy a per-session channel"
         },
         "min_deposit": {
           "type": "string",

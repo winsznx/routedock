@@ -43,7 +43,7 @@ function buildManifest(): RouteDockManifest {
       'mpp-session': {
         rate: '0.0001',
         per: 'voucher',
-        channel_contract: CHANNEL_CONTRACT,
+        channel_factory: CHANNEL_CONTRACT,
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },

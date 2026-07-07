@@ -27,7 +27,7 @@ const manifest: RouteDockManifest = {
     'mpp-session': {
       rate: '0.0001',
       per: 'voucher',
-      channel_contract: CHANNEL_CONTRACT,
+      channel_factory: CHANNEL_CONTRACT,
       min_deposit: '0.10',
       refund_waiting_period_ledgers: 17280,
     },
@@ -59,7 +59,7 @@ function makeApp(overrides: Partial<typeof BASE_OPTS & {
       pricing: {
         x402: '0.001',
         'mpp-charge': '0.0008',
-        'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT },
+        'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
       },
       ...overrides,
     } as Parameters<typeof routedockHono>[0]),
@@ -129,7 +129,7 @@ describe('routedockHono — mpp-session flow', () => {
     const app = makeApp({
       modes: ['mpp-session'],
       pricing: {
-        'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT },
+        'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
       },
     })
     const res = await app.request('/price', { method: 'GET' })
@@ -140,7 +140,7 @@ describe('routedockHono — mpp-session flow', () => {
     const app = makeApp({
       modes: ['mpp-session'],
       pricing: {
-        'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT },
+        'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
       },
     })
     const res = await app.request('/price', { method: 'DELETE' })
@@ -159,7 +159,7 @@ describe('routedockHono — constructor validation', () => {
           ...withoutCommitment,
           modes: ['mpp-session'],
           pricing: {
-            'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT },
+            'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
           },
         }),
       /commitmentPublicKey/,

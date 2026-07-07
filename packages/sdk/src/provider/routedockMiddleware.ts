@@ -10,7 +10,7 @@ export interface RouteDockMiddlewareOptions {
   pricing: {
     x402?: string
     'mpp-charge'?: string
-    'mpp-session'?: { rate: string; channelContract: string }
+    'mpp-session'?: { rate: string; channelFactory: string }
   }
   asset: string
   /** Stellar Asset Contract address for the payment asset */
@@ -119,7 +119,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
         createMppSessionHandler({
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
-          channelContract: sessionPricing.channelContract,
+          channelFactory: sessionPricing.channelFactory,
           rate: sessionPricing.rate,
           assetContract: opts.assetContract,
           manifest: signedManifest,

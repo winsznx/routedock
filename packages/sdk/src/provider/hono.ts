@@ -31,7 +31,7 @@ export interface RouteDockHonoOptions {
   pricing: {
     x402?: string
     'mpp-charge'?: string
-    'mpp-session'?: { rate: string; channelContract: string }
+    'mpp-session'?: { rate: string; channelFactory: string }
   }
   asset: string
   assetContract: string
@@ -293,7 +293,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const sessionPricing = opts.pricing['mpp-session']!
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
-  const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelContract}`
+  const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
 
   const innerStore = Store.memory()
   let lastCumulativeAmount = 0n
@@ -318,10 +318,12 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract, sessionPayerAddress)).catch(err => {
-              console.error('[mpp-session] onSessionOpen callback error:', err)
-              opts.onCallbackError?.(err, 'onSessionOpen')
-            })
+            Promise.resolve()
+              .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, sessionPayerAddress))
+              .catch((err) => {
+                console.error('[mpp-session] onSessionOpen callback error:', err)
+                opts.onCallbackError?.(err, 'onSessionOpen')
+              })
           }
         }
 
@@ -342,7 +344,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
     secretKey: opts.payeeSecretKey,
     methods: [
       mppChannel({
-        channel: sessionPricing.channelContract,
+        channel: sessionPricing.channelFactory,
         commitmentKey: opts.commitmentPublicKey!,
         network: networkId,
         store: wrappedStore,
@@ -367,7 +369,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
         if (closeAmount > 0n && closeSig) {
           const closeTxHash = await channelClose({
-            channel: sessionPricing.channelContract,
+            channel: sessionPricing.channelFactory,
             amount: closeAmount,
             signature: Buffer.from(closeSig, 'hex'),
             feePayer: { envelopeSigner: payeeKeypair },

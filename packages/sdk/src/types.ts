@@ -29,8 +29,8 @@ export interface SessionPricingConfig {
   /** Cost per voucher, e.g. "0.0001" */
   rate: string
   per: 'voucher'
-  /** Soroban contract address (C...) for the one-way-channel contract */
-  channel_contract: string
+  /** Stable Soroban factory address (C...) used to deploy a per-session channel */
+  channel_factory: string
   /** Minimum initial deposit to open a channel, e.g. "0.10" */
   min_deposit: string
   /**
