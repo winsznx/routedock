@@ -195,6 +195,19 @@ export interface SessionTimeoutPayload {
   maxDurationMs: number
 }
 
+/**
+ * Options for SessionHandle.stream().
+ */
+export interface StreamOptions {
+  /**
+   * Maximum number of voucher requests outstanding at once before backpressure
+   * is applied. Default: 1 (strictly sequential — safe for all providers).
+   * Increase only when the provider explicitly advertises support for concurrent
+   * vouchers; out-of-order sequence numbers will cause payment failures otherwise.
+   */
+  concurrency?: number
+}
+
 /** Handle for a live MPP session returned by client.openSession() */
 export interface SessionHandle {
   /** Stellar channel contract address (C...) */
@@ -209,9 +222,11 @@ export interface SessionHandle {
   /**
    * Async generator of server-sent event data.
    * Each iteration sends a voucher and yields the parsed response.
+   * With default concurrency (1) the next voucher is not issued until the
+   * provider returns HTTP 200 for the previous one.
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
-  stream(): AsyncIterable<unknown>
+  stream(options?: StreamOptions): AsyncIterable<unknown>
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */
