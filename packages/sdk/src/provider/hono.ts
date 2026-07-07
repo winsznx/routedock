@@ -302,7 +302,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
   let lastSignatureHex = ''
   let sessionPayerAddress: string | null = null
 
-  const wrappedStore: ReturnType<typeof Store.memory> = {
+  const wrappedStore: any = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
@@ -318,7 +318,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         if (!sessionOpened) {
           sessionOpened = true
           if (opts.onSessionOpen) {
-            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract, null)).catch(err => {
+            Promise.resolve().then(() => opts.onSessionOpen!(sessionPricing.channelContract, sessionPayerAddress)).catch(err => {
               console.error('[mpp-session] onSessionOpen callback error:', err)
               opts.onCallbackError?.(err, 'onSessionOpen')
             })
@@ -336,6 +336,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
     },
     async delete(key: string) { return innerStore.delete(key) },
     update(key, fn) { return innerStore.update(key, fn) },
+    update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
   }
 
   const mppx = Mppx.create({
@@ -376,7 +377,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', null)).catch(err => {
+            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)).catch(err => {
               console.error('[mpp-session] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
             })

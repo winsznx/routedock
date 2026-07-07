@@ -40,7 +40,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // Persisted for onSessionOpen and onSettled calls.
   let sessionPayerAddress: string | null = null
 
-  const wrappedStore: ReturnType<typeof Store.memory> = {
+  const wrappedStore: any = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
@@ -67,6 +67,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     },
     async delete(key: string) { return innerStore.delete(key) },
     update(key, fn) { return innerStore.update(key, fn) },
+     update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
   }
 
   const mppx = Mppx.create({
