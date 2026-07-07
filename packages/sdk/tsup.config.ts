@@ -16,5 +16,5 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   treeshake: true,
-  external: ['react', 'react-dom', 'express', 'fastify'],
+  external: ['react', 'react-dom', 'express', 'fastify', '@routedock/covenant-sdk'],
 })

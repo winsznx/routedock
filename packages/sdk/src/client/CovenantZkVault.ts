@@ -100,3 +100,4 @@ export async function prepareCovenantSigner(
 }
 
 export type { VaultMode }
+export { CovenantPolicyError } from '@routedock/covenant-sdk'
