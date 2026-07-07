@@ -54,6 +54,7 @@ const manifest: RouteDockManifest = {
   tags: ['price', 'stellar', 'dex', 'orderbook', 'usdc'],
   regions: ['IAD', 'AMS'],
   latency_hints: { IAD: 14, AMS: 22 },
+  categories: ['data/price/crypto'],
 }
 
 // Required env var check — abort with clear message rather than a deep stack trace

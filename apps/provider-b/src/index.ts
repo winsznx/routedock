@@ -56,6 +56,7 @@ const manifest: RouteDockManifest = {
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
   regions: ['FRA', 'SIN'],
   latency_hints: { FRA: 11, SIN: 19 },
+  categories: ['data/stream/crypto'],
 }
 
 // Required env var check
