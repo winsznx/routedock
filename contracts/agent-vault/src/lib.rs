@@ -45,6 +45,7 @@ pub enum Error {
     PayeeCapExceeded = 6,
     LifetimeCapExceeded = 7,
     NoPendingAdmin = 8,
+    ContractFrozen = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
