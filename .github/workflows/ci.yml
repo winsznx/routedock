@@ -12,7 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        # Pinned: Rust 1.97 rejects a transmute in the transitive ethnum crate
+        # (E0512). 1.94.x compiles the soroban-sdk deps cleanly.
+        uses: dtolnay/rust-toolchain@1.94.1
       - name: Run contract tests
         run: cargo test --manifest-path contracts/agent-vault/Cargo.toml
 
