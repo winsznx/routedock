@@ -1,6 +1,7 @@
 /** Stable error codes for programmatic handling. */
 export type RouteDockErrorCode =
   | 'MANIFEST'
+  | 'MANIFEST_TIMEOUT'
   | 'NO_SUPPORTED_MODE'
   | 'FACILITATOR'
   | 'NETWORK'
@@ -10,6 +11,7 @@ export type RouteDockErrorCode =
   | 'CHANNEL_STATE'
   | 'DISPUTE'
   | 'REFUND_WINDOW'
+  | 'CLIENT_VERSION_TOO_OLD'
 
 export interface RouteDockErrorOptions {
   cause?: unknown
@@ -47,11 +49,27 @@ export class RouteDockManifestError extends RouteDockError {
   }
 }
 
+/** Manifest fetch exceeded the configured timeout without receiving a response. */
+export class RouteDockManifestTimeoutError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'MANIFEST_TIMEOUT', true, options)
+    this.name = 'RouteDockManifestTimeoutError'
+  }
+}
+
 /** No payment mode in the manifest is supported by this client. */
 export class RouteDockNoSupportedModeError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'NO_SUPPORTED_MODE', false, options)
     this.name = 'RouteDockNoSupportedModeError'
+  }
+}
+
+/** This client's SDK version is below the manifest's min_client_version. Upgrade the SDK to proceed. */
+export class RouteDockClientVersionError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'CLIENT_VERSION_TOO_OLD', false, options)
+    this.name = 'RouteDockClientVersionError'
   }
 }
 

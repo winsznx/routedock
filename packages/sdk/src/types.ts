@@ -7,6 +7,9 @@
 
 export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
 
+/** Agent custody mode — declared in routedock.json when provider accepts ZK vault payers */
+export type VaultMode = 'local-key' | 'agent-vault' | 'covenant-zk'
+
 /** Per-request pricing config — used by x402 and mpp-charge modes */
 export interface PricingConfig {
   /** Cost per request in the payment asset, e.g. "0.001" */
@@ -29,8 +32,8 @@ export interface SessionPricingConfig {
   /** Cost per voucher, e.g. "0.0001" */
   rate: string
   per: 'voucher'
-  /** Soroban contract address (C...) for the one-way-channel contract */
-  channel_contract: string
+  /** Stable Soroban factory address (C...) used to deploy a per-session channel */
+  channel_factory: string
   /** Minimum initial deposit to open a channel, e.g. "0.10" */
   min_deposit: string
   /**
@@ -66,8 +69,20 @@ export interface EndpointDescriptor {
 
 /** Full RouteDock discovery manifest — served at /.well-known/routedock.json */
 export interface RouteDockManifest {
-  /** Schema version — always "1.0" */
-  routedock: '1.0'
+  /** Manifest schema version (major.minor), e.g. "1.0", "1.1", "2.0" */
+  routedock: string
+  /**
+   * Minimum SDK client version (major.minor) required to use this manifest.
+   * Clients below this version must refuse to pay.
+   */
+  min_client_version?: string
+  /**
+   * Payment modes still listed in `modes` for backwards compatibility
+   * but deprecated for new integrations.
+   */
+  deprecated_modes?: PaymentMode[]
+  /** ISO 8601 timestamp after which this manifest version is no longer supported. */
+  sunset_at?: string
   /** Human-readable provider name */
   name: string
   /** Human-readable description of the provider's data or service */
@@ -101,6 +116,16 @@ export interface RouteDockManifest {
   endpoints: Record<string, EndpointDescriptor>
   /** Capability tags indexed with trigram search in the provider registry */
   tags: string[]
+  /**
+   * Optional vault custody mode declared by the provider.
+   * When set to `covenant-zk`, the provider accepts payers using Covenant smart accounts.
+   */
+  vault?: VaultMode
+  /**
+   * Optional Covenant smart account address (C...) that this provider is linked to.
+   * Used by the client to verify the covenant_account before sending proofs.
+   */
+  covenant_account?: string
   /** Optional protocol features this provider supports */
   capabilities?: {
     /** Supported streaming transports */
@@ -265,6 +290,7 @@ export {
   RouteDockError,
   RouteDockManifestError,
   RouteDockNoSupportedModeError,
+  RouteDockClientVersionError,
   RouteDockFacilitatorError,
   RouteDockNetworkError,
   RouteDockSignatureError,

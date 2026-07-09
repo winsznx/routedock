@@ -17,6 +17,7 @@ const CAP_KEY: Symbol = symbol_short!("dailycap");
 const LIST_KEY: Symbol = symbol_short!("allwlist");
 const EXPIRY_KEY: Symbol = symbol_short!("expiry");
 const INIT_KEY: Symbol = symbol_short!("init");
+const FROZEN_KEY: Symbol = symbol_short!("frozen");
 
 // Global day-spend key: (SPEND_PREFIX, day_bucket) where day_bucket = seq / 17280
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
@@ -44,6 +45,7 @@ pub enum Error {
     PayeeCapExceeded = 6,
     LifetimeCapExceeded = 7,
     NoPendingAdmin = 8,
+    ContractFrozen = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -167,6 +169,46 @@ impl AgentVault {
         storage.set(&ADMIN_KEY, &pending_admin);
         storage.remove(&PENDING_ADMIN_KEY);
     }
+
+    /// Freeze the contract, preventing any agent transfers. Admin only.
+    pub fn freeze(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&FROZEN_KEY, &true);
+    }
+
+    /// Unfreeze the contract, allowing agent transfers again. Admin only.
+    pub fn unfreeze(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&FROZEN_KEY, &false);
+    }
+
+    /// Return the global daily spend cap (view-only).
+    pub fn daily_cap(env: Env) -> i128 {
+        env.storage().instance().get(&CAP_KEY).unwrap_or(0)
+    }
+
+    /// Return the allowed payees and their sub-caps (view-only).
+    pub fn allowlist(env: Env) -> Map<Address, i128> {
+        env.storage().instance().get(&LIST_KEY).unwrap_or_else(|| Map::new(&env))
+    }
+
+    /// Return the session expiry ledger (view-only).
+    pub fn expiry_ledger(env: Env) -> u32 {
+        env.storage().instance().get(&EXPIRY_KEY).unwrap_or(0)
+    }
+
+    /// Return the authorized agent's Ed25519 public key (view-only).
+    pub fn agent_pubkey(env: Env) -> BytesN<32> {
+        env.storage().instance().get(&AGENT_KEY).unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
+    }
 }
 
 // ── CustomAccountInterface ────────────────────────────────────────────────────
@@ -200,6 +242,13 @@ impl CustomAccountInterface for AgentVault {
         let storage = env.storage().instance();
         // Keep instance storage alive through the lifetime of auth calls
         storage.extend_ttl(2_000_000, 2_000_000);
+
+
+        // ── Emergency Stop Check ─────────────────────────────────────────────
+        let is_frozen: bool = storage.get(&FROZEN_KEY).unwrap_or(false);
+        if is_frozen {
+            return Err(Error::ContractFrozen);
+        }
 
         // ── Verify Ed25519 signature ─────────────────────────────────────────
         let agent_pk: BytesN<32> = storage.get(&AGENT_KEY).ok_or(Error::NotInitialized)?;
@@ -314,7 +363,7 @@ mod tests {
     use soroban_sdk::{
         auth::ContractContext,
         testutils::{Address as _, BytesN as _, Ledger},
-        IntoVal, TryFromVal,
+        IntoVal, FromVal,
     };
 
     // Use ed25519-dalek for signing in tests (same pattern as Crossmint/stellar-smart-account)
@@ -331,6 +380,11 @@ mod tests {
     fn sign_payload(env: &Env, sk: &SigningKey, payload: &BytesN<32>) -> BytesN<64> {
         let sig = sk.sign(&payload.to_array());
         BytesN::<64>::from_array(env, &sig.to_bytes())
+    }
+
+    fn event_topic_matches(env: &Env, topic: soroban_sdk::Val, expected: &Symbol) -> bool {
+        let sym: Symbol = topic.into_val(env);
+        sym == *expected
     }
 
     fn setup(env: &Env) -> (AgentVaultClient<'_>, SigningKey, Address, Address) {
@@ -780,7 +834,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
 
@@ -824,7 +878,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .last()
             .expect("expected at least one payment_authorized event");
@@ -854,7 +908,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .count();
         assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
@@ -898,7 +952,7 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::try_from_val(&env, &t).map_or(false, |s| s == evt_name))
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
         assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
@@ -1448,4 +1502,175 @@ mod tests {
         client.accept_admin();
     }
 
+    /// Test 35: freeze blocks subsequent calls
+    #[test]
+    fn test_freeze_blocks_transfers() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Freeze the contract
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+
+        // Attempt a transfer, should fail
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::ContractFrozen,
+            "frozen contract should reject transfers"
+        );
+    }
+
+    /// Test 36: unfreeze restores normal operation
+    #[test]
+    fn test_unfreeze_restores_transfers() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Freeze
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+
+        // Unfreeze
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "unfreeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.unfreeze();
+
+        // Attempt a transfer, should succeed
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "unfrozen contract should allow transfers");
+    }
+
+    /// Test 37: only admin can toggle freeze/unfreeze
+    #[test]
+    #[should_panic]
+    fn test_freeze_requires_admin() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &soroban_sdk::Map::new(&env), &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "freeze",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.freeze();
+    }
+
+    /// Test 38: view functions return correct values
+    #[test]
+    fn test_view_functions() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        
+        let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        assert_eq!(client.daily_cap(), 5_000_000_i128);
+        
+        let fetched_allowlist = client.allowlist();
+        assert_eq!(fetched_allowlist.len(), 1);
+        assert_eq!(fetched_allowlist.get(provider_a.clone()).unwrap(), 5_000_000_i128);
+
+        assert_eq!(client.expiry_ledger(), 10_000_u32);
+        assert_eq!(client.agent_pubkey(), agent_pk.clone());
+
+        // Test updates
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_daily_cap",
+                args: (&10_000_000_i128,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_daily_cap(&10_000_000_i128);
+        assert_eq!(client.daily_cap(), 10_000_000_i128);
+
+        let provider_b = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "add_to_allowlist",
+                args: (&provider_b, &2_000_000_i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.add_to_allowlist(&provider_b, &2_000_000_i128);
+        
+        let updated_allowlist = client.allowlist();
+        assert_eq!(updated_allowlist.len(), 2);
+        assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
+    }
 }

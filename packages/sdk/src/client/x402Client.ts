@@ -1,4 +1,4 @@
-import { createEd25519Signer } from '@x402/stellar'
+import { createEd25519Signer, type ClientStellarSigner } from '@x402/stellar'
 import { ExactStellarScheme } from '@x402/stellar/exact/client'
 import { x402Client, x402HTTPClient } from '@x402/core/client'
 import {
@@ -24,18 +24,27 @@ const CAIP2: Record<Network, X402Network> = {
 
 export class X402Client {
   private readonly httpClient: x402HTTPClient
+  private readonly signer: ClientStellarSigner
 
   constructor(
-    private readonly secretKey: string,
+    secretKeyOrSigner: string | ClientStellarSigner,
     private readonly network: Network,
     private readonly retryPolicy?: RetryPolicy,
   ) {
     const caip2 = CAIP2[network]
-    const signer = createEd25519Signer(secretKey, caip2)
-    const scheme = new ExactStellarScheme(signer)
+    this.signer =
+      typeof secretKeyOrSigner === 'string'
+        ? createEd25519Signer(secretKeyOrSigner, caip2)
+        : secretKeyOrSigner
+    const scheme = new ExactStellarScheme(this.signer)
     const core = new x402Client()
     core.register(caip2, scheme)
     this.httpClient = new x402HTTPClient(core)
+  }
+
+  /** Replace signer (e.g. swap to Covenant ZK account payer before pay) */
+  withSigner(signer: ClientStellarSigner): X402Client {
+    return new X402Client(signer, this.network, this.retryPolicy)
   }
 
   async pay(url: string, manifest: RouteDockManifest): Promise<PaymentResult> {

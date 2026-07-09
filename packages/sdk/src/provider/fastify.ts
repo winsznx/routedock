@@ -10,7 +10,7 @@ export interface RouteDockFastifyOptions {
   pricing: {
     x402?: string
     'mpp-charge'?: string
-    'mpp-session'?: { rate: string; channelContract: string }
+    'mpp-session'?: { rate: string; channelFactory: string }
   }
   asset: string
   assetContract: string
@@ -20,8 +20,8 @@ export interface RouteDockFastifyOptions {
   facilitatorApiKey?: string
   commitmentPublicKey?: string
   manifest: RouteDockManifest
-  onSettled?: (txHash: string, amount: string, mode: string) => Promise<void>
-  onSessionOpen?: (channelId: string) => Promise<void>
+  onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
+  onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
 }
 
@@ -89,7 +89,7 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
         createMppSessionHandler({
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
-          channelContract: sessionPricing.channelContract,
+          channelFactory: sessionPricing.channelFactory,
           rate: sessionPricing.rate,
           assetContract: opts.assetContract,
           manifest: opts.manifest,

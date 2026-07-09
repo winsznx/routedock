@@ -3,6 +3,7 @@ import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
+import { prepareCovenantSigner, CovenantPolicyError, type CovenantZkVaultConfig } from './CovenantZkVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
@@ -29,11 +30,13 @@ export interface SpendCap {
   endpointCaps?: Record<string, string>
 }
 
+export type VaultConfig = CovenantZkVaultConfig
+
 export interface RouteDockClientConfig {
-  /** Stellar keypair or raw secret key (S...) */
+  /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
   wallet: Keypair | string
   network: 'testnet' | 'mainnet'
-  /** Optional local daily spend cap — checked before every payment */
+  /** Optional local daily spend cap — checked before every payment (local-key vault only) */
   spendCap?: SpendCap
   /**
    * Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session.
@@ -53,6 +56,18 @@ export interface RouteDockClientConfig {
   spendStore?: SpendStore
   /** Structured logger for SDK events. Defaults to no-op (silent). */
   logger?: RouteDockLogger
+  /**
+   * Timeout in milliseconds for manifest fetches. A provider that accepts the TCP
+   * connection but never sends a response body will be aborted after this delay.
+   * Default: 5000 ms.
+   */
+  manifestTimeoutMs?: number
+
+  /**
+   * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
+   * with off-chain ZK proofs attached as auth signatures.
+   */
+  vault?: VaultConfig
 }
 
 /**
@@ -82,6 +97,8 @@ export class RouteDockClient {
   private readonly spendCap: SpendCap | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
+  private readonly manifestTimeoutMs: number | undefined
+  private readonly vault: VaultConfig | undefined
 
   /**
    * Durable backing store for the local daily spend accumulator (keyed by
@@ -90,7 +107,7 @@ export class RouteDockClient {
    */
   private readonly spendStore: SpendStore
 
-  private readonly x402: X402Client
+  private x402: X402Client
   private readonly charge: MppChargeClient
   private readonly session: MppSessionClient
 
@@ -103,6 +120,12 @@ export class RouteDockClient {
     // Only warn about non-durability when a spend cap is actually configured.
     this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
     this.logger = config.logger
+    this.manifestTimeoutMs = config.manifestTimeoutMs
+
+    if (config.commitmentSecret) {
+      _secrets.set(this, config.commitmentSecret)
+    }
+    this.vault = config.vault
 
     if (config.commitmentSecret) {
       _secrets.set(this, config.commitmentSecret)
@@ -120,7 +143,7 @@ export class RouteDockClient {
     options?: ModeSelectOptions,
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
   }
@@ -131,8 +154,12 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
+
+    if (this.vault?.mode === 'covenant-zk') {
+      return this._payWithCovenantVault(url, manifest, mode)
+    }
 
     let result: PaymentResult
 
@@ -153,6 +180,31 @@ export class RouteDockClient {
 
     await this._checkAndRecordSpend(result.amount, new URL(url).origin)
     return result
+  }
+
+  /** Covenant ZK vault path — proof built off-chain, attached as auth signature */
+  private async _payWithCovenantVault(
+    url: string,
+    manifest: import('../types.js').RouteDockManifest,
+    mode: import('../types.js').PaymentMode,
+  ): Promise<PaymentResult> {
+    if (mode !== 'x402') {
+      throw new RouteDockManifestError(
+        'covenant-zk vault currently supports x402 mode — force x402 via { forceMode: "x402" }',
+      )
+    }
+
+    try {
+      const { signer } = await prepareCovenantSigner(this.vault!, manifest, mode, this.network)
+      const x402 = this.x402.withSigner(signer)
+      const result = await x402.pay(url, manifest)
+      return result
+    } catch (err) {
+      if (err instanceof CovenantPolicyError) {
+        throw new RouteDockPolicyRejectError((err as CovenantPolicyError).code)
+      }
+      throw err
+    }
   }
 
   /**
@@ -191,7 +243,7 @@ export class RouteDockClient {
    */
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
 
     if (!manifest.modes.includes('mpp-session')) {
       throw new RouteDockManifestError(
