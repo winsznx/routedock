@@ -4,6 +4,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
   RouteDockManifestError,
+  RouteDockManifestTimeoutError,
   RouteDockNoSupportedModeError,
   RouteDockClientVersionError,
   httpStatusToError,
@@ -47,6 +48,7 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 60_000
 const DEFAULT_MANIFEST_CACHE_MAX_SIZE = 512
+const DEFAULT_MANIFEST_TIMEOUT_MS = 5_000
 
 /**
  * Simple LRU cache backed by Map's insertion-order guarantee.
@@ -124,6 +126,7 @@ export interface ModeSelectOptions {
 export async function fetchManifest(
   baseUrl: string,
   retryPolicy?: RetryPolicy,
+  manifestTimeoutMs = DEFAULT_MANIFEST_TIMEOUT_MS,
 ): Promise<RouteDockManifest> {
   const cached = manifestCache.get(baseUrl)
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
@@ -136,7 +139,7 @@ export async function fetchManifest(
   return withRetry(async () => {
     let raw: unknown
     try {
-      const resp = await fetch(url)
+      const resp = await fetch(url, { signal: AbortSignal.timeout(manifestTimeoutMs) })
       if (!resp.ok) {
         if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
           throw httpStatusToError(
@@ -151,6 +154,12 @@ export async function fetchManifest(
       }
       raw = await resp.json()
     } catch (err) {
+      if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        throw new RouteDockManifestTimeoutError(
+          `Manifest fetch timed out after ${manifestTimeoutMs}ms from ${url}`,
+          { cause: err },
+        )
+      }
       if (err instanceof RouteDockError) throw err
       throw wrapFetchError(err, `Manifest fetch error from ${url}`)
     }

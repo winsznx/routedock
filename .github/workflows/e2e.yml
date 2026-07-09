@@ -10,6 +10,8 @@ jobs:
   e2e:
     name: Run Stellar Testnet Payments
     runs-on: ubuntu-latest
+    # The `secrets` context is not allowed in `if:` expressions, so expose the
+    # secret through env and gate the steps on `env` instead.
     env:
       AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
 
