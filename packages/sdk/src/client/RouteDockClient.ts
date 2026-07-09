@@ -62,6 +62,8 @@ export interface RouteDockClientConfig {
    * Default: 5000 ms.
    */
   manifestTimeoutMs?: number
+
+  /**
    * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
    * with off-chain ZK proofs attached as auth signatures.
    */

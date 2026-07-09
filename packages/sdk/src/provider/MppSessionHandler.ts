@@ -146,7 +146,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
-    update(key, fn) { return innerStore.update(key, fn) },
     update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
   }
 

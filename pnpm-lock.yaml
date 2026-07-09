@@ -268,7 +268,7 @@ importers:
         specifier: ^4.18.0
         version: 4.22.1
       mppx:
-        specifier: ^0.5.17
+        specifier: ^0.5.7
         version: 0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
     devDependencies:
       '@happy-dom/global-registrator':
