@@ -1,6 +1,7 @@
 /** Stable error codes for programmatic handling. */
 export type RouteDockErrorCode =
   | 'MANIFEST'
+  | 'MANIFEST_TIMEOUT'
   | 'NO_SUPPORTED_MODE'
   | 'FACILITATOR'
   | 'NETWORK'
@@ -45,6 +46,14 @@ export class RouteDockManifestError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'MANIFEST', false, options)
     this.name = 'RouteDockManifestError'
+  }
+}
+
+/** Manifest fetch exceeded the configured timeout without receiving a response. */
+export class RouteDockManifestTimeoutError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'MANIFEST_TIMEOUT', true, options)
+    this.name = 'RouteDockManifestTimeoutError'
   }
 }
 

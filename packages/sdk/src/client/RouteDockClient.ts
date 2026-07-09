@@ -57,6 +57,13 @@ export interface RouteDockClientConfig {
   /** Structured logger for SDK events. Defaults to no-op (silent). */
   logger?: RouteDockLogger
   /**
+   * Timeout in milliseconds for manifest fetches. A provider that accepts the TCP
+   * connection but never sends a response body will be aborted after this delay.
+   * Default: 5000 ms.
+   */
+  manifestTimeoutMs?: number
+
+  /**
    * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
    * with off-chain ZK proofs attached as auth signatures.
    */
@@ -90,6 +97,7 @@ export class RouteDockClient {
   private readonly spendCap: SpendCap | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
+  private readonly manifestTimeoutMs: number | undefined
   private readonly vault: VaultConfig | undefined
 
   /**
@@ -112,6 +120,11 @@ export class RouteDockClient {
     // Only warn about non-durability when a spend cap is actually configured.
     this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
     this.logger = config.logger
+    this.manifestTimeoutMs = config.manifestTimeoutMs
+
+    if (config.commitmentSecret) {
+      _secrets.set(this, config.commitmentSecret)
+    }
     this.vault = config.vault
 
     if (config.commitmentSecret) {
@@ -130,7 +143,7 @@ export class RouteDockClient {
     options?: ModeSelectOptions,
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
   }
@@ -141,7 +154,7 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     if (this.vault?.mode === 'covenant-zk') {
@@ -230,7 +243,7 @@ export class RouteDockClient {
    */
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
 
     if (!manifest.modes.includes('mpp-session')) {
       throw new RouteDockManifestError(

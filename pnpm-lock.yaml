@@ -155,7 +155,7 @@ importers:
         version: 3.8.1(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react-is@17.0.2)(react@19.2.4)(redux@5.0.1)
       shadcn:
         specifier: ^4.2.0
-        version: 4.2.0(@types/node@20.19.39)(typescript@5.9.3)
+        version: 4.2.0(@cfworker/json-schema@4.1.1)(@types/node@20.19.39)(typescript@5.9.3)
       shiki:
         specifier: ^4.0.2
         version: 4.0.2
@@ -167,10 +167,10 @@ importers:
         version: 3.5.0
       tailwindcss:
         specifier: ^3.4.19
-        version: 3.4.19(tsx@4.22.3)(yaml@2.8.3)
+        version: 3.4.19(tsx@4.22.4)(yaml@2.8.3)
       tailwindcss-animate:
         specifier: ^1.0.7
-        version: 1.0.7(tailwindcss@3.4.19(tsx@4.22.3)(yaml@2.8.3))
+        version: 1.0.7(tailwindcss@3.4.19(tsx@4.22.4)(yaml@2.8.3))
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -217,10 +217,10 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
-        version: 1.29.0(zod@4.3.6)
+        version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       '@routedock/routedock':
         specifier: ^0.1.2
-        version: 0.1.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+        version: 0.1.2(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -245,7 +245,7 @@ importers:
         version: link:../covenant-sdk
       '@stellar/mpp':
         specifier: ^0.4.0
-        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
+        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -269,7 +269,7 @@ importers:
         version: 4.22.1
       mppx:
         specifier: ^0.5.7
-        version: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+        version: 0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
     devDependencies:
       '@happy-dom/global-registrator':
         specifier: ^15.11.7
@@ -482,6 +482,9 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@cfworker/json-schema@4.1.1':
+    resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -1205,6 +1208,10 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@modelcontextprotocol/server@2.0.0-beta.2':
+    resolution: {integrity: sha512-XK+sgFntT5ZzeqtTGpT9uti+Sqmq7YJZdx/N76eLJv9UA9vKvP04Qh9Hc45LCeIHGfTKRwDG6eh4C1Hs4omyIg==}
+    engines: {node: '>=20'}
 
   '@mswjs/interceptors@0.41.3':
     resolution: {integrity: sha512-cXu86tF4VQVfwz8W1SPbhoRyHJkti6mjH/XJIxp40jhO4j2k1m4KYrEykxqWPkFF3vrK4rgQppBh//AwyGSXPA==}
@@ -3057,7 +3064,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   globals@14.0.0:
     resolution: {integrity: sha512-oahGvuMGQlPw/ivIYBjVSrWAfWLBeku5tpPE2fOPLi+WHffIWbuh2tCjhyQhTBPMf5E9jDEH4FOmTYgYwbKwtQ==}
@@ -3198,6 +3205,11 @@ packages:
 
   incur@0.3.20:
     resolution: {integrity: sha512-YFUFy4YnrHgoXKKc+MmFZashAO09a1EzYbuEzSXqPQVQewz1rPf93ybw5mM5IEPm+9IEUxLtaBKM1ysDZvIcyw==}
+    engines: {node: '>=22'}
+    hasBin: true
+
+  incur@0.3.25:
+    resolution: {integrity: sha512-jrSkzauM42ilbQJ6THVkAY6dTulkyVW0sZpVHdA8gfiBwrLrLnLUf8U3bAOegAKBIMSOFgk1idchgu9xm9HMng==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -3685,6 +3697,25 @@ packages:
   motion-utils@12.36.0:
     resolution: {integrity: sha512-eHWisygbiwVvf6PZ1vhaHCLamvkSbPIeAYxWUuL3a2PD/TROgE7FvfHWTIH4vMl798QLfMw15nRqIaRDXTlYRg==}
 
+  mppx@0.5.17:
+    resolution: {integrity: sha512-4iZwc9XZclCsv8nzQyw32rdaWYg5eLRj4gNjq9l5d+6NuArazZSvjHsI5SQmtzDF6WsssI6E5hSIecCQ9LDA+w==}
+    hasBin: true
+    peerDependencies:
+      '@modelcontextprotocol/sdk': '>=1.25.0'
+      elysia: '>=1'
+      express: '>=5'
+      hono: '>=4.12.14'
+      viem: '>=2.47.5'
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
+        optional: true
+      elysia:
+        optional: true
+      express:
+        optional: true
+      hono:
+        optional: true
+
   mppx@0.5.7:
     resolution: {integrity: sha512-jVqnpGt27RYmVqtquvOU/vVQ64j2w/oPqCyM9HAyVhOYOOUXM1uloG/dc7cuiq4LnpaNDyKTxtD9U2v1kjbUfg==}
     hasBin: true
@@ -3896,6 +3927,14 @@ packages:
   own-keys@1.0.1:
     resolution: {integrity: sha512-qFOyK5PjiWZd+QQIh+1jhdb9LpxTF0qs7Pm8o5QHYZ0M3vKqSqzsZaEB6oWlxZ+q2sJBMI/Ktgd2N5ZwQoRHfg==}
     engines: {node: '>= 0.4'}
+
+  ox@0.14.15:
+    resolution: {integrity: sha512-3TubCmbKen/cuZQzX0qDbOS5lojjdSZ90lqKxWIDWd5siuJ0IJBaTXMYs8eMPLcraqnOwGZazz3apHPGiRCkGQ==}
+    peerDependencies:
+      typescript: '>=5.4.0'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   ox@0.14.29:
     resolution: {integrity: sha512-M5j87Ec4V99MQdRct/g09eWXW60g6zhHTUs1lr4deUtrPDnezBdCJTgKd7pxqTpSZBFveV0ALi9jMMuT1qKyNg==}
@@ -5286,6 +5325,8 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.14
 
+  '@cfworker/json-schema@4.1.1': {}
+
   '@changesets/apply-release-plan@7.1.1':
     dependencies:
       '@changesets/config': 3.1.4
@@ -5901,7 +5942,7 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.13(hono@4.12.25)
       ajv: 8.18.0
@@ -5920,10 +5961,12 @@ snapshots:
       raw-body: 3.0.2
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
+    optionalDependencies:
+      '@cfworker/json-schema': 4.1.1
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 1.19.13(hono@4.12.25)
       ajv: 8.18.0
@@ -5942,8 +5985,14 @@ snapshots:
       raw-body: 3.0.2
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
+    optionalDependencies:
+      '@cfworker/json-schema': 4.1.1
     transitivePeerDependencies:
       - supports-color
+
+  '@modelcontextprotocol/server@2.0.0-beta.2':
+    dependencies:
+      zod: 4.3.6
 
   '@mswjs/interceptors@0.41.3':
     dependencies:
@@ -6145,16 +6194,16 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
-  '@routedock/routedock@0.1.2(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))':
+  '@routedock/routedock@0.1.2(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))':
     dependencies:
-      '@stellar/mpp': 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
+      '@stellar/mpp': 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
       '@stellar/stellar-sdk': 14.6.1
       '@supabase/supabase-js': 2.102.1
       '@x402/core': 2.9.0
       '@x402/stellar': 2.9.0
       ajv: 8.18.0
       express: 5.2.1
-      mppx: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+      mppx: 0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@modelcontextprotocol/sdk'
@@ -6233,16 +6282,16 @@ snapshots:
 
   '@stellar/js-xdr@3.1.2': {}
 
-  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
+  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
     dependencies:
       '@stellar/stellar-sdk': 14.6.1
-      mppx: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+      mppx: 0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
       zod: 4.3.6
 
-  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
+  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
     dependencies:
       '@stellar/stellar-sdk': 14.6.1
-      mppx: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+      mppx: 0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
       zod: 4.3.6
 
   '@stellar/stellar-base@14.1.0':
@@ -8147,9 +8196,9 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.3.20(openapi-types@12.1.3):
+  incur@0.3.20(@cfworker/json-schema@4.1.1)(openapi-types@12.1.3):
     dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       '@readme/openapi-parser': 6.0.1(openapi-types@12.1.3)
       '@toon-format/toon': 2.1.0
       tokenx: 1.3.0
@@ -8159,6 +8208,15 @@ snapshots:
       - '@cfworker/json-schema'
       - openapi-types
       - supports-color
+
+  incur@0.3.25:
+    dependencies:
+      '@cfworker/json-schema': 4.1.1
+      '@modelcontextprotocol/server': 2.0.0-beta.2
+      '@toon-format/toon': 2.1.0
+      tokenx: 1.3.0
+      yaml: 2.8.3
+      zod: 4.3.6
 
   inflight@1.0.6:
     dependencies:
@@ -8583,34 +8641,29 @@ snapshots:
 
   motion-utils@12.36.0: {}
 
-  mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
+  mppx@0.5.17(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
     dependencies:
-      '@remix-run/fetch-proxy': 0.7.1
-      '@remix-run/node-fetch-server': 0.13.0
-      incur: 0.3.20(openapi-types@12.1.3)
-      ox: 0.14.7(typescript@5.9.3)(zod@4.3.6)
+      incur: 0.3.25
+      ox: 0.14.15(typescript@5.9.3)(zod@4.3.6)
       viem: 2.52.2(typescript@5.9.3)(zod@4.3.6)
       zod: 4.3.6
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       express: 4.22.1
       hono: 4.12.25
     transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - openapi-types
-      - supports-color
       - typescript
 
-  mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
+  mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
     dependencies:
       '@remix-run/fetch-proxy': 0.7.1
       '@remix-run/node-fetch-server': 0.13.0
-      incur: 0.3.20(openapi-types@12.1.3)
+      incur: 0.3.20(@cfworker/json-schema@4.1.1)(openapi-types@12.1.3)
       ox: 0.14.7(typescript@5.9.3)(zod@4.3.6)
       viem: 2.52.2(typescript@5.9.3)(zod@4.3.6)
       zod: 4.3.6
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       express: 5.2.1
       hono: 4.12.25
     transitivePeerDependencies:
@@ -8838,6 +8891,21 @@ snapshots:
       get-intrinsic: 1.3.0
       object-keys: 1.1.1
       safe-push-apply: 1.0.0
+
+  ox@0.14.15(typescript@5.9.3)(zod@4.3.6):
+    dependencies:
+      '@adraffy/ens-normalize': 1.11.1
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@5.9.3)(zod@4.3.6)
+      eventemitter3: 5.0.1
+    optionalDependencies:
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - zod
 
   ox@0.14.29(typescript@5.9.3)(zod@4.3.6):
     dependencies:
@@ -9424,14 +9492,14 @@ snapshots:
       safe-buffer: 5.2.1
       to-buffer: 1.2.2
 
-  shadcn@4.2.0(@types/node@20.19.39)(typescript@5.9.3):
+  shadcn@4.2.0(@cfworker/json-schema@4.1.1)(@types/node@20.19.39)(typescript@5.9.3):
     dependencies:
       '@babel/core': 7.29.0
       '@babel/parser': 7.29.2
       '@babel/plugin-transform-typescript': 7.28.6(@babel/core@7.29.0)
       '@babel/preset-typescript': 7.28.5(@babel/core@7.29.0)
       '@dotenvx/dotenvx': 1.60.1
-      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       '@types/validate-npm-package-name': 4.0.2
       browserslist: 4.28.2
       commander: 14.0.3
@@ -9716,11 +9784,11 @@ snapshots:
 
   tailwind-merge@3.5.0: {}
 
-  tailwindcss-animate@1.0.7(tailwindcss@3.4.19(tsx@4.22.3)(yaml@2.8.3)):
+  tailwindcss-animate@1.0.7(tailwindcss@3.4.19(tsx@4.22.4)(yaml@2.8.3)):
     dependencies:
-      tailwindcss: 3.4.19(tsx@4.22.3)(yaml@2.8.3)
+      tailwindcss: 3.4.19(tsx@4.22.4)(yaml@2.8.3)
 
-  tailwindcss@3.4.19(tsx@4.22.3)(yaml@2.8.3):
+  tailwindcss@3.4.19(tsx@4.22.4)(yaml@2.8.3):
     dependencies:
       '@alloc/quick-lru': 5.2.0
       arg: 5.0.2
@@ -9739,7 +9807,7 @@ snapshots:
       postcss: 8.5.8
       postcss-import: 15.1.0(postcss@8.5.8)
       postcss-js: 4.1.0(postcss@8.5.8)
-      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.22.3)(yaml@2.8.3)
+      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.22.4)(yaml@2.8.3)
       postcss-nested: 6.2.0(postcss@8.5.8)
       postcss-selector-parser: 6.1.2
       resolve: 1.22.11

@@ -83,7 +83,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/__tests__/manifest-sign.test.ts src/internal/__tests__/usdc.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/session-timeout.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/provider/__tests__/encoding.test.ts src/provider/__tests__/SeenTxStore.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
+    "test": "tsx --experimental-test-module-mocks --test src/__tests__/retry.test.ts src/__tests__/manifest-sign.test.ts src/internal/__tests__/usdc.test.ts src/client/__tests__/dispute.test.ts src/client/__tests__/session-timeout.test.ts src/client/__tests__/manifest-timeout.test.ts src/tests/smoke.test.ts src/provider/__tests__/hono.test.ts src/provider/__tests__/encoding.test.ts src/provider/__tests__/SeenTxStore.test.ts src/react/__tests__/useRouteDockClient.test.tsx src/react/__tests__/usePay.test.tsx src/react/__tests__/useSession.test.tsx src/react/__tests__/useTxLog.test.tsx"
   },
   "dependencies": {
     "@routedock/covenant-sdk": "workspace:*",
