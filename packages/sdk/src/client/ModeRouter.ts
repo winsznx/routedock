@@ -1,19 +1,45 @@
 import Ajv from 'ajv'
+import addFormats from 'ajv-formats'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
   RouteDockManifestError,
   RouteDockManifestTimeoutError,
   RouteDockNoSupportedModeError,
+  RouteDockClientVersionError,
   httpStatusToError,
   wrapFetchError,
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import schema from '../schemas/routedock.schema.json' assert { type: 'json' }
+import pkg from '../../package.json' assert { type: 'json' }
 import { verifyManifestSignature } from '../manifest/sign.js'
 
 const ajv = new Ajv()
+addFormats(ajv)
 const validateManifest = ajv.compile(schema)
+
+const SDK_VERSION = pkg.version as string
+
+function parseMajorMinor(version: string): [number, number] {
+  const parts = version.split('.')
+  return [Number.parseInt(parts[0] ?? '0', 10), Number.parseInt(parts[1] ?? '0', 10)]
+}
+
+function isVersionBelow(a: string, b: string): boolean {
+  const [aMajor, aMinor] = parseMajorMinor(a)
+  const [bMajor, bMinor] = parseMajorMinor(b)
+  return aMajor < bMajor || (aMajor === bMajor && aMinor < bMinor)
+}
+
+function assertClientVersionSupported(manifest: RouteDockManifest, baseUrl: string): void {
+  const minVersion = manifest.min_client_version
+  if (minVersion && isVersionBelow(SDK_VERSION, minVersion)) {
+    throw new RouteDockClientVersionError(
+      `SDK version ${SDK_VERSION} is below the minimum required version ${minVersion} for provider at ${baseUrl}. Please upgrade the SDK.`,
+    )
+  }
+}
 
 interface CacheEntry {
   manifest: RouteDockManifest
@@ -104,6 +130,7 @@ export async function fetchManifest(
 ): Promise<RouteDockManifest> {
   const cached = manifestCache.get(baseUrl)
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    assertClientVersionSupported(cached.manifest, baseUrl)
     return cached.manifest
   }
 
@@ -144,6 +171,7 @@ export async function fetchManifest(
 
     const manifest = raw as unknown as RouteDockManifest
     verifyManifestSignature(manifest)
+    assertClientVersionSupported(manifest, baseUrl)
     manifestCache.set(baseUrl, { manifest, fetchedAt: Date.now() })
     return manifest
   }, retryPolicy)
@@ -204,7 +232,7 @@ export function selectMode(
 
       const cheapestCandidate = [...affordableCandidates].sort((a, b) => a.amount - b.amount)[0]
       if (cheapestCandidate) {
-        console.log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
+        log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
         return cheapestCandidate.mode
       }
     }
