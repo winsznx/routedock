@@ -184,7 +184,7 @@
   "definitions": {
     "VaultMode": {
       "type": "string",
-      "enum": ["local-key", "agent-vault", "covenant-zk"],
+      "enum": ["local-key", "agent-vault", "nulth"],
       "description": "Agent vault / custody mode for payments from this provider"
     },
     "PaymentMode": {

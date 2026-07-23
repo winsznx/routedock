@@ -1,20 +1,20 @@
 /**
- * Covenant SDK unit tests — no chain RPC required.
+ * Nulth SDK unit tests — no chain RPC required.
  */
 
 import assert from 'node:assert/strict'
 import {
-  CovenantClient,
-  CovenantPolicyError,
+  NulthClient,
+  NulthPolicyError,
   commitAllowlist,
   commitDailyCap,
-  createCovenantSigner,
+  createNulthSigner,
   createPolicyState,
   decodeAuthSignature,
-  setCovenantPaymentContext,
+  setNulthPaymentContext,
 } from '../index.js'
 
-const COVENANT_ACCOUNT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
+const NULTH_ACCOUNT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE_A = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
 const PAYEE_B = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const WITNESS = 'test-witness-secret'
@@ -42,7 +42,7 @@ const WITNESS = 'test-witness-secret'
     ledgerSequence: 50_000,
   })
 
-  const client = new CovenantClient({ covenantAccount: COVENANT_ACCOUNT, policy })
+  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, policy })
   const proof = client.buildPaymentAuthProof({
     authEntry: Buffer.from('mock-auth-entry').toString('base64'),
     payee: PAYEE_A,
@@ -58,7 +58,7 @@ const WITNESS = 'test-witness-secret'
 
   const encoded = client.encodeProof(proof)
   const decoded = decodeAuthSignature(encoded)
-  assert.equal(decoded.covenant, 'zk-v1')
+  assert.equal(decoded.nulth, 'zk-v1')
   console.log('✓ proof generation and encoding')
 }
 
@@ -70,7 +70,7 @@ const WITNESS = 'test-witness-secret'
     allowedPayees: [PAYEE_A],
     witnessSecret: WITNESS,
   })
-  const client = new CovenantClient({ covenantAccount: COVENANT_ACCOUNT, policy })
+  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, policy })
 
   assert.throws(
     () =>
@@ -81,7 +81,7 @@ const WITNESS = 'test-witness-secret'
         assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
         ledgerSequence: 100,
       }),
-    (err: unknown) => err instanceof CovenantPolicyError && err.code === 'payee_not_allowed',
+    (err: unknown) => err instanceof NulthPolicyError && err.code === 'payee_not_allowed',
   )
 
   assert.throws(
@@ -93,7 +93,7 @@ const WITNESS = 'test-witness-secret'
         assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
         ledgerSequence: 100,
       }),
-    (err: unknown) => err instanceof CovenantPolicyError && err.code === 'daily_cap_exceeded',
+    (err: unknown) => err instanceof NulthPolicyError && err.code === 'daily_cap_exceeded',
   )
   console.log('✓ policy enforcement')
 }
@@ -102,7 +102,7 @@ const WITNESS = 'test-witness-secret'
 
 {
   const signerConfig = {
-    covenantAccount: COVENANT_ACCOUNT,
+    nulthAccount: NULTH_ACCOUNT,
     policy: createPolicyState({
       dailyCapUsdc: '1.00',
       allowedPayees: [PAYEE_A],
@@ -110,24 +110,24 @@ const WITNESS = 'test-witness-secret'
     }),
   }
 
-  setCovenantPaymentContext(signerConfig, {
+  setNulthPaymentContext(signerConfig, {
     payee: PAYEE_A,
     amountStroops: 5_000n,
     assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     ledgerSequence: 200,
   })
 
-  const signer = createCovenantSigner(signerConfig)
-  assert.equal(signer.address, COVENANT_ACCOUNT)
+  const signer = createNulthSigner(signerConfig)
+  assert.equal(signer.address, NULTH_ACCOUNT)
 
   const result = await signer.signAuthEntry(
     Buffer.from('auth-entry-for-x402').toString('base64'),
   )
-  assert.equal(result.signerAddress, COVENANT_ACCOUNT)
+  assert.equal(result.signerAddress, NULTH_ACCOUNT)
 
   const decoded = decodeAuthSignature(result.signedAuthEntry)
   assert.equal(decoded.proof.publicInputs.payeeHash.length, 64)
-  console.log('✓ covenant signer attaches ZK proof as auth signature')
+  console.log('✓ nulth signer attaches ZK proof as auth signature')
 }
 
-console.log('\nAll covenant-sdk tests passed.')
+console.log('\nAll nulth-sdk tests passed.')

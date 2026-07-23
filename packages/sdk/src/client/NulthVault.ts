@@ -1,8 +1,8 @@
 /**
- * CovenantZkVault — self-contained Covenant ZK account support for RouteDock SDK.
+ * NulthVault — self-contained Nulth ZK account support for RouteDock SDK.
  *
- * All covenant-sdk logic is inlined here so this file has zero imports from
- * @routedock/covenant-sdk. This avoids workspace-resolution issues in CI
+ * All nulth-sdk logic is inlined here so this file has zero imports from
+ * @routedock/nulth-sdk. This avoids workspace-resolution issues in CI
  * where the package may not be built before the DTS worker runs.
  */
 import { createHash } from 'node:crypto'
@@ -13,10 +13,10 @@ import type { RouteDockManifest, PaymentMode, VaultMode } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
 
 // ---------------------------------------------------------------------------
-// Inlined types (from @routedock/covenant-sdk/types)
+// Inlined types (from @routedock/nulth-sdk/types)
 // ---------------------------------------------------------------------------
 
-export interface CovenantPolicyState {
+export interface NulthPolicyState {
   dailyCapStroops: bigint
   allowlistCommitment: string
   allowedPayees: readonly string[]
@@ -34,7 +34,7 @@ export interface PaymentAuthContext {
   ledgerSequence: number
 }
 
-export interface CovenantZkProof {
+export interface NulthProof {
   version: 1
   proof: string
   publicInputs: {
@@ -47,28 +47,28 @@ export interface CovenantZkProof {
   }
 }
 
-export interface CovenantAuthSignature {
-  covenant: 'zk-v1'
-  proof: CovenantZkProof
+export interface NulthAuthSignature {
+  nulth: 'zk-v1'
+  proof: NulthProof
 }
 
-export interface CovenantClientConfig {
-  covenantAccount: string
-  policy: CovenantPolicyState
+export interface NulthClientConfig {
+  nulthAccount: string
+  policy: NulthPolicyState
   verifierContract?: string
 }
 
-export class CovenantPolicyError extends Error {
+export class NulthPolicyError extends Error {
   readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired'
-  constructor(code: CovenantPolicyError['code'], message: string) {
+  constructor(code: NulthPolicyError['code'], message: string) {
     super(message)
-    this.name = 'CovenantPolicyError'
+    this.name = 'NulthPolicyError'
     this.code = code
   }
 }
 
 // ---------------------------------------------------------------------------
-// Inlined proof utilities (from @routedock/covenant-sdk/proof)
+// Inlined proof utilities (from @routedock/nulth-sdk/proof)
 // ---------------------------------------------------------------------------
 
 function sha256Hex(data: Buffer | string): string {
@@ -99,11 +99,11 @@ function authDigestFromEntry(authEntryBase64: string): string {
 }
 
 function mockGroth16Proof(preimage: string): string {
-  return createHash('sha512').update(`covenant-zk:${preimage}`).digest('base64')
+  return createHash('sha512').update(`nulth:${preimage}`).digest('base64')
 }
 
-function encodeAuthSignature(proof: CovenantZkProof): string {
-  const payload: CovenantAuthSignature = { covenant: 'zk-v1', proof }
+function encodeAuthSignature(proof: NulthProof): string {
+  const payload: NulthAuthSignature = { nulth: 'zk-v1', proof }
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
 }
 
@@ -114,23 +114,23 @@ function usdcToStroops(amount: string): bigint {
 }
 
 // ---------------------------------------------------------------------------
-// Inlined CovenantClient (from @routedock/covenant-sdk/CovenantClient)
+// Inlined NulthClient (from @routedock/nulth-sdk/NulthClient)
 // ---------------------------------------------------------------------------
 
-class CovenantClient {
-  private policy: CovenantPolicyState
+class NulthClient {
+  private policy: NulthPolicyState
 
-  constructor(private readonly config: CovenantClientConfig) {
+  constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
   }
 
-  get covenantAccount(): string { return this.config.covenantAccount }
+  get nulthAccount(): string { return this.config.nulthAccount }
   get allowlistCommitment(): string { return this.policy.allowlistCommitment }
   get capCommitment(): string {
     return commitDailyCap(this.policy.dailyCapStroops, this.policy.witnessSecret)
   }
 
-  buildPaymentAuthProof(context: PaymentAuthContext): CovenantZkProof {
+  buildPaymentAuthProof(context: PaymentAuthContext): NulthProof {
     this.enforcePolicy(context)
 
     const bucket = dayBucketFromLedger(context.ledgerSequence)
@@ -146,10 +146,10 @@ class CovenantClient {
     const preimage = [
       authDigest, this.policy.allowlistCommitment, capCommitment,
       payeeHash, context.amountStroops.toString(), bucket.toString(),
-      this.config.covenantAccount,
+      this.config.nulthAccount,
     ].join('|')
 
-    const proof: CovenantZkProof = {
+    const proof: NulthProof = {
       version: 1,
       proof: mockGroth16Proof(preimage),
       publicInputs: {
@@ -168,48 +168,48 @@ class CovenantClient {
 
   private enforcePolicy(context: PaymentAuthContext): void {
     if (this.policy.expiryLedger !== undefined && context.ledgerSequence > this.policy.expiryLedger) {
-      throw new CovenantPolicyError('session_expired', 'Covenant session expired')
+      throw new NulthPolicyError('session_expired', 'Nulth session expired')
     }
     if (!this.policy.allowedPayees.includes(context.payee)) {
-      throw new CovenantPolicyError('payee_not_allowed', `Payee ${context.payee} not in off-chain allowlist`)
+      throw new NulthPolicyError('payee_not_allowed', `Payee ${context.payee} not in off-chain allowlist`)
     }
     const bucket = dayBucketFromLedger(context.ledgerSequence)
     const spend = bucket === this.policy.dayBucket ? this.policy.dailySpendStroops : 0n
     if (spend + context.amountStroops > this.policy.dailyCapStroops) {
-      throw new CovenantPolicyError('daily_cap_exceeded', 'Covenant daily cap exceeded')
+      throw new NulthPolicyError('daily_cap_exceeded', 'Nulth daily cap exceeded')
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Inlined signer types & helpers (from @routedock/covenant-sdk/signer)
+// Inlined signer types & helpers (from @routedock/nulth-sdk/signer)
 // ---------------------------------------------------------------------------
 
-export interface CovenantStellarSigner {
+export interface NulthStellarSigner {
   address: string
   signAuthEntry: SignAuthEntry
 }
 
-export interface CovenantSignerConfig extends CovenantClientConfig {
+export interface NulthSignerConfig extends NulthClientConfig {
   paymentContext?: Omit<PaymentAuthContext, 'authEntry'>
 }
 
-export function createCovenantSigner(config: CovenantSignerConfig): CovenantStellarSigner {
-  const client = new CovenantClient(config)
-  const covenantAccount = config.covenantAccount
+export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner {
+  const client = new NulthClient(config)
+  const nulthAccount = config.nulthAccount
   return {
-    address: covenantAccount,
+    address: nulthAccount,
     signAuthEntry: async (authEntry) => {
       const ctx = config.paymentContext
-      if (!ctx) throw new Error('Covenant paymentContext must be set before signing')
+      if (!ctx) throw new Error('Nulth paymentContext must be set before signing')
       const proof = client.buildPaymentAuthProof({ authEntry, ...ctx })
-      return { signedAuthEntry: encodeAuthSignature(proof), signerAddress: covenantAccount }
+      return { signedAuthEntry: encodeAuthSignature(proof), signerAddress: nulthAccount }
     },
   }
 }
 
-export function setCovenantPaymentContext(
-  config: CovenantSignerConfig,
+export function setNulthPaymentContext(
+  config: NulthSignerConfig,
   context: Omit<PaymentAuthContext, 'authEntry'>,
 ): void {
   config.paymentContext = context
@@ -240,7 +240,7 @@ export function createPolicyState(input: {
   witnessSecret: string
   expiryLedger?: number
   ledgerSequence?: number
-}): CovenantPolicyState {
+}): NulthPolicyState {
   const dailyCapStroops = usdcToStroops(input.dailyCapUsdc)
   return {
     dailyCapStroops,
@@ -254,12 +254,12 @@ export function createPolicyState(input: {
 }
 
 // ---------------------------------------------------------------------------
-// CovenantZkVault public API
+// NulthVault public API
 // ---------------------------------------------------------------------------
 
-export interface CovenantZkVaultConfig {
-  mode: 'covenant-zk'
-  covenantAccount: string
+export interface NulthVaultConfig {
+  mode: 'nulth'
+  nulthAccount: string
   witnessSecret: string
   allowedPayees: readonly string[]
   dailyCapUsdc: string
@@ -267,12 +267,12 @@ export interface CovenantZkVaultConfig {
   verifierContract?: string
 }
 
-export function assertCovenantVaultManifest(manifest: RouteDockManifest, covenantAccount: string): void {
-  if (manifest.vault !== undefined && manifest.vault !== 'covenant-zk') {
-    throw new RouteDockManifestError(`Provider vault mode ${manifest.vault} does not match client covenant-zk vault`)
+export function assertNulthVaultManifest(manifest: RouteDockManifest, nulthAccount: string): void {
+  if (manifest.vault !== undefined && manifest.vault !== 'nulth') {
+    throw new RouteDockManifestError(`Provider vault mode ${manifest.vault} does not match client nulth vault`)
   }
-  if (manifest.covenant_account && manifest.covenant_account !== covenantAccount) {
-    throw new RouteDockManifestError(`Manifest covenant_account ${manifest.covenant_account} does not match configured ${covenantAccount}`)
+  if (manifest.nulth_account && manifest.nulth_account !== nulthAccount) {
+    throw new RouteDockManifestError(`Manifest nulth_account ${manifest.nulth_account} does not match configured ${nulthAccount}`)
   }
 }
 
@@ -285,14 +285,14 @@ export async function fetchLedgerSequence(network: 'testnet' | 'mainnet'): Promi
   return latest.sequence
 }
 
-export async function prepareCovenantSigner(
-  vault: CovenantZkVaultConfig,
+export async function prepareNulthSigner(
+  vault: NulthVaultConfig,
   manifest: RouteDockManifest,
   mode: PaymentMode,
   network: 'testnet' | 'mainnet',
   ledgerSequenceOverride?: number,
-): Promise<{ signer: ClientStellarSigner; config: CovenantSignerConfig }> {
-  assertCovenantVaultManifest(manifest, vault.covenantAccount)
+): Promise<{ signer: ClientStellarSigner; config: NulthSignerConfig }> {
+  assertNulthVaultManifest(manifest, vault.nulthAccount)
 
   const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network))
   const policy = createPolicyState({
@@ -303,28 +303,28 @@ export async function prepareCovenantSigner(
     ...(vault.expiryLedger !== undefined ? { expiryLedger: vault.expiryLedger } : {}),
   })
 
-  const config: CovenantSignerConfig = {
-    covenantAccount: vault.covenantAccount,
+  const config: NulthSignerConfig = {
+    nulthAccount: vault.nulthAccount,
     policy,
     ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),
   }
 
   if (mode === 'x402' || mode === 'mpp-charge') {
-    setCovenantPaymentContext(config, paymentContextFromManifest(manifest, mode, ledgerSequence))
+    setNulthPaymentContext(config, paymentContextFromManifest(manifest, mode, ledgerSequence))
   } else {
-    throw new RouteDockManifestError(`Covenant ZK vault does not support payment mode: ${mode}`)
+    throw new RouteDockManifestError(`Nulth ZK vault does not support payment mode: ${mode}`)
   }
 
-  const signer = createCovenantSigner(config)
+  const signer = createNulthSigner(config)
   return { signer: signer as ClientStellarSigner, config }
 }
 
 export type { VaultMode }
 
-export function decodeAuthSignature(encoded: string): CovenantAuthSignature {
+export function decodeAuthSignature(encoded: string): NulthAuthSignature {
   const raw = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as unknown
-  if (typeof raw !== 'object' || raw === null || (raw as { covenant?: string }).covenant !== 'zk-v1') {
-    throw new Error('Invalid Covenant ZK auth signature')
+  if (typeof raw !== 'object' || raw === null || (raw as { nulth?: string }).nulth !== 'zk-v1') {
+    throw new Error('Invalid Nulth ZK auth signature')
   }
-  return raw as CovenantAuthSignature
+  return raw as NulthAuthSignature
 }

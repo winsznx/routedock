@@ -7,8 +7,11 @@
 
 export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
 
-/** Agent custody mode — declared in routedock.json when provider accepts ZK vault payers */
-export type VaultMode = 'local-key' | 'agent-vault' | 'covenant-zk'
+/**
+ * Agent custody mode — declared in routedock.json when provider accepts ZK vault payers.
+ * `nulth` = Nulth proof-authorized account (the ZK-account primitive; formerly "covenant-zk").
+ */
+export type VaultMode = 'local-key' | 'agent-vault' | 'nulth'
 
 /** Per-request pricing config — used by x402 and mpp-charge modes */
 export interface PricingConfig {
@@ -118,14 +121,14 @@ export interface RouteDockManifest {
   tags: string[]
   /**
    * Optional vault custody mode declared by the provider.
-   * When set to `covenant-zk`, the provider accepts payers using Covenant smart accounts.
+   * When set to `nulth`, the provider accepts payers using Nulth smart accounts.
    */
   vault?: VaultMode
   /**
-   * Optional Covenant smart account address (C...) that this provider is linked to.
-   * Used by the client to verify the covenant_account before sending proofs.
+   * Optional Nulth smart account address (C...) that this provider is linked to.
+   * Used by the client to verify the nulth_account before sending proofs.
    */
-  covenant_account?: string
+  nulth_account?: string
   /** Optional protocol features this provider supports */
   capabilities?: {
     /** Supported streaming transports */

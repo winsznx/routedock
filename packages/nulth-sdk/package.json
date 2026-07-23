@@ -1,7 +1,7 @@
 {
-  "name": "@routedock/covenant-sdk",
+  "name": "@routedock/nulth-sdk",
   "version": "0.1.0",
-  "description": "Off-chain ZK proof builder for Covenant smart accounts on Stellar",
+  "description": "Off-chain ZK proof builder for Nulth smart accounts on Stellar",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/__tests__/covenant.test.ts"
+    "test": "tsx --test src/__tests__/nulth.test.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1"
