@@ -36,6 +36,17 @@ export interface ReconciliationStats {
 }
 
 /**
+ * Parse a decimal string into a x1e7-scaled BigInt (stroops).
+ * The sessions table stores cumulative_amount as a human-readable 7-dp
+ * decimal string (see SessionState in types.ts), so it must be scaled
+ * before being passed to the channel close.
+ */
+export function decimalToStroops(decimal: string): bigint {
+  const [whole, frac = ''] = decimal.split('.')
+  return BigInt(whole + (frac + '0000000').slice(0, 7))
+}
+
+/**
  * Scan for abandoned sessions and attempt recovery.
  * Idempotent: sessions with settlement_tx_hash are skipped (already recovered).
  */
@@ -83,7 +94,7 @@ export async function reconcileAbandonedSessions(
           continue
         }
 
-        const closeAmount = BigInt(cumulative_amount)
+        const closeAmount = decimalToStroops(cumulative_amount)
         const closeSig = Buffer.from(last_signature, 'hex')
 
         // Broadcast channel close transaction
