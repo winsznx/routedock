@@ -39,29 +39,29 @@ export function authDigestFromEntry(authEntryBase64: string): string {
  * Production deployments swap this for a real prover WASM.
  */
 export function mockGroth16Proof(preimage: string): string {
-  return createHash('sha512').update(`covenant-zk:${preimage}`).digest('base64')
+  return createHash('sha512').update(`nulth:${preimage}`).digest('base64')
 }
 
 /** Encode proof as the Soroban auth signature Val (base64 JSON) */
-export function encodeAuthSignature(proof: import('./types.js').CovenantZkProof): string {
-  const payload: import('./types.js').CovenantAuthSignature = {
-    covenant: 'zk-v1',
+export function encodeAuthSignature(proof: import('./types.js').NulthProof): string {
+  const payload: import('./types.js').NulthAuthSignature = {
+    nulth: 'zk-v1',
     proof,
   }
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
 }
 
 /** Decode an auth signature produced by {@link encodeAuthSignature} */
-export function decodeAuthSignature(encoded: string): import('./types.js').CovenantAuthSignature {
+export function decodeAuthSignature(encoded: string): import('./types.js').NulthAuthSignature {
   const raw = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as unknown
   if (
     typeof raw !== 'object' ||
     raw === null ||
-    (raw as { covenant?: string }).covenant !== 'zk-v1'
+    (raw as { nulth?: string }).nulth !== 'zk-v1'
   ) {
-    throw new Error('Invalid Covenant ZK auth signature')
+    throw new Error('Invalid Nulth ZK auth signature')
   }
-  return raw as import('./types.js').CovenantAuthSignature
+  return raw as import('./types.js').NulthAuthSignature
 }
 
 /** Convert decimal USDC string to stroops (7 decimals) */

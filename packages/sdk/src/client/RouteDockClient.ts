@@ -3,7 +3,7 @@ import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
-import { prepareCovenantSigner, CovenantPolicyError, type CovenantZkVaultConfig } from './CovenantZkVault.js'
+import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
@@ -30,7 +30,7 @@ export interface SpendCap {
   endpointCaps?: Record<string, string>
 }
 
-export type VaultConfig = CovenantZkVaultConfig
+export type VaultConfig = NulthVaultConfig
 
 export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
@@ -64,7 +64,7 @@ export interface RouteDockClientConfig {
   manifestTimeoutMs?: number
 
   /**
-   * Vault custody mode. When `covenant-zk`, payments use a Covenant account as payer
+   * Vault custody mode. When `nulth`, payments use a Nulth account as payer
    * with off-chain ZK proofs attached as auth signatures.
    */
   vault?: VaultConfig
@@ -157,8 +157,8 @@ export class RouteDockClient {
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
-    if (this.vault?.mode === 'covenant-zk') {
-      return this._payWithCovenantVault(url, manifest, mode)
+    if (this.vault?.mode === 'nulth') {
+      return this._payWithNulthVault(url, manifest, mode)
     }
 
     let result: PaymentResult
@@ -182,26 +182,26 @@ export class RouteDockClient {
     return result
   }
 
-  /** Covenant ZK vault path — proof built off-chain, attached as auth signature */
-  private async _payWithCovenantVault(
+  /** Nulth ZK vault path — proof built off-chain, attached as auth signature */
+  private async _payWithNulthVault(
     url: string,
     manifest: import('../types.js').RouteDockManifest,
     mode: import('../types.js').PaymentMode,
   ): Promise<PaymentResult> {
     if (mode !== 'x402') {
       throw new RouteDockManifestError(
-        'covenant-zk vault currently supports x402 mode — force x402 via { forceMode: "x402" }',
+        'nulth vault currently supports x402 mode — force x402 via { forceMode: "x402" }',
       )
     }
 
     try {
-      const { signer } = await prepareCovenantSigner(this.vault!, manifest, mode, this.network)
+      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
       const x402 = this.x402.withSigner(signer)
       const result = await x402.pay(url, manifest)
       return result
     } catch (err) {
-      if (err instanceof CovenantPolicyError) {
-        throw new RouteDockPolicyRejectError((err as CovenantPolicyError).code)
+      if (err instanceof NulthPolicyError) {
+        throw new RouteDockPolicyRejectError((err as NulthPolicyError).code)
       }
       throw err
     }

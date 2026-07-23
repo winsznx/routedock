@@ -42,7 +42,7 @@ export class X402Client {
     this.httpClient = new x402HTTPClient(core)
   }
 
-  /** Replace signer (e.g. swap to Covenant ZK account payer before pay) */
+  /** Replace signer (e.g. swap to Nulth ZK account payer before pay) */
   withSigner(signer: ClientStellarSigner): X402Client {
     return new X402Client(signer, this.network, this.retryPolicy)
   }

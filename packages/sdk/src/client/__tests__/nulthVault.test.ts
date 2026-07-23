@@ -1,22 +1,22 @@
 /**
- * Covenant ZK vault integration tests — no live chain or x402 settlement.
+ * Nulth ZK vault integration tests — no live chain or x402 settlement.
  */
 
 import assert from 'node:assert/strict'
 import {
-  assertCovenantVaultManifest,
-  prepareCovenantSigner,
-} from '../CovenantZkVault.js'
+  assertNulthVaultManifest,
+  prepareNulthSigner,
+} from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
 import { RouteDockManifestError } from '../../errors.js'
-import { decodeAuthSignature } from '../CovenantZkVault.js'
+import { decodeAuthSignature } from '../NulthVault.js'
 
-const COVENANT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
+const NULTH = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
 
 const baseManifest: RouteDockManifest = {
   routedock: '1.0',
-  name: 'Covenant Test Provider',
+  name: 'Nulth Test Provider',
   description: 'ZK vault test',
   modes: ['x402'],
   network: 'testnet',
@@ -32,33 +32,33 @@ const baseManifest: RouteDockManifest = {
   },
   endpoints: { price: 'GET /price' },
   tags: ['test'],
-  vault: 'covenant-zk',
-  covenant_account: COVENANT,
+  vault: 'nulth',
+  nulth_account: NULTH,
 }
 
-assertCovenantVaultManifest(baseManifest, COVENANT)
+assertNulthVaultManifest(baseManifest, NULTH)
 
 assert.throws(
-  () => assertCovenantVaultManifest({ ...baseManifest, vault: 'agent-vault' }, COVENANT),
+  () => assertNulthVaultManifest({ ...baseManifest, vault: 'agent-vault' }, NULTH),
   RouteDockManifestError,
 )
 
 const vault = {
-  mode: 'covenant-zk' as const,
-  covenantAccount: COVENANT,
+  mode: 'nulth' as const,
+  nulthAccount: NULTH,
   witnessSecret: 'witness',
   allowedPayees: [PAYEE],
   dailyCapUsdc: '1.00',
 }
 
-const { signer } = await prepareCovenantSigner(
+const { signer } = await prepareNulthSigner(
   vault,
   baseManifest,
   'x402',
   'testnet',
   100_000,
 )
-assert.equal(signer.address, COVENANT)
+assert.equal(signer.address, NULTH)
 
 const signed = await signer.signAuthEntry(
   Buffer.from('route-dock-auth-entry').toString('base64'),
@@ -69,4 +69,4 @@ assert.doesNotMatch(decoded.proof.publicInputs.payeeHash, new RegExp(PAYEE.slice
 assert.notEqual(decoded.proof.publicInputs.capCommitment, '1.00')
 assert.notEqual(decoded.proof.publicInputs.allowlistCommitment, PAYEE)
 
-console.log('✓ Covenant ZK vault SDK integration PASSED')
+console.log('✓ Nulth ZK vault SDK integration PASSED')

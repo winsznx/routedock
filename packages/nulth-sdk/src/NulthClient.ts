@@ -7,22 +7,22 @@ import {
   mockGroth16Proof,
 } from './proof.js'
 import type {
-  CovenantClientConfig,
-  CovenantPolicyState,
-  CovenantZkProof,
+  NulthClientConfig,
+  NulthPolicyState,
+  NulthProof,
   PaymentAuthContext,
 } from './types.js'
-import { CovenantPolicyError } from './types.js'
+import { NulthPolicyError } from './types.js'
 
-export class CovenantClient {
-  private policy: CovenantPolicyState
+export class NulthClient {
+  private policy: NulthPolicyState
 
-  constructor(private readonly config: CovenantClientConfig) {
+  constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
   }
 
-  get covenantAccount(): string {
-    return this.config.covenantAccount
+  get nulthAccount(): string {
+    return this.config.nulthAccount
   }
 
   get allowlistCommitment(): string {
@@ -42,7 +42,7 @@ export class CovenantClient {
    * Build a ZK proof that the payment satisfies off-chain policy.
    * Called by RouteDock before attaching the auth signature to the tx.
    */
-  buildPaymentAuthProof(context: PaymentAuthContext): CovenantZkProof {
+  buildPaymentAuthProof(context: PaymentAuthContext): NulthProof {
     this.enforcePolicy(context)
 
     const bucket = dayBucket(context.ledgerSequence)
@@ -62,10 +62,10 @@ export class CovenantClient {
       payeeHash,
       context.amountStroops.toString(),
       bucket.toString(),
-      this.config.covenantAccount,
+      this.config.nulthAccount,
     ].join('|')
 
-    const proof: CovenantZkProof = {
+    const proof: NulthProof = {
       version: 1,
       proof: mockGroth16Proof(preimage),
       publicInputs: {
@@ -83,7 +83,7 @@ export class CovenantClient {
   }
 
   /** Encode proof for SorobanAddressCredentials.signature */
-  encodeProof(proof: CovenantZkProof): string {
+  encodeProof(proof: NulthProof): string {
     return encodeAuthSignature(proof)
   }
 
@@ -92,11 +92,11 @@ export class CovenantClient {
       this.policy.expiryLedger !== undefined &&
       context.ledgerSequence > this.policy.expiryLedger
     ) {
-      throw new CovenantPolicyError('session_expired', 'Covenant session expired')
+      throw new NulthPolicyError('session_expired', 'Nulth session expired')
     }
 
     if (!this.policy.allowedPayees.includes(context.payee)) {
-      throw new CovenantPolicyError(
+      throw new NulthPolicyError(
         'payee_not_allowed',
         `Payee ${context.payee} not in off-chain allowlist`,
       )
@@ -107,7 +107,7 @@ export class CovenantClient {
       bucket === this.policy.dayBucket ? this.policy.dailySpendStroops : 0n
     const projected = spend + context.amountStroops
     if (projected > this.policy.dailyCapStroops) {
-      throw new CovenantPolicyError('daily_cap_exceeded', 'Covenant daily cap exceeded')
+      throw new NulthPolicyError('daily_cap_exceeded', 'Nulth daily cap exceeded')
     }
   }
 }

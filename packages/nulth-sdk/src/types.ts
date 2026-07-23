@@ -1,8 +1,8 @@
 /**
- * Off-chain policy state for a Covenant ZK account.
+ * Off-chain policy state for a Nulth ZK account.
  * Allowlist and daily cap live here — never published on-chain.
  */
-export interface CovenantPolicyState {
+export interface NulthPolicyState {
   /** Maximum daily spend in stroops (7-decimal USDC) */
   dailyCapStroops: bigint
   /** SHA-256 commitment to sorted allowlisted payee addresses (hex) */
@@ -34,7 +34,7 @@ export interface PaymentAuthContext {
 }
 
 /** ZK auth proof attached to Soroban __check_auth */
-export interface CovenantZkProof {
+export interface NulthProof {
   version: 1
   /** Groth16-style proof bytes (base64) — verified on-chain, policy stays private */
   proof: string
@@ -50,26 +50,26 @@ export interface CovenantZkProof {
 }
 
 /** Encoded signature payload for SorobanAddressCredentials.signature */
-export interface CovenantAuthSignature {
-  covenant: 'zk-v1'
-  proof: CovenantZkProof
+export interface NulthAuthSignature {
+  nulth: 'zk-v1'
+  proof: NulthProof
 }
 
-export interface CovenantClientConfig {
-  /** Covenant smart account contract address (C...) — the payer */
-  covenantAccount: string
+export interface NulthClientConfig {
+  /** Nulth smart account contract address (C...) — the payer */
+  nulthAccount: string
   /** Off-chain policy state */
-  policy: CovenantPolicyState
-  /** Optional verifier contract deployed alongside the Covenant account */
+  policy: NulthPolicyState
+  /** Optional verifier contract deployed alongside the Nulth account */
   verifierContract?: string
 }
 
-export class CovenantPolicyError extends Error {
+export class NulthPolicyError extends Error {
   readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired'
 
-  constructor(code: CovenantPolicyError['code'], message: string) {
+  constructor(code: NulthPolicyError['code'], message: string) {
     super(message)
-    this.name = 'CovenantPolicyError'
+    this.name = 'NulthPolicyError'
     this.code = code
   }
 }

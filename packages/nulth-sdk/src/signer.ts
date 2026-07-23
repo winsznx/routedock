@@ -9,35 +9,35 @@ import {
   mockGroth16Proof,
   usdcToStroops,
 } from './proof.js'
-import { CovenantClient } from './CovenantClient.js'
-import type { CovenantClientConfig, PaymentAuthContext } from './types.js'
+import { NulthClient } from './NulthClient.js'
+import type { NulthClientConfig, PaymentAuthContext } from './types.js'
 
 /** Compatible with @x402/stellar ClientStellarSigner */
-export interface CovenantStellarSigner {
+export interface NulthStellarSigner {
   address: string
   signAuthEntry: SignAuthEntry
 }
 
-export interface CovenantSignerConfig extends CovenantClientConfig {
+export interface NulthSignerConfig extends NulthClientConfig {
   /** Pending payment context set before x402 signs auth entries */
   paymentContext?: Omit<PaymentAuthContext, 'authEntry'>
 }
 
 /**
- * Create an x402-compatible signer that pays from a Covenant ZK account.
+ * Create an x402-compatible signer that pays from a Nulth ZK account.
  * Proofs are built off-chain; allowlist and cap never leave the agent.
  */
-export function createCovenantSigner(config: CovenantSignerConfig): CovenantStellarSigner {
-  const client = new CovenantClient(config)
-  const covenantAccount = config.covenantAccount
+export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner {
+  const client = new NulthClient(config)
+  const nulthAccount = config.nulthAccount
 
   return {
-    address: covenantAccount,
+    address: nulthAccount,
     signAuthEntry: async (authEntry) => {
       const ctx = config.paymentContext
       if (!ctx) {
         throw new Error(
-          'Covenant paymentContext must be set before signing — call setCovenantPaymentContext()',
+          'Nulth paymentContext must be set before signing — call setNulthPaymentContext()',
         )
       }
 
@@ -48,15 +48,15 @@ export function createCovenantSigner(config: CovenantSignerConfig): CovenantStel
 
       return {
         signedAuthEntry: encodeAuthSignature(proof),
-        signerAddress: covenantAccount,
+        signerAddress: nulthAccount,
       }
     },
   }
 }
 
 /** Bind the next payment's public context before x402 calls signAuthEntry */
-export function setCovenantPaymentContext(
-  config: CovenantSignerConfig,
+export function setNulthPaymentContext(
+  config: NulthSignerConfig,
   context: Omit<PaymentAuthContext, 'authEntry'>,
 ): void {
   config.paymentContext = context
@@ -91,7 +91,7 @@ export function createPolicyState(input: {
   witnessSecret: string
   expiryLedger?: number
   ledgerSequence?: number
-}): import('./types.js').CovenantPolicyState {
+}): import('./types.js').NulthPolicyState {
   const dailyCapStroops = usdcToStroops(input.dailyCapUsdc)
   const witnessSecret = input.witnessSecret
   return {
