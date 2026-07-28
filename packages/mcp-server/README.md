@@ -27,19 +27,23 @@ pnpm build
 
 ## Configuration
 
-Set the following environment variables:
+For security, it is highly recommended to store your secrets in an external `.env` file rather than inline in the Claude Desktop configuration.
+
+Create a `.env` file (e.g., `~/.routedock/.env`):
 
 ```bash
 # Required
-export STELLAR_SECRET="S..."  # Your Stellar secret key
-export STELLAR_NETWORK="testnet"  # or "mainnet"
+STELLAR_SECRET="SDU5..."  # Use a dedicated low-balance testnet key for safety
+STELLAR_NETWORK="testnet"  # or "mainnet"
+ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
 
 # Optional (for session mode)
-export COMMITMENT_SECRET="S..."  # Ed25519 secret for channel commitments
+COMMITMENT_SECRET="S..."  # Ed25519 secret for channel commitments
 
 # Optional (for provider registry)
-export SUPABASE_URL="https://..."
-export SUPABASE_KEY="..."
+SUPABASE_URL="https://..."
+# Note: Use the anon key (anon + public_read_providers RLS is sufficient). Do NOT use the service-role key.
+SUPABASE_KEY="..."
 ```
 
 ## Available Tools
@@ -50,7 +54,7 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
 
 **Parameters:**
 - `url` (required): Full URL of the provider endpoint
-- `max_amount` (optional): Maximum USDC amount to pay
+- `max_amount` (required): Maximum USDC amount to pay
 - `preferred_mode` (optional): Preferred payment mode (`x402`, `mpp-charge`, `mpp-session`)
 
 **Returns:** Payment result with mode, amount, transaction hash, and response data
@@ -99,11 +103,7 @@ Add this to your Claude Desktop config file:
       "command": "node",
       "args": ["/path/to/@routedock/mcp-server/dist/index.js"],
       "env": {
-        "STELLAR_SECRET": "S...",
-        "STELLAR_NETWORK": "testnet",
-        "COMMITMENT_SECRET": "S...",
-        "SUPABASE_URL": "https://...",
-        "SUPABASE_KEY": "..."
+        "ROUTEDOCK_ENV_FILE": "/absolute/path/to/your/.env"
       }
     }
   }
