@@ -7,6 +7,8 @@ import {
   encodeAuthSignature,
   hashPayee,
   mockGroth16Proof,
+  DEFAULT_PROVER,
+  type ProverBackend,
   usdcToStroops,
 } from './proof.js'
 import { NulthClient } from './NulthClient.js'
@@ -112,5 +114,7 @@ export {
   dayBucket,
   hashPayee,
   mockGroth16Proof,
+  DEFAULT_PROVER,
+  ProverBackend,
   usdcToStroops,
 }

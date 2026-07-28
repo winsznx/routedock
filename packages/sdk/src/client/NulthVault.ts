@@ -54,6 +54,7 @@ export interface NulthAuthSignature {
 
 export interface NulthClientConfig {
   nulthAccount: string
+  prover?: 'mock' | 'wasm'
   policy: NulthPolicyState
   verifierContract?: string
 }
@@ -119,10 +120,14 @@ function usdcToStroops(amount: string): bigint {
 
 class NulthClient {
   private policy: NulthPolicyState
+  private readonly prover: 'mock' | 'wasm'
 
   constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
+    this.prover = config.prover ?? "mock"
   }
+
+  get proverBackend(): string { return this.prover }
 
   get nulthAccount(): string { return this.config.nulthAccount }
   get allowlistCommitment(): string { return this.policy.allowlistCommitment }
@@ -260,6 +265,7 @@ export function createPolicyState(input: {
 export interface NulthVaultConfig {
   mode: 'nulth'
   nulthAccount: string
+  prover?: 'mock' | 'wasm'
   witnessSecret: string
   allowedPayees: readonly string[]
   dailyCapUsdc: string
@@ -294,6 +300,13 @@ export async function prepareNulthSigner(
 ): Promise<{ signer: ClientStellarSigner; config: NulthSignerConfig }> {
   assertNulthVaultManifest(manifest, vault.nulthAccount)
 
+  const prover = vault.prover ?? "mock"
+  if (network === "mainnet" && prover === "mock") {
+    throw new RouteDockManifestError(
+      "nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet - set prover to 'wasm' for mainnet deployments"
+    )
+  }
+
   const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network))
   const policy = createPolicyState({
     dailyCapUsdc: vault.dailyCapUsdc,
@@ -305,6 +318,7 @@ export async function prepareNulthSigner(
 
   const config: NulthSignerConfig = {
     nulthAccount: vault.nulthAccount,
+    prover: vault.prover,
     policy,
     ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),
   }

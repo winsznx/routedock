@@ -70,3 +70,23 @@ assert.notEqual(decoded.proof.publicInputs.capCommitment, '1.00')
 assert.notEqual(decoded.proof.publicInputs.allowlistCommitment, PAYEE)
 
 console.log('✓ Nulth ZK vault SDK integration PASSED')
+
+{
+  const vault = {
+    mode: 'nulth' as const,
+    nulthAccount: NULTH,
+    witnessSecret: 'witness',
+    allowedPayees: [PAYEE],
+    dailyCapUsdc: '1.00',
+  }
+
+  const manifest: RouteDockManifest = { ...baseManifest, network: 'mainnet' }
+
+  await assert.rejects(
+    () => prepareNulthSigner(vault, manifest, 'x402', 'mainnet', 100_000),
+    (err: unknown) =>
+      err instanceof RouteDockManifestError &&
+      err.message.includes('MOCK Groth16 prover'),
+  )
+  console.log('✓ mainnet guard rejects mock prover')
+}

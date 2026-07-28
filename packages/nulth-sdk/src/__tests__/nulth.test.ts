@@ -131,3 +131,17 @@ const WITNESS = 'test-witness-secret'
 }
 
 console.log('\nAll nulth-sdk tests passed.')
+
+{
+  const client = new NulthClient({
+    nulthAccount: NULTH_ACCOUNT,
+    prover: 'mock',
+    policy: createPolicyState({
+      dailyCapUsdc: '1.00',
+      allowedPayees: [PAYEE_A],
+      witnessSecret: WITNESS,
+    }),
+  })
+  assert.equal(client.proverBackend, 'mock')
+  console.log('✓ NulthClient stores prover backend')
+}
