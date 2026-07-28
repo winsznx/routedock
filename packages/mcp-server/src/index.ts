@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import { config as loadDotenv } from 'dotenv'
+import fs from 'fs/promises'
+import path from 'path'
+import os from 'os'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
@@ -10,23 +13,64 @@ import { RouteDockClient } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { createClient } from '@supabase/supabase-js'
 
+// Load environment variables (supports .env files for external secret management)
+const envPath = process.env.ROUTEDOCK_ENV_FILE
+if (envPath) {
+  loadDotenv({ path: envPath })
+} else {
+  loadDotenv()
+}
+
 // Environment variables
 const STELLAR_SECRET = process.env.STELLAR_SECRET || process.env.ROUTEDOCK_WALLET_SECRET
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || 'testnet') as 'testnet' | 'mainnet'
 const COMMITMENT_SECRET = process.env.COMMITMENT_SECRET
 const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY
+const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_KEY
+
+if (process.env.SUPABASE_SERVICE_KEY) {
+  console.warn('WARNING: Using SUPABASE_SERVICE_KEY bypasses RLS. Use an anon key for list_providers (anon + public_read_providers RLS is sufficient).')
+}
 
 if (!STELLAR_SECRET) {
   console.error('Error: STELLAR_SECRET or ROUTEDOCK_WALLET_SECRET environment variable is required')
   process.exit(1)
 }
 
+const ROUTEDOCK_DAILY_CAP = process.env.ROUTEDOCK_DAILY_CAP
+if (!ROUTEDOCK_DAILY_CAP) {
+  console.error('Error: ROUTEDOCK_DAILY_CAP environment variable is required to prevent unbounded spending')
+  process.exit(1)
+}
+
+// Simple durable spend store for MCP server
+class FileSpendStore {
+  private filePath: string
+  constructor(filePath: string) {
+    this.filePath = filePath
+  }
+  async read(): Promise<any | null> {
+    try {
+      const data = await fs.readFile(this.filePath, 'utf-8')
+      return JSON.parse(data)
+    } catch (e: any) {
+      return null
+    }
+  }
+  async write(state: any): Promise<void> {
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
+    await fs.writeFile(this.filePath, JSON.stringify(state, null, 2), 'utf-8')
+  }
+}
+
+const spendStorePath = process.env.ROUTEDOCK_SPEND_STORE_PATH || path.join(os.homedir(), '.routedock', 'spend.json')
 // Initialize RouteDock client
 const client = new RouteDockClient({
   wallet: STELLAR_SECRET,
   network: STELLAR_NETWORK,
   commitmentSecret: COMMITMENT_SECRET,
+  spendCap: { daily: ROUTEDOCK_DAILY_CAP, asset: 'USDC' },
+  spendStore: new FileSpendStore(spendStorePath),
 })
 
 // Initialize Supabase client for provider registry
@@ -57,7 +101,7 @@ const TOOLS: Tool[] = [
           description: 'Optional preferred payment mode. If not specified, the best mode is selected automatically.',
         },
       },
-      required: ['url'],
+      required: ['url', 'max_amount'],
     },
   },
   {
@@ -146,25 +190,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'pay_for_data': {
         const { url, max_amount, preferred_mode } = args as {
           url: string
-          max_amount?: string
+          max_amount: string
           preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session'
         }
 
-        // Fetch manifest first to check pricing
-        const baseUrl = new URL(url).origin
-        const horizonUrl = STELLAR_NETWORK === 'mainnet' 
-          ? 'https://horizon.stellar.org' 
-          : 'https://horizon-testnet.stellar.org'
+        // Use estimateCost to validate price for the exact selected mode
+        const estimate = await client.estimateCost(url, { preferredMode: preferred_mode })
         
-        // Check if max_amount is specified and validate against pricing
-        if (max_amount) {
-          const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
-          const manifest = await manifestResponse.json()
-          
-          const pricing = manifest.pricing[preferred_mode || 'x402'] || manifest.pricing['x402']
-          if (pricing && parseFloat(pricing.amount) > parseFloat(max_amount)) {
-            throw new Error(`Provider cost ${pricing.amount} exceeds max_amount ${max_amount}`)
-          }
+        if (estimate.amount === undefined || isNaN(parseFloat(estimate.amount))) {
+          throw new Error('Provider returned an undefined or invalid price')
+        }
+
+        if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
+          throw new Error(`Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`)
         }
 
         const result = await client.pay(url, { preferredMode: preferred_mode })
