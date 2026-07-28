@@ -126,7 +126,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
       // Idempotency: a retry of an already-settled payment replays the cached
       // settlement response instead of settling (and billing) a second time.
-      const idempotencyKey = paymentIdempotencyKey((name) => {
+      const idempotencyKey = await paymentIdempotencyKey((name) => {
         const v = req.headers[name.toLowerCase()]
         return Array.isArray(v) ? v[0] : (v as string | undefined)
       })

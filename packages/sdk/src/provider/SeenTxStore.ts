@@ -57,20 +57,24 @@ export class InMemorySeenTxStore implements SeenTxStore {
 }
 
 /**
- * Stable, runtime-agnostic 32-bit FNV-1a hash, returned as 8 hex chars.
- * Pure JS (no `Buffer`/`crypto`) so it is safe on edge runtimes.
+ * Cryptographic SHA-256 digest of `input`, returned as 64 hex chars.
+ * Uses the Web Crypto API (`crypto.subtle.digest`) which is available
+ * on all modern runtimes including Cloudflare Workers, Deno, Bun, and
+ * Node.js — no `Buffer` or Node `crypto` module needed.
  */
-export function hashString(input: string): string {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
+async function sha256Hex(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input)
+  const digest = await crypto.subtle.digest('SHA-256', buf)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 /**
- * Derive an idempotency key from the inbound payment-bearing headers.
+ * Derive a collision-resistant idempotency key from the inbound
+ * payment-bearing headers. Uses SHA-256 instead of 32-bit FNV-1a
+ * (which has a 2^32 keyspace — birthday collisions become likely
+ * well before the 10_000-entry default store is full).
  *
  * x402 clients send the signed payment in `payment-signature` / `x-payment`;
  * mppx clients send it in `authorization` (the `Payment` scheme). A retry
@@ -78,13 +82,13 @@ export function hashString(input: string): string {
  * stable key. Returns `null` when no payment header is present (nothing to
  * dedupe — e.g. the initial 402 challenge request).
  */
-export function paymentIdempotencyKey(
+export async function paymentIdempotencyKey(
   getHeader: (name: string) => string | undefined,
-): string | null {
+): Promise<string | null> {
   const material =
     getHeader('payment-signature') ??
     getHeader('x-payment') ??
     getHeader('authorization')
   if (!material) return null
-  return hashString(material)
+  return sha256Hex(material)
 }

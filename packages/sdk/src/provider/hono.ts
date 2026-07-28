@@ -137,7 +137,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 
       // Idempotency: a retry of an already-settled payment replays the cached
       // settlement response instead of settling (and billing) a second time.
-      const idempotencyKey = paymentIdempotencyKey((name) => c.req.header(name))
+      const idempotencyKey = await paymentIdempotencyKey((name) => c.req.header(name))
       if (idempotencyKey) {
         const cached = await seenTxStore.get(idempotencyKey)
         if (cached) {
@@ -276,7 +276,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
       // Idempotency: a retry of an already-settled charge replays the cached
       // receipt headers instead of settling (and billing) a second time.
-      const idempotencyKey = paymentIdempotencyKey((name) => c.req.header(name))
+       const idempotencyKey = await paymentIdempotencyKey((name) => c.req.header(name))
       if (idempotencyKey) {
         const cached = await seenTxStore.get(idempotencyKey)
         if (cached) {
