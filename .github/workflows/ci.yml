@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        # Pinned: Rust 1.97 rejects a transmute in the transitive ethnum crate
+        # (E0512). 1.94.x compiles the soroban-sdk deps cleanly.
+        uses: dtolnay/rust-toolchain@1.94.1
+      - name: Run contract tests
+        run: cargo test --manifest-path contracts/agent-vault/Cargo.toml
+
+  sdk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build nulth-sdk (required by sdk at runtime)
+        run: pnpm --filter @routedock/nulth-sdk build
+      - name: Run SDK tests
+        run: pnpm --filter @routedock/routedock test
+
+  app-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build nulth-sdk first (workspace dependency)
+        run: pnpm --filter @routedock/nulth-sdk build
+      - name: Build sdk (depends on nulth-sdk types)
+        run: pnpm --filter @routedock/routedock build
+      - name: Build remaining packages
+        run: pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build

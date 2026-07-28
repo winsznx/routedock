@@ -1,0 +1,6 @@
+{
+  "changelog": "@changesets/changelog-github",
+  "commit": "@changesets/commit",
+  "fixedVersions": "none",
+  "stableVersions": "none"
+}
