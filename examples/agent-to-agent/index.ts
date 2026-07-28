@@ -59,15 +59,13 @@ function buildSpecialistServer(specialistSecret: string): Hono {
                 facilitator: 'https://channels.openzeppelin.com/x402',
             },
         },
-        endpoints: { summarise: 'POST /summarise' },
+        endpoints: { summarise: { method: 'POST', path: '/summarise' } },
         tags: ['summarise', 'nlp', 'text'],
     }
 
     const app = new Hono()
 
-    app.use(
-        '/summarise',
-        routedockHono({
+    app.use(routedockHono({
             modes: ['x402'],
             pricing: { x402: manifest.pricing.x402!.amount },
             asset: manifest.asset,

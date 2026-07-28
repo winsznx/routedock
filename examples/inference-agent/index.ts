@@ -57,7 +57,7 @@ const MANIFEST: RouteDockManifest = {
     pricing: {
         'mpp-charge': { amount: '0.0005', per: 'request' },
     },
-    endpoints: { infer: 'POST /infer' },
+    endpoints: { infer: { method: 'POST', path: '/infer' } },
     tags: ['inference', 'llm', 'ai'],
 }
 
@@ -71,9 +71,7 @@ const CANNED_RESPONSES: Record<string, string> = {
 function buildMockServer(): Hono {
     const app = new Hono()
 
-    app.use(
-        '/infer',
-        routedockHono({
+    app.use(routedockHono({
             modes: ['mpp-charge'],
             pricing: { 'mpp-charge': MANIFEST.pricing['mpp-charge']!.amount },
             asset: MANIFEST.asset,
