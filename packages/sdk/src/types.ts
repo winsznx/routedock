@@ -292,6 +292,7 @@ export interface SessionState {
 export {
   RouteDockError,
   RouteDockManifestError,
+  RouteDockTrustlineError,
   RouteDockNoSupportedModeError,
   RouteDockClientVersionError,
   RouteDockFacilitatorError,

@@ -19,7 +19,7 @@
 import { writeFileSync } from 'node:fs'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Horizon } from '@stellar/stellar-sdk'
-import { RouteDockClient, RouteDockPolicyRejectedError } from '@routedock/routedock'
+import { RouteDockClient, RouteDockPolicyRejectedError, RouteDockTrustlineError } from '@routedock/routedock'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -68,16 +68,23 @@ async function main(): Promise<void> {
     commitmentSecret: COMMITMENT_SECRET || undefined,
   })
 
-  // Fetch USDC balance from Horizon
+  // Fetch USDC balance from Horizon — also serves as an early trustline check
   const horizonServer = new Horizon.Server(HORIZON_URL)
   let startingBalance = '0'
+  let trustlineFound = false
   try {
     const account = await horizonServer.loadAccount(agentAddress)
     const usdcBalance = account.balances.find(
       (b) => 'asset_code' in b && b.asset_code === 'USDC',
     )
-    startingBalance = usdcBalance ? usdcBalance.balance : '0'
-  } catch {
+    if (usdcBalance) {
+      startingBalance = usdcBalance.balance
+      trustlineFound = true
+    } else {
+      log('Init', 'WARNING: No USDC trustline found — first payment will fail with RouteDockTrustlineError')
+      log('Init', '  Create one: stellar tx new --source <SECRET_KEY> --network mainnet change-trust --asset USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN --limit 100000')
+    }
+  } catch (err) {
     log('Init', 'Warning: could not fetch balance from Horizon — continuing')
   }
 
@@ -253,6 +260,13 @@ function buildSummary(
 }
 
 main().catch((err: unknown) => {
-  console.error('[Agent] Fatal error:', err)
+  if (err instanceof RouteDockTrustlineError) {
+    console.error(`\n[Agent] Fatal: ${err.message}`)
+    console.error(`[Agent]   Asset: ${err.asset}`)
+    console.error(`[Agent]   Issuer: ${err.issuer}`)
+    console.error(`[Agent]   Remediation: ${err.remediation}\n`)
+  } else {
+    console.error('[Agent] Fatal error:', err)
+  }
   process.exit(1)
 })

@@ -1,11 +1,11 @@
-import { Keypair } from '@stellar/stellar-sdk'
+import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { fetchManifest, selectMode, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult } from '../types.js'
-import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
+import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 
@@ -91,7 +91,33 @@ function usdcToMicros(decimal: string): bigint {
   return BigInt(whole) * 10_000_000n + BigInt(paddedFraction)
 }
 
+/**
+ * Well-known Stellar asset issuers, keyed by asset code then network.
+ * Used by the trustline preflight to produce exact remediation commands.
+ */
+const ASSET_ISSUERS: Record<string, Record<string, string>> = {
+  USDC: {
+    testnet: 'GBQY2K7IZDSK5QN3OF6ZSOLQ6CWAH5Q5JXEG5Q3S4OD5B7LYO24B6B6L',
+    mainnet: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  },
+}
+
+function getAssetIssuer(asset: string, network: string): string {
+  return ASSET_ISSUERS[asset]?.[network] ?? ''
+}
+
+/** Trustline cache TTL — 5 minutes, since trustlines are rarely added at runtime. */
+const TRUSTLINE_CACHE_TTL_MS = 300_000
+
+interface TrustlineCacheEntry {
+  exists: true
+  expiresAt: number
+}
+
 export class RouteDockClient {
+  /** Per-(account,asset) trustline existence cache keyed by `${network}:${pubkey}:${asset}` */
+  private static _trustlineCache = new Map<string, TrustlineCacheEntry>()
+
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
   private readonly spendCap: SpendCap | undefined
@@ -149,13 +175,74 @@ export class RouteDockClient {
   }
 
   /**
+   * Check that the payer has a trustline for the payment asset. Safe to
+   * call before committing to a payment — for approval gates and manual
+   * trustline remediation.
+   */
+  async preflight(manifest: RouteDockManifest): Promise<void> {
+    await this._checkTrustline(manifest)
+  }
+
+  /**
+   * Verify via Horizon that the payer account has a trustline for the
+   * payment asset declared in the manifest. Throws RouteDockTrustlineError
+   * with an exact Stellar CLI change-trust remediation command when the
+   * trustline is missing. Results are cached per (account, asset) so the
+   * per-payment overhead is one RPC call amortized to zero after the first.
+   */
+  private async _checkTrustline(
+    manifest: RouteDockManifest,
+  ): Promise<void> {
+    const cacheKey = `${this.network}:${this.keypair.publicKey()}:${manifest.asset}`
+    const cached = RouteDockClient._trustlineCache.get(cacheKey)
+    if (cached && Date.now() < cached.expiresAt) return
+
+    const horizonUrl =
+      this.network === 'testnet'
+        ? 'https://horizon-testnet.stellar.org'
+        : 'https://horizon.stellar.org'
+
+    const server = new Horizon.Server(horizonUrl)
+    try {
+      const account = await server.loadAccount(this.keypair.publicKey())
+      const balances = account.balances as unknown[]
+      const hasTrustline = balances.some(
+        (b) =>
+          typeof b === 'object' &&
+          b !== null &&
+          'asset_code' in b &&
+          (b as Record<string, unknown>).asset_code === manifest.asset,
+      )
+      if (!hasTrustline) {
+        const issuer = getAssetIssuer(manifest.asset, this.network)
+        const remediation = issuer
+          ? `Run: stellar tx new --source ${this.keypair.publicKey()} --network ${this.network} change-trust --asset ${manifest.asset}:${issuer} --limit 100000`
+          : `Establish a trustline for ${manifest.asset} with the appropriate issuer on ${this.network}`
+        throw new RouteDockTrustlineError(manifest.asset, issuer || 'unknown', remediation)
+      }
+      RouteDockClient._trustlineCache.set(cacheKey, {
+        exists: true,
+        expiresAt: Date.now() + TRUSTLINE_CACHE_TTL_MS,
+      })
+    } catch (err) {
+      if (err instanceof RouteDockTrustlineError) throw err
+      this.logger?.(
+        `[RouteDock] Trustline preflight: could not verify trustline for ${manifest.asset} — continuing`,
+      )
+    }
+  }
+
+  /**
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
    * checks local spend cap, executes payment, returns result.
+   * Runs trustline preflight before submitting any on-chain transaction.
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
+
+    await this._checkTrustline(manifest)
 
     if (this.vault?.mode === 'nulth') {
       return this._payWithNulthVault(url, manifest, mode)
