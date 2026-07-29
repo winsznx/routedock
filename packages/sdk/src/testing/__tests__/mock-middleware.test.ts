@@ -69,7 +69,7 @@ describe('runMockSettlement', () => {
       mode: 'mpp-session',
       synthetic: { rate: '0.0001', voucherCount: 3, channelId: 'CHAN' },
       onSessionOpen: (id) => { events.push(`open:${id}`) },
-      onVoucher: (i, cum) => { vouchers.push([i, cum]) },
+      onVoucher: (_id, i, cum) => { vouchers.push([i, cum]) },
       onSettled: (_t, total, mode) => { events.push(`settled:${total}:${mode}`) },
     })
     assert.deepEqual(events, ['open:CHAN', 'settled:0.0003000:mpp-session'])

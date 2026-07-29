@@ -27,12 +27,12 @@ function manifest(): RouteDockManifest {
       'mpp-session': {
         rate: '0.0001',
         per: 'voucher',
-        channel_contract: 'CTEST_CHANNEL_CONTRACT',
+        channel_factory: 'CTEST_CHANNEL_CONTRACT',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17_280,
       },
     },
-    endpoints: { stream: 'GET /stream' },
+    endpoints: { stream: { method: 'GET', path: '/stream' } },
     tags: ['test'],
   }
 }

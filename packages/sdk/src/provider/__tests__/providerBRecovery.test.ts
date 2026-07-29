@@ -30,7 +30,7 @@ describe('Provider-B Session Recovery Pipeline', () => {
 
   it('successfully recovers an orphaned closing session written by provider-b', async () => {
     // Simulate session row written by provider-b with stroop cumulative_amount, last_signature, and status: closing
-    const providerBSessions = [
+    const providerBSessions: any[] = [
       {
         channel_id: channelId,
         payee: payeeKp.publicKey(),
@@ -66,7 +66,7 @@ describe('Provider-B Session Recovery Pipeline', () => {
   })
 
   it('recovers legacy decimal cumulative_amount rows gracefully', async () => {
-    const legacyDecimalSession = [
+    const legacyDecimalSession: any[] = [
       {
         channel_id: channelId,
         payee: payeeKp.publicKey(),

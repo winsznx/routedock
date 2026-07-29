@@ -85,9 +85,11 @@ function startTestServer(
 
     const costAwareManifest = {
       ...validManifest,
+      network: 'testnet' as const,
+      modes: ['x402' as const, 'mpp-charge' as const],
       pricing: {
-        x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
-        'mpp-charge': { amount: '0.005', per: 'request' },
+        x402: { amount: '0.001', per: 'request' as const, facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+        'mpp-charge': { amount: '0.005', per: 'request' as const },
       },
     }
 
@@ -152,7 +154,7 @@ function startTestServer(
     const manifest = await fetchManifest(server.url)
     assert.equal(
       manifest.pricing['mpp-session']?.channel_factory,
-      signedFactoryManifest.pricing['mpp-session'].channel_factory,
+      signedFactoryManifest.pricing['mpp-session']?.channel_factory,
       'manifest should preserve channel_factory in mpp-session pricing',
     )
     console.log('✓ Test 2: channel_factory manifest acceptance PASSED')

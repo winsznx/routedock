@@ -91,7 +91,7 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   assert.strictEqual(fetchCallCount, 1, 'with concurrency:1, only 1 fetch should be in flight after first next()')
 
   // Resolve the first fetch — the generator should yield and pause.
-  pendingFetches[0].resolve({ seq: 1 })
+  pendingFetches[0]!.resolve({ seq: 1 })
   const { value: v1 } = await firstNext
   assert.deepStrictEqual(v1, { seq: 1 }, 'yielded value should be the resolved fetch body')
 
@@ -100,7 +100,7 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   await Promise.resolve()
   assert.strictEqual(fetchCallCount, 2, 'second fetch issued only after first was ACKed')
 
-  pendingFetches[1].resolve({ seq: 2 })
+  pendingFetches[1]!.resolve({ seq: 2 })
   const { value: v2 } = await secondNext
   assert.deepStrictEqual(v2, { seq: 2 })
 
@@ -130,8 +130,8 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   assert.strictEqual(fetchCallCount, 2, 'concurrency:2 should have 2 fetches in flight before first yield')
 
   // Resolve both.
-  pendingFetches[0].resolve({ seq: 1 })
-  pendingFetches[1].resolve({ seq: 2 })
+  pendingFetches[0]!.resolve({ seq: 1 })
+  pendingFetches[1]!.resolve({ seq: 2 })
 
   const { value: v1 } = await firstNext
   assert.deepStrictEqual(v1, { seq: 1 }, 'first yielded value must be from the first issued request (order preserved)')
@@ -163,8 +163,8 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   await Promise.resolve()
 
   // Resolve in REVERSE order — second resolves before first.
-  pendingFetches[1].resolve({ seq: 2 })
-  pendingFetches[0].resolve({ seq: 1 })
+  pendingFetches[1]!.resolve({ seq: 2 })
+  pendingFetches[0]!.resolve({ seq: 1 })
 
   const { value: v1 } = await firstNext
   // Must yield seq:1 (issue order), not seq:2 (resolution order).
@@ -193,7 +193,7 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   await Promise.resolve()
 
   assert.strictEqual(fetchCallCount, 1, 'empty options object should default to concurrency:1')
-  pendingFetches[0].resolve({})
+  pendingFetches[0]!.resolve({})
 
   console.log('✓ Test 5: empty StreamOptions defaults to concurrency:1')
 }
@@ -218,7 +218,7 @@ function buildMockStream(fetchFn: () => Promise<unknown>) {
   await Promise.resolve()
 
   assert.strictEqual(fetchCallCount, 1, 'concurrency:0 should be clamped to 1')
-  pendingFetches[0].resolve({})
+  pendingFetches[0]!.resolve({})
 
   console.log('✓ Test 6: concurrency:0 clamped to 1, still sequential')
 }
