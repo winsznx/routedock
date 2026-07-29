@@ -150,24 +150,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session'
         }
 
-        // Fetch manifest first to check pricing
-        const baseUrl = new URL(url).origin
-        const horizonUrl = STELLAR_NETWORK === 'mainnet' 
-          ? 'https://horizon.stellar.org' 
-          : 'https://horizon-testnet.stellar.org'
-        
-        // Check if max_amount is specified and validate against pricing
+        const modeOptions = preferred_mode
+          ? { forceMode: preferred_mode }
+          : undefined
+
+        // Resolve and validate the provider manifest through the SDK before paying.
         if (max_amount) {
-          const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
-          const manifest = await manifestResponse.json()
-          
-          const pricing = manifest.pricing[preferred_mode || 'x402'] || manifest.pricing['x402']
-          if (pricing && parseFloat(pricing.amount) > parseFloat(max_amount)) {
-            throw new Error(`Provider cost ${pricing.amount} exceeds max_amount ${max_amount}`)
+          const estimate = await client.estimateCost(url, modeOptions)
+
+          if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
+            throw new Error(
+              `Provider cost ${estimate.amount} exceeds max_amount ${max_amount}`,
+            )
           }
         }
 
-        const result = await client.pay(url, { preferredMode: preferred_mode })
+        const result = await client.pay(url, modeOptions)
         
         return {
           content: [

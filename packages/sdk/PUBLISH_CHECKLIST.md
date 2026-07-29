@@ -1,70 +1,44 @@
-# @routedock/sdk Publish Checklist
+# RouteDock npm Release Checklist
 
-Complete every step in order. Do not skip.
+This repository publishes:
 
-## Pre-publish
+- `@routedock/nulth-sdk`
+- `@routedock/routedock`
+- `@routedock/mcp-server`
 
-- [ ] **1. Build dist/**
-  ```bash
-  cd packages/sdk
-  pnpm build
-  ```
-  Verify: `dist/index.js`, `dist/index.cjs`, `dist/client.js`, `dist/client.cjs`, `dist/provider.js`, `dist/provider.cjs`, and all `.d.ts` files exist.
+Changesets owns versioning and publication. Do not manually edit package versions or run `npm publish` from a contributor branch.
 
-- [ ] **2. Typecheck**
-  ```bash
-  pnpm typecheck
-  ```
-  Must exit with 0 errors.
+## Contributor checks
 
-- [ ] **3. Smoke tests**
-  ```bash
-  pnpm test
-  ```
-  All 4 smoke tests must pass.
+```bash
+pnpm exec changeset status
+pnpm run release:build
+pnpm --filter @routedock/nulth-sdk test
+pnpm --filter @routedock/nulth-sdk typecheck
+pnpm --filter @routedock/routedock test
+pnpm --filter @routedock/routedock typecheck
+pnpm --filter @routedock/mcp-server typecheck
+(cd packages/nulth-sdk && npm pack --dry-run)
+(cd packages/sdk && npm pack --dry-run)
+(cd packages/mcp-server && npm pack --dry-run)
+```
 
-- [ ] **4. Confirm no secrets in pack**
-  ```bash
-  npm pack --dry-run
-  ```
-  Scan the file list: no `.env`, no `*.pem`, no files containing `SECRET` in the name.
+Confirm that every archive contains the `dist` entrypoints declared in its `package.json` and contains no secrets.
 
-- [ ] **5. Update `repository.url`**
-  In `packages/sdk/package.json`, replace `YOUR_ORG` with the actual GitHub org/user.
+## Automated release
 
-## Publish
+1. Merge the PR containing the changeset.
+2. The `Release` workflow opens or updates the Changesets version PR.
+3. Review the generated versions and changelogs. For this repair, all three packages should resolve to `0.2.0`.
+4. A maintainer confirms that `NPM_TOKEN` can publish the `@routedock` scope.
+5. Merge the Changesets version PR. The workflow builds all publishable packages and runs `changeset publish` with public access.
 
-- [ ] **6. Login to npm**
-  ```bash
-  npm login
-  ```
-  Verify you are logged in as the correct user: `npm whoami`
+## Post-publish verification
 
-- [ ] **7. Publish**
-  ```bash
-  cd packages/sdk
-  pnpm publish --access public
-  ```
-  The `--access public` flag is required for scoped packages (`@routedock/sdk`) to be publicly accessible.
+```bash
+npm view @routedock/nulth-sdk version
+npm view @routedock/routedock version
+npm view @routedock/mcp-server version
+```
 
-## Post-publish Verification
-
-- [ ] **8. Verify on npm registry**
-  ```bash
-  npm show @routedock/sdk
-  ```
-  Confirms: version 0.1.0, correct description, MIT license.
-
-- [ ] **9. Test install in a clean directory**
-  ```bash
-  mkdir /tmp/test-install && cd /tmp/test-install
-  npm init -y
-  npm install @routedock/sdk
-  node -e "const { RouteDockClient } = require('@routedock/sdk'); console.log('ok')"
-  ```
-
-- [ ] **10. Add npm badge to README.md**
-  Once published, update the root README with the live npm badge:
-  ```markdown
-  ![npm](https://img.shields.io/npm/v/@routedock/sdk)
-  ```
+All three commands should return `0.2.0` for this release.
