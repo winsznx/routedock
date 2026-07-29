@@ -73,7 +73,9 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
-      - name: Build nulth-sdk first (required by downstream typechecks)
-        run: pnpm --filter @routedock/nulth-sdk build
+      - name: Build SDK packages first (required by downstream typechecks)
+        run: |
+          pnpm --filter @routedock/nulth-sdk build
+          pnpm --filter @routedock/routedock build
       - name: Typecheck all packages
         run: pnpm -r typecheck
