@@ -1682,6 +1682,7 @@ mod tests {
 // ---------------------------------------------------------------------------
 #[cfg(all(test, feature = "testutils"))]
 mod prop_tests {
+    use std::vec::Vec;
     use proptest::prelude::*;
 
     /// Helper: clamp a sequence of withdrawals to never exceed the cap, and
