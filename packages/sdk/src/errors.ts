@@ -2,6 +2,7 @@
 export type RouteDockErrorCode =
   | 'MANIFEST'
   | 'MANIFEST_TIMEOUT'
+  | 'MANIFEST_SUNSET'
   | 'NO_SUPPORTED_MODE'
   | 'FACILITATOR'
   | 'NETWORK'
@@ -54,6 +55,14 @@ export class RouteDockManifestTimeoutError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'MANIFEST_TIMEOUT', true, options)
     this.name = 'RouteDockManifestTimeoutError'
+  }
+}
+
+/** The provider's signed manifest has reached its declared sunset timestamp. */
+export class RouteDockManifestSunsetError extends RouteDockError {
+  constructor(message: string, options: RouteDockErrorOptions = {}) {
+    super(message, 'MANIFEST_SUNSET', false, options)
+    this.name = 'RouteDockManifestSunsetError'
   }
 }
 

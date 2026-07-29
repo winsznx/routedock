@@ -61,6 +61,10 @@ export interface SLAConfig {
 export interface EndpointDescriptor {
   method: string
   path: string
+  /** Whether this endpoint is retained only for backwards compatibility. */
+  deprecated?: boolean
+  /** ISO 8601 timestamp after which callers should stop using this endpoint. */
+  sunset_at?: string
   headers?: Record<string, string>
   request_schema?: unknown
   response_schema?: unknown

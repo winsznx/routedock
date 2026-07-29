@@ -295,6 +295,15 @@
           "type": "string",
           "description": "Path for the endpoint"
         },
+        "deprecated": {
+          "type": "boolean",
+          "description": "Whether this endpoint is retained only for backwards compatibility"
+        },
+        "sunset_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp after which callers should stop using this endpoint"
+        },
         "headers": {
           "type": "object",
           "additionalProperties": {

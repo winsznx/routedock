@@ -5,6 +5,7 @@ import {
   RouteDockError,
   RouteDockManifestError,
   RouteDockManifestTimeoutError,
+  RouteDockManifestSunsetError,
   RouteDockNoSupportedModeError,
   RouteDockClientVersionError,
   httpStatusToError,
@@ -37,6 +38,24 @@ function assertClientVersionSupported(manifest: RouteDockManifest, baseUrl: stri
   if (minVersion && isVersionBelow(SDK_VERSION, minVersion)) {
     throw new RouteDockClientVersionError(
       `SDK version ${SDK_VERSION} is below the minimum required version ${minVersion} for provider at ${baseUrl}. Please upgrade the SDK.`,
+    )
+  }
+}
+
+function assertManifestActive(manifest: RouteDockManifest, baseUrl: string): void {
+  const sunsetAt = manifest.sunset_at
+  if (!sunsetAt) return
+
+  const sunsetTime = Date.parse(sunsetAt)
+  if (!Number.isFinite(sunsetTime)) {
+    throw new RouteDockManifestError(
+      `Manifest at ${baseUrl} contains an invalid sunset_at timestamp: ${sunsetAt}`,
+    )
+  }
+
+  if (sunsetTime <= Date.now()) {
+    throw new RouteDockManifestSunsetError(
+      `Manifest for provider at ${baseUrl} sunset at ${sunsetAt} and can no longer be used`,
     )
   }
 }
@@ -131,6 +150,7 @@ export async function fetchManifest(
   const cached = manifestCache.get(baseUrl)
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     assertClientVersionSupported(cached.manifest, baseUrl)
+    assertManifestActive(cached.manifest, baseUrl)
     return cached.manifest
   }
 
@@ -172,40 +192,24 @@ export async function fetchManifest(
     const manifest = raw as unknown as RouteDockManifest
     verifyManifestSignature(manifest)
     assertClientVersionSupported(manifest, baseUrl)
+    assertManifestActive(manifest, baseUrl)
     manifestCache.set(baseUrl, { manifest, fetchedAt: Date.now() })
     return manifest
   }, retryPolicy)
 }
 
-/**
- * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
- *
- * By default, a provider that supports mpp-charge is preferred over x402.
- * If { optimize: 'cost' } is provided, the supported per-request mode with the
- * lowest declared amount is selected instead, optionally respecting a
- * budget_per_request cap.
- */
-export function selectMode(
+interface ModeSelection {
+  mode: PaymentMode
+  reason?: 'cost-optimized'
+}
+
+function selectFromModes(
+  modes: PaymentMode[],
   manifest: RouteDockManifest,
-  options: ModeSelectOptions = {},
-): PaymentMode {
-  const modes = manifest.modes
-  const log = options.logger ?? (() => {})
-
-  if (options.forceMode) {
-    if (!modes.includes(options.forceMode)) {
-      throw new RouteDockNoSupportedModeError(
-        `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
-      )
-    }
-    log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
-    return options.forceMode
-  }
-
+  options: ModeSelectOptions,
+): ModeSelection | undefined {
   if ((options.sustained || options.session) && modes.includes('mpp-session')) {
-    const mode: PaymentMode = 'mpp-session'
-    log(`[RouteDock] ${manifest.name} → ${mode}`)
-    return mode
+    return { mode: 'mpp-session' }
   }
 
   if (options.optimize === 'cost') {
@@ -232,22 +236,77 @@ export function selectMode(
 
       const cheapestCandidate = [...affordableCandidates].sort((a, b) => a.amount - b.amount)[0]
       if (cheapestCandidate) {
-        log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
-        return cheapestCandidate.mode
+        return { mode: cheapestCandidate.mode, reason: 'cost-optimized' }
       }
     }
   }
 
-  if (modes.includes('mpp-charge')) {
-    const mode: PaymentMode = 'mpp-charge'
-    log(`[RouteDock] ${manifest.name} → ${mode}`)
-    return mode
+  if (modes.includes('mpp-charge')) return { mode: 'mpp-charge' }
+  if (modes.includes('x402')) return { mode: 'x402' }
+  return undefined
+}
+
+function logSelection(
+  manifest: RouteDockManifest,
+  selection: ModeSelection,
+  log: RouteDockLogger,
+  deprecated: boolean,
+): void {
+  const reason = selection.reason ? ` (${selection.reason})` : ''
+  if (deprecated) {
+    log(
+      `[RouteDock] WARNING: ${manifest.name} → ${selection.mode}${reason}; selected deprecated mode because no active supported mode is available`,
+    )
+    return
+  }
+  log(`[RouteDock] ${manifest.name} → ${selection.mode}${reason}`)
+}
+
+/**
+ * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
+ *
+ * Active modes are always considered before modes listed in `deprecated_modes`.
+ * Deprecated modes remain usable as a compatibility fallback and produce a
+ * logger warning when selected. An explicit forceMode remains authoritative,
+ * but also warns when the forced mode is deprecated.
+ */
+export function selectMode(
+  manifest: RouteDockManifest,
+  options: ModeSelectOptions = {},
+): PaymentMode {
+  const modes = manifest.modes
+  const log = options.logger ?? (() => {})
+  const deprecatedSet = new Set(manifest.deprecated_modes ?? [])
+
+  if (options.forceMode) {
+    if (!modes.includes(options.forceMode)) {
+      throw new RouteDockNoSupportedModeError(
+        `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
+      )
+    }
+    if (deprecatedSet.has(options.forceMode)) {
+      log(
+        `[RouteDock] WARNING: ${manifest.name} → ${options.forceMode} (forced); selected mode is deprecated`,
+      )
+    } else {
+      log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
+    }
+    return options.forceMode
   }
 
-  if (modes.includes('x402')) {
-    const mode: PaymentMode = 'x402'
-    log(`[RouteDock] ${manifest.name} → ${mode}`)
-    return mode
+  const activeModes = modes.filter((mode) => !deprecatedSet.has(mode))
+  const deprecatedModes = modes.filter((mode) => deprecatedSet.has(mode))
+
+  const activeSelection = selectFromModes(activeModes, manifest, options)
+  if (activeSelection) {
+    logSelection(manifest, activeSelection, log, false)
+    return activeSelection.mode
+  }
+
+  const deprecatedSelection = selectFromModes(deprecatedModes, manifest, options)
+  if (deprecatedSelection) {
+    logSelection(manifest, deprecatedSelection, log, true)
+    return deprecatedSelection.mode
   }
 
   throw new RouteDockNoSupportedModeError(
