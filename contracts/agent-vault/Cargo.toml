@@ -9,10 +9,14 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk = { version = "22.0.10" }
 
+[features]
+testutils = ["proptest"]
+
 [dev-dependencies]
 soroban-sdk = { version = "22.0.10", features = ["testutils"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
+proptest = { version = "1.4", optional = true }
 
 [profile.release]
 opt-level = "z"

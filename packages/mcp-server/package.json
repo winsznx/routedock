@@ -18,6 +18,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/__tests__/handlers.test.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
@@ -27,8 +28,10 @@
     "@supabase/supabase-js": "^2.47.0"
   },
   "devDependencies": {
+    "@routedock/routedock": "workspace:*",
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
+    "tsx": "^4.22.3",
     "typescript": "^5.4.5"
   }
 }

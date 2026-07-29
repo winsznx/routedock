@@ -10,7 +10,6 @@
  */
 
 import { Keypair } from '@stellar/stellar-sdk'
-import { close as channelClose } from '@stellar/mpp/channel/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type Network = 'testnet' | 'mainnet'
@@ -20,11 +19,21 @@ const MPP_NETWORK: Record<Network, 'stellar:testnet' | 'stellar:pubnet'> = {
   mainnet: 'stellar:pubnet',
 }
 
+type ChannelCloseFn = (args: {
+  channel: string
+  amount: bigint
+  signature: Buffer
+  feePayer: { envelopeSigner: Keypair }
+  network: string
+}) => Promise<string>
+
 export interface SessionReconcilerOptions {
   supabase: SupabaseClient
   network: Network
   payeeSecretKey: string
   onRecovered?: (channelId: string, txHash: string, totalPaid: string) => Promise<void>
+  /** Injectable for testing. Defaults to @stellar/mpp/channel/server close() */
+  channelClose?: ChannelCloseFn
 }
 
 export interface ReconciliationStats {
@@ -87,7 +96,11 @@ export async function reconcileAbandonedSessions(
         const closeSig = Buffer.from(last_signature, 'hex')
 
         // Broadcast channel close transaction
-        const closeTxHash = await channelClose({
+        const closeFn: ChannelCloseFn =
+          opts.channelClose ??
+          (await import('@stellar/mpp/channel/server')).close
+
+        const closeTxHash = await closeFn({
           channel: channelId,
           amount: closeAmount,
           signature: closeSig,

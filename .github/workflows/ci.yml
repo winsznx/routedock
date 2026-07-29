@@ -17,6 +17,8 @@ jobs:
         uses: dtolnay/rust-toolchain@1.94.1
       - name: Run contract tests
         run: cargo test --manifest-path contracts/agent-vault/Cargo.toml
+      - name: Run contract proptest invariants
+        run: cargo test --manifest-path contracts/agent-vault/Cargo.toml --features testutils
 
   sdk-tests:
     runs-on: ubuntu-latest
@@ -35,6 +37,8 @@ jobs:
         run: pnpm --filter @routedock/nulth-sdk build
       - name: Run SDK tests
         run: pnpm --filter @routedock/routedock test
+      - name: Run MCP server tests
+        run: pnpm --filter @routedock/mcp-server test
 
   app-build:
     runs-on: ubuntu-latest
@@ -55,3 +59,21 @@ jobs:
         run: pnpm --filter @routedock/routedock build
       - name: Build remaining packages
         run: pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build nulth-sdk first (required by downstream typechecks)
+        run: pnpm --filter @routedock/nulth-sdk build
+      - name: Typecheck all packages
+        run: pnpm -r typecheck

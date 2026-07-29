@@ -7,8 +7,13 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js'
 import { RouteDockClient } from '@routedock/routedock'
-import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { createClient } from '@supabase/supabase-js'
+import {
+  handlePayForData,
+  handleOpenSession,
+  handleCheckBalance,
+  handleListProviders,
+} from './handlers.js'
 
 // Environment variables
 const STELLAR_SECRET = process.env.STELLAR_SECRET || process.env.ROUTEDOCK_WALLET_SECRET
@@ -132,220 +137,34 @@ const server = new Server(
 
 // List tools handler
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: TOOLS,
-  }
+  return { tools: TOOLS }
 })
 
-// Call tool handler
+// Call tool handler — delegates to handlers.ts
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
-  try {
-    switch (name) {
-      case 'pay_for_data': {
-        const { url, max_amount, preferred_mode } = args as {
-          url: string
-          max_amount?: string
-          preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session'
-        }
-
-        // Fetch manifest first to check pricing
-        const baseUrl = new URL(url).origin
-        const horizonUrl = STELLAR_NETWORK === 'mainnet' 
-          ? 'https://horizon.stellar.org' 
-          : 'https://horizon-testnet.stellar.org'
-        
-        // Check if max_amount is specified and validate against pricing
-        if (max_amount) {
-          const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
-          const manifest = await manifestResponse.json()
-          
-          const pricing = manifest.pricing[preferred_mode || 'x402'] || manifest.pricing['x402']
-          if (pricing && parseFloat(pricing.amount) > parseFloat(max_amount)) {
-            throw new Error(`Provider cost ${pricing.amount} exceeds max_amount ${max_amount}`)
-          }
-        }
-
-        const result = await client.pay(url, { preferredMode: preferred_mode })
-        
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                mode: result.mode,
-                amount: result.amount,
-                tx_hash: result.txHash,
-                timestamp: result.timestamp,
-                data: result.data,
-              }, null, 2),
-            },
-          ],
-        }
+  switch (name) {
+    case 'pay_for_data':
+      return handlePayForData(
+        args as { url: string; max_amount?: string; preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session' },
+        client,
+      )
+    case 'open_session':
+      return handleOpenSession(args as { url: string }, client, COMMITMENT_SECRET)
+    case 'check_balance':
+      return handleCheckBalance(
+        args as { asset_code?: string; asset_issuer?: string },
+        STELLAR_SECRET as string,
+        STELLAR_NETWORK,
+      )
+    case 'list_providers':
+      return handleListProviders(args as { tags?: string; network?: 'testnet' | 'mainnet' }, supabase)
+    default:
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `Unknown tool: ${name}` }) }],
+        isError: true,
       }
-
-      case 'open_session': {
-        const { url } = args as { url: string }
-
-        if (!COMMITMENT_SECRET) {
-          throw new Error('COMMITMENT_SECRET environment variable is required for session mode')
-        }
-
-        const session = await client.openSession(url)
-        
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                channel_id: session.channelId,
-                open_tx_hash: session.openTxHash,
-                message: 'Session opened successfully. Use the session handle to stream data or close the session.',
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'check_balance': {
-        const { asset_code, asset_issuer } = args as {
-          asset_code?: string
-          asset_issuer?: string
-        }
-
-        const keypair = typeof STELLAR_SECRET === 'string' 
-          ? Keypair.fromSecret(STELLAR_SECRET) 
-          : STELLAR_SECRET
-        
-        const horizonUrl = STELLAR_NETWORK === 'mainnet' 
-          ? 'https://horizon.stellar.org' 
-          : 'https://horizon-testnet.stellar.org'
-        
-        const server = new Horizon.Server(horizonUrl)
-        const account = await server.loadAccount(keypair.publicKey())
-        
-        if (asset_code && asset_issuer) {
-          // Check specific asset balance
-          const balance = account.balances.find(
-            (b: any) => b.asset_code === asset_code && b.asset_issuer === asset_issuer
-          )
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: asset_code,
-                  issuer: asset_issuer,
-                  balance: balance ? balance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        } else if (asset_code) {
-          // Check asset by code only (first match)
-          const balance = account.balances.find((b: any) => b.asset_code === asset_code)
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: asset_code,
-                  balance: balance ? balance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        } else {
-          // Return native XLM balance
-          const nativeBalance = account.balances.find((b: any) => b.asset_type === 'native')
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: 'XLM',
-                  balance: nativeBalance ? nativeBalance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        }
-      }
-
-      case 'list_providers': {
-        const { tags, network } = args as {
-          tags?: string
-          network?: 'testnet' | 'mainnet'
-        }
-
-        if (!supabase) {
-          throw new Error('SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access')
-        }
-
-        let query = supabase.from('providers').select('*')
-
-        if (network) {
-          query = query.eq('network', network)
-        }
-
-        if (tags) {
-          const tagList = tags.split(',').map(t => t.trim())
-          // Use trigram search for each tag
-          for (const tag of tagList) {
-            query = query.textSearch('tags', tag)
-          }
-        }
-
-        const { data, error } = await query
-
-        if (error) {
-          throw new Error(`Failed to fetch providers: ${error.message}`)
-        }
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                count: data?.length || 0,
-                providers: data?.map((p: any) => ({
-                  name: p.name,
-                  description: p.description,
-                  network: p.network,
-                  asset: p.asset,
-                  modes: p.modes,
-                  tags: p.tags,
-                  base_url: p.base_url,
-                })) || [],
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      default:
-        throw new Error(`Unknown tool: ${name}`)
-    }
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-          }, null, 2),
-        },
-      ],
-      isError: true,
-    }
   }
 })
 

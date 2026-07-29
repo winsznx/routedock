@@ -31,10 +31,64 @@ function runExpressHandler(
   reply: FastifyReply,
 ): Promise<void> {
   reply.hijack()
+
+  const rawReq = request.raw as any
+  if (typeof rawReq.get !== 'function') {
+    const getHeader = (name: string): string | undefined => {
+      const val = rawReq.headers[name.toLowerCase()]
+      return Array.isArray(val) ? val.join(', ') : val
+    }
+    rawReq.get = rawReq.header = getHeader
+  }
+  if (!rawReq.protocol) {
+    rawReq.protocol = request.protocol || 'http'
+  }
+  if (!rawReq.originalUrl) {
+    rawReq.originalUrl = request.url
+  }
+
+  const rawRes = reply.raw as any
+  if (typeof rawRes.status !== 'function') {
+    rawRes.status = function (code: number) {
+      rawRes.statusCode = code
+      return rawRes
+    }
+  }
+  if (typeof rawRes.set !== 'function') {
+    rawRes.set = function (field: string | Record<string, string>, val?: string) {
+      if (typeof field === 'object') {
+        for (const [k, v] of Object.entries(field)) {
+          rawRes.setHeader(k, v)
+        }
+      } else if (val !== undefined) {
+        rawRes.setHeader(field, val)
+      }
+      return rawRes
+    }
+  }
+  if (typeof rawRes.json !== 'function') {
+    rawRes.json = function (data: unknown) {
+      if (!rawRes.getHeader('content-type')) {
+        rawRes.setHeader('Content-Type', 'application/json')
+      }
+      rawRes.end(JSON.stringify(data))
+      return rawRes
+    }
+  }
+  if (typeof rawRes.send !== 'function') {
+    rawRes.send = function (body: unknown) {
+      if (typeof body === 'object' && body !== null && !Buffer.isBuffer(body)) {
+        return rawRes.json(body)
+      }
+      rawRes.end(body)
+      return rawRes
+    }
+  }
+
   return new Promise<void>((resolve, reject) => {
     handler(
-      request.raw as Parameters<RequestHandler>[0],
-      reply.raw as unknown as Parameters<RequestHandler>[1],
+      rawReq,
+      rawRes,
       (err?: unknown) => {
         if (err != null) reject(err)
         else resolve()
