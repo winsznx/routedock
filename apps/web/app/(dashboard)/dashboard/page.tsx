@@ -20,7 +20,7 @@ async function fetchDashboardData() {
 
   const [sessionsRes, txLogRes] = await Promise.all([
     supabase
-      .from('sessions')
+      .from('public_sessions')
       .select('*')
       .order('opened_at', { ascending: false })
       .limit(50),

@@ -12,6 +12,8 @@ import {
 import type { Network as X402Network } from '@x402/core/types'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
+import { usdcToUnits } from '../internal/usdc.js'
+import { extractPayerAddress } from './payer.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -72,7 +74,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
     ozServer.register(caip2, new ExactStellarServerScheme())
   }
 
-  const amountInBaseUnits = String(Math.round(parseFloat(opts.amount) * 1e7))
+  const amountInBaseUnits = String(usdcToUnits(opts.amount))
   const payTo = resolvePayee(opts.manifest, 'x402')
   const requirements = {
     scheme: 'exact' as const,
@@ -159,9 +161,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           }
         ).authorization?.credentials
         const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
-        if (typeof key === 'string' && key.startsWith('G')) {
-          payerAddress = key
-        }
+        payerAddress = extractPayerAddress(key)
       } catch {
         // non-fatal
       }

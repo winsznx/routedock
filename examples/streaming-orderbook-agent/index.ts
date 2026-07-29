@@ -82,16 +82,18 @@ async function closeSession(reason) {
   console.log(`[session] total paid: ${closeResult.totalPaid} USDC`)
 }
 
-process.once('SIGINT', () => {
-  // A long-lived agent should always close the session before exiting; otherwise
-  // the provider has no final settlement request for the consumed stream.
-  closeSession('Ctrl+C')
-    .then(() => process.exit(0))
-    .catch((error) => {
-      console.error('[session] close failed:', error)
-      process.exit(1)
-    })
-})
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    // A long-lived agent should always close the session before exiting; otherwise
+    // the provider has no final settlement request for the consumed stream.
+    closeSession(signal)
+      .then(() => process.exit(0))
+      .catch((error) => {
+        console.error('[session] close failed:', error)
+        process.exit(1)
+      })
+  })
+}
 
 async function main() {
   requireSecret('AGENT_SECRET', AGENT_SECRET)

@@ -16,6 +16,8 @@ import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
+import { usdcToUnits } from '../internal/usdc.js'
+import { extractPayerAddress } from './payer.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
@@ -94,7 +96,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
     ozServer.register(caip2, new ExactStellarServerScheme())
   }
 
-  const amountInBaseUnits = String(Math.round(parseFloat(x402Price) * 1e7))
+  const amountInBaseUnits = String(usdcToUnits(x402Price))
   const requirements = {
     scheme: 'exact' as const,
     network: caip2,
@@ -163,9 +165,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
           }
         ).authorization?.credentials
         const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
-        if (typeof key === 'string' && key.startsWith('G')) {
-          payerAddress = key
-        }
+        payerAddress = extractPayerAddress(key)
       } catch {
         // non-fatal
       }
@@ -265,9 +265,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
               payload?: { sender?: string; from?: string }
             }
             const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            if (typeof key === 'string' && key.startsWith('G')) {
-              payerAddress = key
-            }
+            payerAddress = extractPayerAddress(key)
           }
         }
       } catch {
@@ -537,9 +535,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
             }
             if (!sessionPayerAddress) {
               const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-              if (typeof key === 'string' && key.startsWith('G')) {
-                sessionPayerAddress = key
-              }
+              sessionPayerAddress = extractPayerAddress(key)
             }
           }
         } catch {
