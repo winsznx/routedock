@@ -18,6 +18,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient } from '../RouteDockClient.js'
 import { RouteDockManifestError } from '../../errors.js'
 import type { PaymentResult } from '../../types.js'
+import { signManifest } from '../../manifest/sign.js'
 
 // ── Helper ─────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,9 @@ function startTestServer(
   })
 }
 
-const BASE_MANIFEST = {
+const PAYEE_KEYPAIR = Keypair.random()
+
+const BASE_MANIFEST = signManifest({
   routedock: '1.0',
   name: 'EstimateCost Test Provider',
   description: 'Provider exercised by estimateCost tests',
@@ -44,28 +47,28 @@ const BASE_MANIFEST = {
   network: 'testnet',
   asset: 'USDC',
   asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-  payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+  payee: PAYEE_KEYPAIR.publicKey(),
   pricing: {
     x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
     'mpp-charge': { amount: '0.0008', per: 'request' },
   },
-  endpoints: { price: 'GET /price' },
+  endpoints: { price: { method: 'GET', path: '/price' } },
   tags: ['price', 'stellar'],
-}
+}, PAYEE_KEYPAIR.secret())
 
-const SESSION_MANIFEST = {
+const SESSION_MANIFEST = signManifest({
   ...BASE_MANIFEST,
   modes: ['mpp-session'],
   pricing: {
     'mpp-session': {
       rate: '0.0001',
       per: 'voucher',
-      channel_contract: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+      channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
       min_deposit: '0.10',
       refund_waiting_period_ledgers: 17280,
     },
   },
-}
+}, PAYEE_KEYPAIR.secret())
 
 // ── Test 1: resolves manifest, returns correct charge, no transaction submitted ─
 

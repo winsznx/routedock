@@ -22,7 +22,7 @@ const baseManifest: RouteDockManifest = {
   asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
   payee: keypair.publicKey(),
   pricing: { x402: { amount: '0.001', per: 'request' } },
-  endpoints: { price: 'GET /price' },
+  endpoints: { price: { method: 'GET', path: '/price' } },
   tags: ['test'],
 }
 

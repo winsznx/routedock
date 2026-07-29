@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import Ajv from 'ajv'
+import addFormats from 'ajv-formats'
 import schema from '../../schemas/routedock.schema.json' with { type: 'json' }
 
 const ajv = new Ajv()
+addFormats(ajv)
 const validate = ajv.compile(schema)
 
 const PAYEE = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATOP'
@@ -23,7 +25,7 @@ function baseManifest(): Record<string, unknown> {
       x402: { amount: '0.001', per: 'request' },
       'mpp-charge': { amount: '0.0008', per: 'request' },
     },
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['test'],
   }
 }

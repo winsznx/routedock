@@ -18,7 +18,7 @@ function makeManifest(pricing: RouteDockManifest['pricing']): RouteDockManifest 
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     payee: TOP_LEVEL,
     pricing,
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['test'],
   }
 }
