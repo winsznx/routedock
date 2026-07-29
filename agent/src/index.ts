@@ -19,7 +19,7 @@
 import { writeFileSync } from 'node:fs'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Horizon } from '@stellar/stellar-sdk'
-import { RouteDockClient, RouteDockPolicyRejectedError } from '@routedock/routedock'
+import { RouteDockClient, RouteDockPolicyRejectError } from '@routedock/routedock'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     await client.pay(`${PROVIDER_A_URL}/price`, { forceMode: 'x402' })
     log('policy', 'WARNING: payment succeeded when it should have been rejected!')
   } catch (err) {
-    if (err instanceof RouteDockPolicyRejectedError) {
+    if (err instanceof RouteDockPolicyRejectError) {
       policyRejected = true
       log('policy', `[Policy] REJECTED — reason: ${err.reason}. No transaction broadcast.`)
       log('policy', 'Confirmed: spend cap enforced locally before any Stellar transaction.')

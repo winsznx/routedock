@@ -9,11 +9,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { RouteDockClient } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
-export interface McpToolResult {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-}
+export type McpToolResult = CallToolResult
 
 function ok(data: unknown): McpToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
@@ -56,7 +54,7 @@ export async function handlePayForData(
       }
     }
 
-    const result = await client.pay(url, { preferredMode: preferred_mode })
+    const result = await client.pay(url, preferred_mode ? { forceMode: preferred_mode } : undefined)
     return ok({
       success: true,
       mode: result.mode,

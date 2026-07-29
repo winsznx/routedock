@@ -24,7 +24,7 @@ type ChannelCloseFn = (args: {
   amount: bigint
   signature: Buffer
   feePayer: { envelopeSigner: Keypair }
-  network: string
+  network: 'stellar:testnet' | 'stellar:pubnet'
 }) => Promise<string>
 
 export interface SessionReconcilerOptions {
@@ -105,7 +105,7 @@ export async function reconcileAbandonedSessions(
           amount: closeAmount,
           signature: closeSig,
           feePayer: { envelopeSigner: payeeKeypair },
-          network: networkId,
+          network: networkId as 'stellar:testnet' | 'stellar:pubnet',
         })
 
         // Mark session as recovered

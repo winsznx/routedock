@@ -176,8 +176,8 @@ describe('reconcileAbandonedSessions — channelClose failure', () => {
     assert.equal(stats.failedCount, 1)
     assert.equal(stats.recoveredCount, 0)
     assert.equal(stats.errors.length, 1)
-    assert.equal(stats.errors[0].channelId, 'channel-ddd')
-    assert.match(stats.errors[0].reason, /Horizon timeout/)
+    assert.equal(stats.errors[0]!.channelId, 'channel-ddd')
+    assert.match(stats.errors[0]!.reason, /Horizon timeout/)
   })
 })
 

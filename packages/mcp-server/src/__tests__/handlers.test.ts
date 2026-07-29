@@ -12,7 +12,7 @@ import type { RouteDockClient } from '@routedock/routedock'
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseResult(result: { content: Array<{ type: string; text: string }> }) {
+function parseResult(result: any) {
   const first = result.content[0]
   if (!first) throw new Error('No content in result')
   return JSON.parse(first.text)

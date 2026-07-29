@@ -29,11 +29,10 @@ function makeHorizonMock(
 // since OnChainRegistry accepts a horizonUrl we use a factory helper instead.
 // We test via a subclass that accepts an injected horizon mock.
 class TestOnChainRegistry extends OnChainRegistry {
-  // @ts-expect-error — override private field for testing
   constructor(mockHorizon: ReturnType<typeof makeHorizonMock>, knownAccounts: string[]) {
     super({ horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts })
     // @ts-expect-error — override private field for testing
-    this.horizon = mockHorizon
+    this.horizon = mockHorizon as any
   }
 }
 
@@ -50,8 +49,8 @@ describe('OnChainRegistry.listProviders — endpoint decoding', () => {
     )
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].endpoint, url)
-    assert.equal(providers[0].account, 'ACCT1')
+    assert.equal(providers[0]!.endpoint, url)
+    assert.equal(providers[0]!.account, 'ACCT1')
   })
 
   it('returns a plain URL as-is without decoding', async () => {
@@ -62,7 +61,7 @@ describe('OnChainRegistry.listProviders — endpoint decoding', () => {
     )
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].endpoint, url)
+    assert.equal(providers[0]!.endpoint, url)
   })
 
   it('filters out non-http endpoints', async () => {
@@ -106,7 +105,7 @@ describe('OnChainRegistry.listProviders — tag decoding', () => {
       ['ACCT6'],
     )
     const providers = await registry.listProviders()
-    assert.deepEqual(providers[0].tags, ['ai', 'stellar', 'dex'])
+    assert.deepEqual(providers[0]!.tags, ['ai', 'stellar', 'dex'])
   })
 
   it('falls back to CSV-split when tags are not valid JSON', async () => {
@@ -123,7 +122,7 @@ describe('OnChainRegistry.listProviders — tag decoding', () => {
       ['ACCT7'],
     )
     const providers = await registry.listProviders()
-    assert.deepEqual(providers[0].tags, ['ai', 'stellar', 'dex'])
+    assert.deepEqual(providers[0]!.tags, ['ai', 'stellar', 'dex'])
   })
 
   it('returns empty tags when no routedock_tags entry', async () => {
@@ -134,7 +133,7 @@ describe('OnChainRegistry.listProviders — tag decoding', () => {
       ['ACCT8'],
     )
     const providers = await registry.listProviders()
-    assert.deepEqual(providers[0].tags, [])
+    assert.deepEqual(providers[0]!.tags, [])
   })
 })
 
@@ -173,7 +172,7 @@ class TestProviderRegistry extends ProviderRegistry {
     mockHorizon: ReturnType<typeof makeHorizonMock>,
   ) {
     super({
-      supabase,
+      ...(supabase ? { supabase: supabase as any } : {}),
       onChain: { horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts: ['ACCT9'] },
     })
     // @ts-expect-error — override private field for testing
@@ -211,8 +210,8 @@ describe('ProviderRegistry.listProviders — Supabase primary', () => {
     const registry = new TestProviderRegistry(makeSupabaseMock(rows), emptyOnChain)
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].name, 'Provider A')
-    assert.equal(providers[0].source, 'supabase')
+    assert.equal(providers[0]!.name, 'Provider A')
+    assert.equal(providers[0]!.source, 'supabase')
   })
 })
 
@@ -221,7 +220,7 @@ describe('ProviderRegistry.listProviders — on-chain fallback', () => {
     const registry = new TestProviderRegistry(makeSupabaseMock([]), oneOnChain)
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].source, 'onchain')
+    assert.equal(providers[0]!.source, 'onchain')
   })
 
   it('falls back to on-chain when Supabase returns an error', async () => {
@@ -231,13 +230,13 @@ describe('ProviderRegistry.listProviders — on-chain fallback', () => {
     )
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].source, 'onchain')
+    assert.equal(providers[0]!.source, 'onchain')
   })
 
   it('goes straight to on-chain when no Supabase configured', async () => {
     const registry = new TestProviderRegistry(undefined, oneOnChain)
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
-    assert.equal(providers[0].source, 'onchain')
+    assert.equal(providers[0]!.source, 'onchain')
   })
 })
