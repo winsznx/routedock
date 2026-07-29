@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { getSupabaseBrowserClient, type Session } from '@/lib/supabase'
 import { AddressDisplay } from '@/components/shared/AddressDisplay'
 import { ModeBadge } from '@/components/shared/ModeBadge'
@@ -33,36 +33,25 @@ interface SessionTableProps {
 export function SessionTable({ initialSessions = [] }: SessionTableProps) {
   const [sessions, setSessions] = useState<Session[]>(initialSessions)
 
-  useEffect(() => {
+  const refreshSessions = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
+    const { data } = await supabase
+      .from('public_sessions')
+      .select('*')
+      .order('opened_at', { ascending: false })
+      .limit(50)
 
-    const channel = supabase
-      .channel('sessions-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'sessions' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setSessions((prev) => [payload.new as Session, ...prev])
-          } else if (payload.eventType === 'UPDATE') {
-            setSessions((prev) =>
-              prev.map((s) =>
-                s.id === (payload.new as Session).id ? (payload.new as Session) : s,
-              ),
-            )
-          } else if (payload.eventType === 'DELETE') {
-            setSessions((prev) =>
-              prev.filter((s) => s.id !== (payload.old as Session).id),
-            )
-          }
-        },
-      )
-      .subscribe()
-
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    if (data) setSessions(data as Session[])
   }, [])
+
+  useEffect(() => {
+    const initialRefresh = setTimeout(() => void refreshSessions(), 0)
+    const interval = setInterval(() => void refreshSessions(), 10_000)
+    return () => {
+      clearTimeout(initialRefresh)
+      clearInterval(interval)
+    }
+  }, [refreshSessions])
 
   return (
     <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)]">

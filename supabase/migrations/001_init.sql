@@ -131,9 +131,27 @@ CREATE POLICY "providers_own_sessions" ON sessions
   FOR ALL
   USING (payee = current_setting('app.stellar_address', true));
 
-CREATE POLICY "public_read_sessions" ON sessions
-  FOR SELECT
-  USING (true);
+-- Public dashboards can read session metadata, but never the signed voucher
+-- authorization (`last_signature`) or the on-chain channel contract needed to
+-- broadcast a close. Provider-owned service connections still use the
+-- providers_own_sessions policy above to access the full table.
+CREATE VIEW public_sessions AS
+  SELECT
+    id,
+    channel_id,
+    payee,
+    payer,
+    cumulative_amount,
+    status,
+    network,
+    opened_at,
+    updated_at,
+    settlement_tx_hash,
+    open_tx_hash,
+    voucher_count
+  FROM sessions;
+
+GRANT SELECT ON public_sessions TO anon, authenticated;
 
 -- tx_log: fully public read for dashboard display (no sensitive data stored here).
 ALTER TABLE tx_log ENABLE ROW LEVEL SECURITY;
@@ -152,5 +170,7 @@ CREATE POLICY "public_read_providers" ON providers
 
 
 -- ─── Realtime ─────────────────────────────────────────────────
--- Enable Supabase Realtime change events for dashboard subscriptions.
-ALTER PUBLICATION supabase_realtime ADD TABLE sessions, tx_log;
+-- Enable Supabase Realtime change events for non-sensitive dashboard data only.
+-- Do not publish `sessions`: row changes include last_signature, which is a
+-- broadcastable channel-close authorization.
+ALTER PUBLICATION supabase_realtime ADD TABLE tx_log;
