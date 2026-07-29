@@ -39,7 +39,15 @@ const MOCK_PROVIDER_KEYPAIR = Keypair.random()
 const MOCK_PROVIDER_SECRET = MOCK_PROVIDER_KEYPAIR.secret()
 
 // USDC on Stellar testnet (Circle's Soroban SAC)
-const USDC_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+let USDC_CONTRACT = process.env['USDC_ASSET_CONTRACT']
+if (!USDC_CONTRACT) {
+    if (STELLAR_NETWORK === 'testnet') {
+        USDC_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+    } else {
+        console.error('FATAL: USDC_ASSET_CONTRACT is required for mainnet')
+        process.exit(1)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Mock inference provider (Hono)

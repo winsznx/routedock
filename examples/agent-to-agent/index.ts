@@ -34,7 +34,15 @@ const SPECIALIST_PORT = 3200
 const SPECIALIST_URL = `http://localhost:${SPECIALIST_PORT}`
 
 // USDC on Stellar testnet
-const USDC_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+let USDC_CONTRACT = process.env['USDC_ASSET_CONTRACT']
+if (!USDC_CONTRACT) {
+    if (STELLAR_NETWORK === 'testnet') {
+        USDC_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+    } else {
+        console.error('FATAL: USDC_ASSET_CONTRACT is required for mainnet')
+        process.exit(1)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Specialist sub-agent server
