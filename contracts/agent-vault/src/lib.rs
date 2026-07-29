@@ -31,6 +31,12 @@ const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
 const EVT_PAYMENT_AUTHORIZED: &str = "payment_authorized";
 const EVT_SESSION_SETTLED: &str = "session_settled";
+const EVT_CAP_UPDATED: &str = "cap_updated";
+const EVT_ALLOWLIST_UPDATED: &str = "allowlist_updated";
+const EVT_ADMIN_TRANSFER_REQUESTED: &str = "admin_transfer_requested";
+const EVT_ADMIN_CHANGED: &str = "admin_changed";
+const EVT_VAULT_FROZEN: &str = "vault_frozen";
+const EVT_VAULT_UNFROZEN: &str = "vault_unfrozen";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -89,7 +95,12 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        let old_cap: i128 = storage.get(&CAP_KEY).unwrap_or(0);
         storage.set(&CAP_KEY, &new_cap);
+        env.events().publish(
+            (Symbol::new(&env, EVT_CAP_UPDATED), symbol_short!("daily")),
+            (old_cap, new_cap),
+        );
     }
 
     /// Upsert a payee address in the spend allowlist with a per-payee daily sub-cap. Admin only.
@@ -102,8 +113,30 @@ impl AgentVault {
         let mut map: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
-        map.set(payee, sub_cap);
+        map.set(payee.clone(), sub_cap);
         storage.set(&LIST_KEY, &map);
+        env.events().publish(
+            (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
+            Some(sub_cap),
+        );
+    }
+
+    /// Remove a payee address from the spend allowlist. Admin only.
+    pub fn remove_from_allowlist(env: Env, payee: Address) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let mut map: Map<Address, i128> = storage
+            .get(&LIST_KEY)
+            .unwrap_or_else(|| Map::new(&env));
+        map.remove(payee.clone());
+        storage.set(&LIST_KEY, &map);
+        env.events().publish(
+            (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
+            Option::<i128>::None,
+        );
     }
 
     /// Record an off-chain channel settlement. Emits `session_settled`. Admin only.
@@ -138,7 +171,12 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        let old_cap: i128 = storage.get(&LIFETIME_CAP_KEY).unwrap_or(0);
         storage.set(&LIFETIME_CAP_KEY, &new_cap);
+        env.events().publish(
+            (Symbol::new(&env, EVT_CAP_UPDATED), symbol_short!("lifetime")),
+            (old_cap, new_cap),
+        );
     }
 
     /// Return the vault's cumulative lifetime spend counter (stroops). Read-only.
@@ -157,6 +195,10 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         storage.set(&PENDING_ADMIN_KEY, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, EVT_ADMIN_TRANSFER_REQUESTED), admin, new_admin),
+            (),
+        );
     }
 
     /// Accept a pending transfer of admin rights. Pending admin only.
@@ -166,8 +208,15 @@ impl AgentVault {
             .get(&PENDING_ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingAdmin));
         pending_admin.require_auth();
+        let old_admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         storage.set(&ADMIN_KEY, &pending_admin);
         storage.remove(&PENDING_ADMIN_KEY);
+        env.events().publish(
+            (Symbol::new(&env, EVT_ADMIN_CHANGED), old_admin, pending_admin),
+            (),
+        );
     }
 
     /// Freeze the contract, preventing any agent transfers. Admin only.
@@ -178,6 +227,7 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         storage.set(&FROZEN_KEY, &true);
+        env.events().publish((Symbol::new(&env, EVT_VAULT_FROZEN),), ());
     }
 
     /// Unfreeze the contract, allowing agent transfers again. Admin only.
@@ -188,6 +238,7 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         storage.set(&FROZEN_KEY, &false);
+        env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
     }
 
     /// Return the global daily spend cap (view-only).
@@ -1672,5 +1723,111 @@ mod tests {
         let updated_allowlist = client.allowlist();
         assert_eq!(updated_allowlist.len(), 2);
         assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
+    }
+
+    #[test]
+    fn test_removed_payee_is_rejected_on_next_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let payee = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        env.mock_all_auths();
+        client.remove_from_allowlist(&payee);
+        assert!(!client.allowlist().contains_key(payee.clone()));
+
+        let payload = BytesN::<32>::random(&env);
+        let signature = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &payee, 100_000)]);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id, &payload, signature.into_val(&env), &contexts,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), Error::PayeeNotAllowed);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_remove_from_allowlist_requires_admin() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let payee = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "remove_from_allowlist",
+                args: (&payee,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.remove_from_allowlist(&payee);
+    }
+
+    #[test]
+    fn test_admin_mutation_events() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &Map::new(&env), &10_000_u32, &9_000_000_i128);
+        env.mock_all_auths();
+
+        client.set_daily_cap(&4_000_000_i128);
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "cap_updated"));
+        assert_eq!(Symbol::from_val(&env, &topics.get(1).unwrap()), symbol_short!("daily"));
+        assert_eq!(<(i128, i128)>::from_val(&env, &data), (5_000_000, 4_000_000));
+
+        client.set_lifetime_cap(&8_000_000_i128);
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(1).unwrap()), symbol_short!("lifetime"));
+        assert_eq!(<(i128, i128)>::from_val(&env, &data), (9_000_000, 8_000_000));
+
+        let payee = Address::generate(&env);
+        client.add_to_allowlist(&payee, &2_000_000_i128);
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "allowlist_updated"));
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), payee);
+        assert_eq!(Option::<i128>::from_val(&env, &data), Some(2_000_000));
+
+        client.remove_from_allowlist(&payee);
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), payee);
+        assert_eq!(Option::<i128>::from_val(&env, &data), None);
+
+        client.freeze();
+        let (_, topics, _) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_frozen"));
+
+        client.unfreeze();
+        let (_, topics, _) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_unfrozen"));
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin);
+        let (_, topics, _) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "admin_transfer_requested"));
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
+        assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
+
+        client.accept_admin();
+        let (_, topics, _) = env.events().all().last().unwrap();
+        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "admin_changed"));
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
+        assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
     }
 }

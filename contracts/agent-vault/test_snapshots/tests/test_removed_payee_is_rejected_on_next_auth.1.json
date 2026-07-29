@@ -1,11 +1,30 @@
 {
   "generators": {
-    "address": 3,
-    "nonce": 1
+    "address": 5,
+    "nonce": 0
   },
   "auth": [
     [],
     [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "function_name": "remove_from_allowlist",
+              "args": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [],
     []
   ],
@@ -55,7 +74,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "50b163c4946158894dd2104abbcc78574193e2d2ae93fe23290190e3711c30cb"
+                          "bytes": "0e4c797f1a35c0358c328120d2fa5f5cd88af4b0722ab571b6f9319b0ab77121"
                         }
                       },
                       {
@@ -128,9 +147,13 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-            "key": "ledger_key_contract_instance",
-            "durability": "persistent"
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 801925984706572462
+              }
+            },
+            "durability": "temporary"
           }
         },
         [
@@ -139,22 +162,19 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-                "key": "ledger_key_contract_instance",
-                "durability": "persistent",
-                "val": {
-                  "contract_instance": {
-                    "executable": {
-                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    },
-                    "storage": null
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 801925984706572462
                   }
-                }
+                },
+                "durability": "temporary",
+                "val": "void"
               }
             },
             "ext": "v0"
           },
-          4095
+          6311999
         ]
       ],
       [

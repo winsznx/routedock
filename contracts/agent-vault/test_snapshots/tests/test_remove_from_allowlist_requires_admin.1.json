@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 3,
+    "address": 4,
     "nonce": 1
   },
   "auth": [
@@ -55,7 +55,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "50b163c4946158894dd2104abbcc78574193e2d2ae93fe23290190e3711c30cb"
+                          "bytes": "d1c0a2f8fa53c8b5544ae3024d3f61fef8147600d602f2a0e7a7aa612bb19450"
                         }
                       },
                       {
@@ -63,7 +63,19 @@
                           "symbol": "allwlist"
                         },
                         "val": {
-                          "map": []
+                          "map": [
+                            {
+                              "key": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              },
+                              "val": {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 5000000
+                                }
+                              }
+                            }
+                          ]
                         }
                       },
                       {
@@ -128,7 +140,7 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -139,7 +151,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {
