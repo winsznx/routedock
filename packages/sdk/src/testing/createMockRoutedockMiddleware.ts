@@ -12,7 +12,7 @@ export interface MockRoutedockCallbacks {
   /** Called once when a synthetic mpp-session is opened (first voucher). */
   onSessionOpen?: (channelId: string) => void | Promise<void>
   /** Called for each synthetic voucher in an mpp-session (1-based index). */
-  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => void | Promise<void>
+  onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => void | Promise<void>
 }
 
 /** Synthetic settlement values handed to the callbacks. All optional — sensible defaults per mode. */
@@ -95,7 +95,7 @@ export async function runMockSettlement(
     for (let i = 1; i <= count; i++) {
       const cumulativeAmount = format7(rate * BigInt(i))
       vouchers.push({ index: i, cumulativeAmount })
-      if (opts.onVoucher) await opts.onVoucher(i, cumulativeAmount)
+      if (opts.onVoucher) await opts.onVoucher(channelId, i, cumulativeAmount, '0000000000000000000000000000000000000000000000000000000000000000')
     }
 
     const totalPaid = format7(rate * BigInt(count))

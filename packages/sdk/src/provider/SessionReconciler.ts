@@ -83,7 +83,10 @@ export async function reconcileAbandonedSessions(
           continue
         }
 
-        const closeAmount = BigInt(cumulative_amount)
+        const numAmount = Number(cumulative_amount)
+        const closeAmount = String(cumulative_amount).includes('.')
+          ? BigInt(Math.round(numAmount * 1e7))
+          : BigInt(cumulative_amount)
         const closeSig = Buffer.from(last_signature, 'hex')
 
         // Broadcast channel close transaction

@@ -22,7 +22,7 @@ export interface RouteDockFastifyOptions {
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
-  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => Promise<void>
 }
 
 function runExpressHandler(
