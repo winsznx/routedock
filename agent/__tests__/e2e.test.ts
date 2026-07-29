@@ -83,6 +83,9 @@ async function runTests(): Promise<void> {
       err instanceof Error &&
       (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed'))
     ) {
+      if (process.env.CI && process.env.E2E_ALLOW_SKIP !== 'true') {
+        throw err
+      }
       log(
         'x402',
         'SKIP: Provider A unavailable (connection refused). Ensure Provider A is running.',
@@ -130,6 +133,9 @@ async function runTests(): Promise<void> {
       err instanceof Error &&
       (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed'))
     ) {
+      if (process.env.CI && process.env.E2E_ALLOW_SKIP !== 'true') {
+        throw err
+      }
       log(
         'mpp-session',
         'SKIP: Provider B unavailable (connection refused). Ensure Provider B is running.',
