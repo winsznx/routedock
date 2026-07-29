@@ -4,6 +4,7 @@ import type { Request, Response } from 'express'
 import { createClient } from '@supabase/supabase-js'
 import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
+import type { OrphanedSessionInfo } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
 import Ajv from 'ajv'
 import schema from '@routedock/routedock/schema'
@@ -93,6 +94,19 @@ const startedAt = Date.now()
 
 let activeSessionChannelId = ''
 
+async function markActiveSessionClosing(reason: string): Promise<void> {
+  if (!supabase || !activeSessionChannelId) return
+
+  const { error } = await supabase
+    .from('sessions')
+    .update({ status: 'closing' })
+    .eq('channel_id', activeSessionChannelId)
+    .eq('status', 'open')
+
+  if (error) console.error(`[supabase] failed to mark active session closing (${reason}):`, error.message)
+  else console.log(`[supabase] active session marked closing (${reason}): ${activeSessionChannelId}`)
+}
+
 // ── Express app ───────────────────────────────────────────────────────────────
 
 const app = express()
@@ -146,6 +160,20 @@ app.use(
         })
         .eq('channel_id', activeSessionChannelId)
       if (error) console.error('[supabase] session voucher update failed:', error.message)
+    },
+    onOrphaned: async (_channelId: string, info: OrphanedSessionInfo) => {
+      if (!supabase || !activeSessionChannelId) return
+      const { error } = await supabase
+        .from('sessions')
+        .update({
+          status: 'closing',
+          last_signature: info.lastSignature || null,
+          voucher_count: info.voucherCount,
+        })
+        .eq('channel_id', activeSessionChannelId)
+
+      if (error) console.error('[supabase] session orphan update failed:', error.message)
+      else console.log(`[supabase] session marked closing (${info.reason}): ${activeSessionChannelId}`)
     },
     onSettled: async (txHash: string, totalPaid: string, mode: string, payer: string | null) => {
       console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid} payer=${payer ?? 'unknown'}`)
@@ -216,6 +244,33 @@ app.get('/health', (_req: Request, res: Response) => {
   })
 })
 
-app.listen(parseInt(PORT, 10), () => {
+const server = app.listen(parseInt(PORT, 10), () => {
   console.log(`provider-b listening on port ${PORT} (${STELLAR_NETWORK})`)
 })
+
+let shuttingDown = false
+
+type ShutdownSignal = 'SIGINT' | 'SIGTERM'
+
+async function shutdown(signal: ShutdownSignal): Promise<void> {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] ${signal} received; closing provider-b HTTP server...`)
+
+  await markActiveSessionClosing(signal)
+
+  server.close((err?: Error) => {
+    if (err) {
+      console.error('[shutdown] provider-b server close failed:', err)
+      process.exit(1)
+    }
+    console.log('[shutdown] provider-b stopped')
+    process.exit(0)
+  })
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdown(signal)
+  })
+}

@@ -172,6 +172,31 @@ app.get('/health', (_req: Request, res: Response) => {
   })
 })
 
-app.listen(parseInt(PORT, 10), () => {
+const server = app.listen(parseInt(PORT, 10), () => {
   console.log(`provider-a listening on port ${PORT} (${STELLAR_NETWORK})`)
 })
+
+let shuttingDown = false
+
+type ShutdownSignal = 'SIGINT' | 'SIGTERM'
+
+async function shutdown(signal: ShutdownSignal): Promise<void> {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] ${signal} received; closing provider-a HTTP server...`)
+
+  server.close((err?: Error) => {
+    if (err) {
+      console.error('[shutdown] provider-a server close failed:', err)
+      process.exit(1)
+    }
+    console.log('[shutdown] provider-a stopped')
+    process.exit(0)
+  })
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdown(signal)
+  })
+}

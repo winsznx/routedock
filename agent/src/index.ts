@@ -48,6 +48,36 @@ function explorerLink(txHash: string): string {
   return `${EXPLORER_BASE}/${txHash}`
 }
 
+type AgentSession = Awaited<ReturnType<RouteDockClient['openSession']>>
+type CloseResult = Awaited<ReturnType<AgentSession['close']>>
+
+let activeSession: AgentSession | null = null
+let closingSession = false
+
+async function closeActiveSession(reason: string): Promise<CloseResult | null> {
+  if (!activeSession || closingSession) return null
+  closingSession = true
+  log('mpp-session', `Closing active session (${reason})...`)
+
+  try {
+    return await activeSession.close()
+  } finally {
+    activeSession = null
+    closingSession = false
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    closeActiveSession(signal)
+      .then(() => process.exit(0))
+      .catch((err) => {
+        console.error(`[Agent] Failed to close session during ${signal}:`, err)
+        process.exit(1)
+      })
+  })
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -92,6 +122,7 @@ async function main(): Promise<void> {
     channelOpen?: string
     channelClose?: string
   } = {}
+  let closeResult: CloseResult | null = null
 
   // ── Step 2: x402 discrete query ───────────────────────────────────────────
 
@@ -120,16 +151,15 @@ async function main(): Promise<void> {
   }
 
   // ── Step 4: MPP session streaming ─────────────────────────────────────────
-
   log('mpp-session', 'Opening MPP session channel...')
-  const session = await client.openSession(`${PROVIDER_B_URL}/stream/orderbook`)
+  activeSession = await client.openSession(`${PROVIDER_B_URL}/stream/orderbook`)
 
-  if (session.openTxHash) {
-    txHashes.channelOpen = session.openTxHash
+  if (activeSession.openTxHash) {
+    txHashes.channelOpen = activeSession.openTxHash
   }
-  log('mpp-session', `[Session] Opened. Channel: ${session.channelId} openTxHash: ${session.openTxHash ?? 'n/a (pre-deployed channel)'}`)
-  if (session.openTxHash) {
-    log('mpp-session', `Channel open explorer: ${explorerLink(session.openTxHash)}`)
+  log('mpp-session', `[Session] Opened. Channel: ${activeSession.channelId} openTxHash: ${activeSession.openTxHash ?? 'n/a (pre-deployed channel)'}`)
+  if (activeSession.openTxHash) {
+    log('mpp-session', `Channel open explorer: ${explorerLink(activeSession.openTxHash)}`)
   }
 
   // Consume exactly 50 SSE events from the session stream
@@ -137,19 +167,29 @@ async function main(): Promise<void> {
   let voucherCount = 0
   const rate = 0.0001 // matches manifest pricing['mpp-session'].rate
 
-  for await (const _item of session.stream()) {
-    voucherCount++
+  try {
+    for await (const _item of activeSession.stream()) {
+      voucherCount++
 
-    if (voucherCount % 10 === 0) {
-      const cumulative = (voucherCount * rate).toFixed(4)
-      log('mpp-session', `[Session] Vouchers: ${voucherCount}, Cumulative: $${cumulative}`)
+      if (voucherCount % 10 === 0) {
+        const cumulative = (voucherCount * rate).toFixed(4)
+        log('mpp-session', `[Session] Vouchers: ${voucherCount}, Cumulative: $${cumulative}`)
+      }
+
+      if (voucherCount >= TARGET_VOUCHERS) break
     }
 
-    if (voucherCount >= TARGET_VOUCHERS) break
+    log('mpp-session', `Consumed ${voucherCount} vouchers. Closing session...`)
+    closeResult = await closeActiveSession(`consumed ${voucherCount} vouchers`)
+  } finally {
+    if (activeSession) {
+      await closeActiveSession('finally')
+    }
   }
 
-  log('mpp-session', `Consumed ${voucherCount} vouchers. Closing session...`)
-  const closeResult = await session.close()
+  if (!closeResult) {
+    throw new Error('mpp-session close returned no result')
+  }
 
   txHashes.channelClose = closeResult.closeTxHash
   log(

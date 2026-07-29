@@ -57,7 +57,7 @@ export async function reconcileAbandonedSessions(
     // Query for sessions in "closing" state with no settlement_tx_hash
     const { data: closingSessions, error } = await opts.supabase
       .from('sessions')
-      .select('channel_id, cumulative_amount, last_signature, settlement_tx_hash')
+      .select('channel_id, channel_contract, cumulative_amount, last_signature, settlement_tx_hash')
       .eq('status', 'closing')
       .is('settlement_tx_hash', null)
       .limit(100)
@@ -75,7 +75,13 @@ export async function reconcileAbandonedSessions(
     // Attempt to recover each session
     for (const session of closingSessions) {
       try {
-        const { channel_id: channelId, cumulative_amount, last_signature } = session
+        const {
+          channel_id: sessionId,
+          channel_contract: channelContract,
+          cumulative_amount,
+          last_signature,
+        } = session
+        const channelId = channelContract || sessionId
 
         // Validate required fields
         if (!channelId || !cumulative_amount || !last_signature) {
@@ -100,11 +106,11 @@ export async function reconcileAbandonedSessions(
         const { error: updateError } = await opts.supabase
           .from('sessions')
           .update({
-            status: 'settled',
+            status: 'closed',
             settlement_tx_hash: closeTxHash,
             updated_at: new Date().toISOString(),
           })
-          .eq('channel_id', channelId)
+          .eq('channel_id', sessionId)
 
         if (updateError) {
           throw new Error(`Failed to update session: ${updateError.message}`)
