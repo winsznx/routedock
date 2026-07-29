@@ -159,7 +159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Check if max_amount is specified and validate against pricing
         if (max_amount) {
           const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
-          const manifest = await manifestResponse.json()
+          const manifest = (await manifestResponse.json()) as { pricing: Record<string, { amount: string }> }
           
           const pricing = manifest.pricing[preferred_mode || 'x402'] || manifest.pricing['x402']
           if (pricing && parseFloat(pricing.amount) > parseFloat(max_amount)) {
@@ -167,7 +167,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        const result = await client.pay(url, { preferredMode: preferred_mode })
+        const result = await client.pay(url, preferred_mode ? { forceMode: preferred_mode } : undefined)
         
         return {
           content: [
