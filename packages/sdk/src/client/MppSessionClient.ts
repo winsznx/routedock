@@ -234,15 +234,18 @@ export class MppSessionClient {
             .setTimeout(30)
             .build()
 
-          tx.sign(agentKeypair)
           const simResult = await server.simulateTransaction(tx)
           if (rpcMod.Api.isSimulationError(simResult)) {
             throw new RouteDockDisputeError(`request_refund simulation failed: ${(simResult as any).error}`)
           }
 
-          const result = await server.sendTransaction(tx)
-          if (!result.hash) {
-            throw new RouteDockDisputeError('Refund request transaction not sent')
+          const preparedTx = await server.prepareTransaction(tx)
+          preparedTx.sign(agentKeypair)
+
+          const result = await server.sendTransaction(preparedTx)
+          if (result.status === 'ERROR' || !result.hash) {
+            const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : result.status
+            throw new RouteDockDisputeError(`Refund request transaction failed: ${errDetail}`)
           }
 
           return result.hash
@@ -274,7 +277,8 @@ export class MppSessionClient {
 
           const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
 
-          const settleTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+          const settleAccount = await server.getAccount(agentPublicKey)
+          const settleTx = new TransactionBuilder(settleAccount, { fee: BASE_FEE, networkPassphrase: passphrase })
             .addOperation(
               contract.call(
                 'settle_with_signature',
@@ -285,10 +289,12 @@ export class MppSessionClient {
             .setTimeout(30)
             .build()
 
-          settleTx.sign(agentKeypair)
-          const settleResult = await server.sendTransaction(settleTx)
-          if (!settleResult.hash) {
-            throw new RouteDockDisputeError('Settlement transaction not sent')
+          const preparedSettleTx = await server.prepareTransaction(settleTx)
+          preparedSettleTx.sign(agentKeypair)
+          const settleResult = await server.sendTransaction(preparedSettleTx)
+          if (settleResult.status === 'ERROR' || !settleResult.hash) {
+            const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : settleResult.status
+            throw new RouteDockDisputeError(`Settlement transaction failed: ${errDetail}`)
           }
 
           return settleResult.hash
