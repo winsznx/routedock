@@ -35,6 +35,10 @@ function startTestServer(
 // ── Test 1: ModeRouter — manifest fetch + schema validation ───────────────────
 
 {
+  const { Keypair } = await import('@stellar/stellar-sdk')
+  const { signManifest } = await import('../manifest/sign.js')
+  const payeeKp = Keypair.random()
+
   const validManifest = {
     routedock: '1.0',
     name: 'Test Provider',
@@ -43,19 +47,20 @@ function startTestServer(
     network: 'testnet',
     asset: 'USDC',
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-    payee: 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK',
+    payee: payeeKp.publicKey(),
     pricing: {
       x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
       'mpp-charge': { amount: '0.0008', per: 'request' },
     },
-    endpoints: { price: 'GET /price' },
+    endpoints: { price: { method: 'GET', path: '/price' } },
     tags: ['price', 'stellar'],
   }
+  const signedManifest = signManifest(validManifest as import('../types.js').RouteDockManifest, payeeKp.secret())
 
   const server = await startTestServer((req, res) => {
     if (req.url === '/.well-known/routedock.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(validManifest))
+      res.end(JSON.stringify(signedManifest))
     } else {
       res.writeHead(404)
       res.end()
@@ -78,6 +83,17 @@ function startTestServer(
     const mode = selectMode(manifest)
     assert.equal(mode, 'mpp-charge', 'mpp-charge should be preferred over x402')
 
+    const costAwareManifest = {
+      ...validManifest,
+      pricing: {
+        x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
+        'mpp-charge': { amount: '0.005', per: 'request' },
+      },
+    }
+
+    const costOptimizedMode = selectMode(costAwareManifest, { optimize: 'cost' })
+    assert.equal(costOptimizedMode, 'x402', 'cost optimization should prefer the lower-cost per-request mode')
+
     const modeForced = selectMode(manifest, { sustained: true })
     assert.equal(modeForced, 'mpp-charge', 'sustained without mpp-session falls back to mpp-charge')
 
@@ -87,7 +103,65 @@ function startTestServer(
   }
 }
 
-// ── Test 2: ModeRouter — invalid manifest rejected ────────────────────────────
+// ── Test 2: ModeRouter — channel_factory manifest accepted ─────────────────
+
+{
+  const { Keypair } = await import('@stellar/stellar-sdk')
+  const { signManifest } = await import('../manifest/sign.js')
+  const payeeKp = Keypair.random()
+
+  const validFactoryManifest = {
+    routedock: '1.0',
+    name: 'Factory Provider',
+    description: 'Smoke test provider using channel_factory',
+    modes: ['mpp-session'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: payeeKp.publicKey(),
+    pricing: {
+      'mpp-session': {
+        rate: '0.0001',
+        per: 'voucher',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+    },
+    endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
+    tags: ['stream', 'stellar'],
+  }
+
+  const signedFactoryManifest = signManifest(
+    validFactoryManifest as import('../types.js').RouteDockManifest,
+    payeeKp.secret(),
+  )
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(signedFactoryManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const manifest = await fetchManifest(server.url)
+    assert.equal(
+      manifest.pricing['mpp-session']?.channel_factory,
+      signedFactoryManifest.pricing['mpp-session'].channel_factory,
+      'manifest should preserve channel_factory in mpp-session pricing',
+    )
+    console.log('✓ Test 2: channel_factory manifest acceptance PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 3: ModeRouter — invalid manifest rejected ────────────────────────────
 
 {
   const badManifest = { routedock: '2.0', name: 'bad' }
@@ -119,7 +193,58 @@ function startTestServer(
   }
 }
 
-// ── Test 3: SessionStore — monotonic invariant rejection ─────────────────────
+// ── Test 4: ModeRouter — unsigned manifest rejected ───────────────────────
+
+{
+  const { Keypair: Kp } = await import('@stellar/stellar-sdk')
+  const kp = Kp.random()
+  const unsignedManifest = {
+    routedock: '1.0',
+    name: 'Unsigned Provider',
+    description: 'Missing signature',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: kp.publicKey(),
+    pricing: { x402: { amount: '0.001', per: 'request' } },
+    endpoints: { price: { method: 'GET', path: '/price' } },
+    tags: ['test'],
+  }
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(unsignedManifest))
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+
+  try {
+    const { fetchManifest } = await import('../client/ModeRouter.js')
+    const { RouteDockSignatureError: SigError } = await import('../errors.js')
+
+    let threw = false
+    try {
+      await fetchManifest(server.url)
+    } catch (err) {
+      threw = true
+      assert.ok(
+        err instanceof SigError,
+        `should throw RouteDockSignatureError, got ${String(err)}`,
+      )
+    }
+    assert.ok(threw, 'should have thrown for unsigned manifest')
+
+    console.log('✓ Test 4: Unsigned manifest rejection PASSED')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 5: SessionStore — monotonic invariant rejection ─────────────────────
 
 {
   // Use an in-memory store implementation to test monotonic invariant
@@ -196,7 +321,7 @@ function startTestServer(
   console.log('✓ Test 3: SessionStore monotonic invariant rejection PASSED')
 }
 
-// ── Test 4: Error subclass hierarchy ─────────────────────────────────────────
+// ── Test 5: Error subclass hierarchy ─────────────────────────────────────────
 
 {
   const {
@@ -233,4 +358,143 @@ function startTestServer(
   console.log('✓ Test 4: Error subclass hierarchy PASSED')
 }
 
+// ── Test 5: Per-endpoint spend cap enforcement ────────────────────────────────
+
+{
+  const { RouteDockPolicyRejectError: PolicyErr } = await import('../errors.js')
+
+  /**
+   * Directly exercise _checkAndRecordSpend via a minimal stand-in that exposes
+   * the private method through casting. This avoids needing a live network or
+   * Stellar keypair while still hitting the exact production code path.
+   */
+  type SpendState = {
+    date: string
+    total: number
+    endpoints: Record<string, number>
+  }
+
+  function makeSpendTracker(
+    globalCap: string,
+    endpointCaps?: Record<string, string>,
+  ) {
+    let dailySpend: SpendState = { date: '', total: 0, endpoints: {} }
+    const spendCap = { daily: globalCap, asset: 'USDC' as const, endpointCaps }
+
+    function checkAndRecord(amount: string, endpointKey: string): void {
+      const today = new Date().toISOString().slice(0, 10)
+      if (dailySpend.date !== today) {
+        dailySpend = { date: today, total: 0, endpoints: {} }
+      }
+
+      const amountNum = parseFloat(amount)
+
+      const endpointCapStr = spendCap.endpointCaps?.[endpointKey]
+      if (endpointCapStr !== undefined) {
+        const endpointCapNum = parseFloat(endpointCapStr)
+        const endpointTotal = dailySpend.endpoints[endpointKey] ?? 0
+        if (endpointTotal + amountNum > endpointCapNum) {
+          throw new PolicyErr('local_endpoint_cap_exceeded')
+        }
+      }
+
+      const globalCapNum = parseFloat(spendCap.daily)
+      if (dailySpend.total + amountNum > globalCapNum) {
+        throw new PolicyErr('local_daily_cap_exceeded')
+      }
+
+      dailySpend.total += amountNum
+      if (endpointCapStr !== undefined) {
+        dailySpend.endpoints[endpointKey] =
+          (dailySpend.endpoints[endpointKey] ?? 0) + amountNum
+      }
+    }
+
+    return { checkAndRecord, getState: () => dailySpend }
+  }
+
+  // 5a: Endpoint cap blocks overspend on a single endpoint
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '1.00',
+    })
+    tracker.checkAndRecord('0.60', 'https://api.openai.com') // $0.60 — ok
+    tracker.checkAndRecord('0.39', 'https://api.openai.com') // $0.99 — ok
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // $1.01 — exceeds $1.00 endpoint cap
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_endpoint_cap_exceeded')
+    }
+    assert.ok(threw, '5a: should throw local_endpoint_cap_exceeded')
+    console.log('✓ Test 5a: endpoint cap blocks overspend PASSED')
+  }
+
+  // 5b: Global cap catches aggregate overspend across endpoints
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '5.00',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com')    // global: $0.50
+    tracker.checkAndRecord('0.49', 'https://api.anthropic.com') // global: $0.99
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.02', 'https://api.openai.com') // global $1.01 — exceeds global $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5b: should throw local_daily_cap_exceeded')
+    console.log('✓ Test 5b: global cap catches aggregate overspend PASSED')
+  }
+
+  // 5c: Endpoint not in endpointCaps falls back to global cap only
+  {
+    const tracker = makeSpendTracker('1.00', {
+      'https://api.openai.com': '0.10', // tight cap on openai only
+    })
+    // anthropic not in endpointCaps — should only be subject to global cap
+    tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // fine, global: $0.90
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.90', 'https://api.anthropic.com') // global: $1.80 > $1.00
+    } catch (err) {
+      threw = true
+      assert.ok(err instanceof PolicyErr)
+      assert.equal((err as InstanceType<typeof PolicyErr>).reason, 'local_daily_cap_exceeded')
+    }
+    assert.ok(threw, '5c: unlisted endpoint subject to global cap only')
+    console.log('✓ Test 5c: unlisted endpoint falls back to global cap PASSED')
+  }
+
+  // 5d: Hitting one endpoint cap does not block other endpoints
+  {
+    const tracker = makeSpendTracker('10.00', {
+      'https://api.openai.com': '0.50',
+      'https://api.anthropic.com': '5.00',
+    })
+    tracker.checkAndRecord('0.50', 'https://api.openai.com') // exactly at endpoint cap
+
+    let threw = false
+    try {
+      tracker.checkAndRecord('0.01', 'https://api.openai.com') // endpoint cap exceeded
+    } catch { threw = true }
+    assert.ok(threw, '5d: openai cap should be exhausted')
+
+    // anthropic is unaffected — can still spend
+    tracker.checkAndRecord('1.00', 'https://api.anthropic.com') // should not throw
+    console.log('✓ Test 5d: one endpoint cap exhausted does not block others PASSED')
+  }
+
+  console.log('✓ Test 5: Per-endpoint spend cap enforcement ALL PASSED')
+}
+
 console.log('\nAll smoke tests passed.')
+

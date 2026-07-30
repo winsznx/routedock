@@ -28,7 +28,7 @@ describe('withRetry', () => {
         if (calls < 3) {
           throw new RouteDockNetworkError('transient')
         }
-        return 'ok'
+        return Promise.resolve('ok')
       },
       { maxAttempts: 4, baseDelayMs: 1 },
     )

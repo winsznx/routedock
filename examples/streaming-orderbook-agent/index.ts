@@ -112,7 +112,7 @@ async function main() {
   session = await client.openSession(ORDERBOOK_URL)
 
   console.log(`[session] channel: ${session.channelId}`)
-  console.log(`[session] open tx hash: ${session.openTxHash}`)
+  console.log(`[session] open tx hash: ${session.openTxHash ?? 'n/a (pre-deployed channel)'}`)
   console.log(`[stream] consuming ${TARGET_UPDATES} orderbook updates\n`)
 
   let count = 0
