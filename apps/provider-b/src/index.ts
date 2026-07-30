@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import express from 'express'
 import type { Request, Response } from 'express'
 import { createClient } from '@supabase/supabase-js'
@@ -5,9 +6,7 @@ import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
 import Ajv from 'ajv'
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
-const schema = require('./routedock.schema.json') as Record<string, unknown>
+import schema from '@routedock/routedock/schema'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -46,13 +45,16 @@ const manifest: RouteDockManifest = {
     'mpp-session': {
       rate: '0.0001',
       per: 'voucher',
-      channel_contract: CHANNEL_CONTRACT_ID,
+      channel_factory: CHANNEL_CONTRACT_ID,
       min_deposit: '0.10',
       refund_waiting_period_ledgers: 17280,
     },
   },
-  endpoints: { stream: 'GET /stream/orderbook' },
+  endpoints: { stream: { method: 'GET', path: '/stream/orderbook' } },
   tags: ['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
+  regions: ['FRA', 'SIN'],
+  latency_hints: { FRA: 11, SIN: 19 },
+  categories: ['data/stream/crypto'],
 }
 
 // Required env var check
@@ -108,7 +110,7 @@ app.use(
     pricing: {
       'mpp-session': {
         rate: '0.0001',
-        channelContract: CHANNEL_CONTRACT_ID,
+        channelFactory: CHANNEL_CONTRACT_ID,
       },
     },
     asset: 'USDC',
@@ -118,13 +120,13 @@ app.use(
     payeeSecretKey: STELLAR_PAYEE_SECRET,
     manifest,
     commitmentPublicKey: COMMITMENT_PUBLIC_KEY,
-    onSessionOpen: async (channelId: string) => {
+    onSessionOpen: async (channelId: string, payer: string | null) => {
       if (!supabase) return
       activeSessionChannelId = `${channelId}:${Date.now()}`
       const { error } = await supabase.from('sessions').insert({
         channel_id: activeSessionChannelId,
         payee: STELLAR_PAYEE_ADDRESS,
-        payer: process.env['AGENT_PUBLIC_KEY'] ?? 'unknown',
+        payer: payer ?? 'unknown',
         cumulative_amount: 0,
         status: 'open',
         channel_contract: channelId,
@@ -132,7 +134,7 @@ app.use(
         voucher_count: 0,
       })
       if (error) console.error('[supabase] session insert failed:', error.message)
-      else console.log('[supabase] session opened:', activeSessionChannelId)
+      else console.log(`[supabase] session opened: ${activeSessionChannelId} payer=${payer ?? 'unknown'}`)
     },
     onVoucher: async (voucherIndex: number, cumulativeAmount: string) => {
       if (!supabase || !activeSessionChannelId) return
@@ -145,8 +147,8 @@ app.use(
         .eq('channel_id', activeSessionChannelId)
       if (error) console.error('[supabase] session voucher update failed:', error.message)
     },
-    onSettled: async (txHash: string, totalPaid: string, mode: string) => {
-      console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid}`)
+    onSettled: async (txHash: string, totalPaid: string, mode: string, payer: string | null) => {
+      console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid} payer=${payer ?? 'unknown'}`)
       if (!supabase) return
 
       if (activeSessionChannelId) {
@@ -166,7 +168,7 @@ app.use(
         mode,
         network: STELLAR_NETWORK,
         provider_url: `http://localhost:${PORT}/stream/orderbook`,
-        agent_address: null,
+        agent_address: payer,
         metadata: { settled_at: new Date().toISOString() },
       })
       if (error) console.error('[supabase] tx_log insert failed:', error.message)

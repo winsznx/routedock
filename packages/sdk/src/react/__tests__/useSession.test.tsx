@@ -22,6 +22,7 @@ function mockSession(): SessionHandle {
     async requestRefund() { return 'refund-hash' },
     async settleWithLatestVoucher() { return 'settle-hash' },
     async getDisputeStatus() { return 'open' },
+    on() { return () => {} },
   }
 }
 

@@ -6,7 +6,10 @@ export default defineConfig({
     client: 'src/client/index.ts',
     provider: 'src/provider/index.ts',
     react: 'src/react/index.ts',
+    testing: 'src/testing/index.ts',
     'provider/hono': 'src/provider/hono.ts',
+    'provider/fastify': 'src/provider/fastify.ts',
+    schema: 'src/schema.ts',
   },
   format: ['cjs', 'esm'],
   dts: true,
@@ -14,5 +17,5 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   treeshake: true,
-  external: ['react', 'react-dom', 'express'],
+  external: ['react', 'react-dom', 'express', 'fastify', '@routedock/nulth-sdk'],
 })
