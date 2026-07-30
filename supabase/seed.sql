@@ -7,7 +7,7 @@
 
 -- ─── Sample Providers ────────────────────────────────────────
 
-INSERT INTO providers (name, description, base_url, modes, tags, network, payee, manifest, verified)
+INSERT INTO providers (name, description, base_url, modes, tags, categories, network, payee, manifest, verified)
 VALUES
   (
     'Stellar DEX Price Feed',
@@ -15,6 +15,7 @@ VALUES
     'https://provider-a.railway.app',
     ARRAY['x402', 'mpp-charge'],
     ARRAY['price', 'stellar', 'dex', 'orderbook', 'usdc'],
+    ARRAY['data/price/crypto'],
     'testnet',
     'GDEMO1PAYEEADDRESS11111111111111111111111111111111111111',
     '{
@@ -31,7 +32,8 @@ VALUES
         "mpp-charge": { "amount": "0.0008", "per": "request" }
       },
       "endpoints": { "price": "GET /price" },
-      "tags": ["price", "stellar", "dex", "orderbook", "usdc"]
+      "tags": ["price", "stellar", "dex", "orderbook", "usdc"],
+      "categories": ["data/price/crypto"]
     }'::jsonb,
     true
   ),
@@ -41,6 +43,7 @@ VALUES
     'https://provider-b.railway.app',
     ARRAY['mpp-session'],
     ARRAY['stream', 'stellar', 'dex', 'orderbook', 'usdc', 'sse', 'realtime'],
+    ARRAY['data/stream/crypto'],
     'testnet',
     'GDEMO2PAYEEADDRESS11111111111111111111111111111111111111',
     '{
@@ -62,7 +65,8 @@ VALUES
         }
       },
       "endpoints": { "stream": "GET /stream/orderbook" },
-      "tags": ["stream", "stellar", "dex", "orderbook", "usdc", "sse", "realtime"]
+      "tags": ["stream", "stellar", "dex", "orderbook", "usdc", "sse", "realtime"],
+      "categories": ["data/stream/crypto"]
     }'::jsonb,
     true
   );

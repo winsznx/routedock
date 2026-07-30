@@ -21,8 +21,26 @@
   "properties": {
     "routedock": {
       "type": "string",
-      "const": "1.0",
-      "description": "Manifest schema version. Always '1.0' for this version."
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Manifest schema version, e.g. '1.0', '1.1', '2.0'."
+    },
+    "min_client_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Minimum SDK client version (major.minor) required to use this manifest. Clients below this version must refuse to pay."
+    },
+    "deprecated_modes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PaymentMode"
+      },
+      "uniqueItems": true,
+      "description": "Payment modes still listed in 'modes' for backwards compatibility but deprecated for new integrations."
+    },
+    "sunset_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp after which this manifest version is no longer supported by the provider."
     },
     "name": {
       "type": "string",
@@ -81,11 +99,14 @@
     },
     "endpoints": {
       "type": "object",
-      "description": "Map of endpoint name to HTTP method + path (e.g. { 'price': 'GET /price' })",
+      "description": "Map of endpoint name to endpoint descriptors",
       "additionalProperties": {
-        "type": "string"
+        "$ref": "#/definitions/EndpointDescriptor"
       },
       "minProperties": 1
+    },
+    "sla": {
+      "$ref": "#/definitions/SLAConfig"
     },
     "tags": {
       "type": "array",
@@ -96,9 +117,76 @@
       },
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Optional protocol features this provider supports",
+      "properties": {
+        "streaming": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["sse", "websocket"]
+          },
+          "description": "Supported streaming transports"
+        },
+        "webhooks": {
+          "type": "boolean",
+          "description": "Whether webhook callbacks are supported"
+        },
+        "idempotency_keys": {
+          "type": "boolean",
+          "description": "Whether idempotency keys are supported"
+        },
+        "content_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Supported content types for request/response"
+        }
+      },
+      "additionalProperties": false
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 10
+      },
+      "uniqueItems": true,
+      "description": "IATA airport codes or UN/LOCODE identifiers for regions where this provider has infrastructure (e.g. ['IAD', 'AMS']). Used by agents to select the nearest provider."
+    },
+    "latency_hints": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      },
+      "description": "Provider-declared p50 latency in milliseconds per region code. Keys must be a subset of 'regions'. Example: { 'IAD': 14, 'AMS': 22 }."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "uniqueItems": true,
+      "description": "Optional hierarchical categories from a published taxonomy (e.g. data/price/crypto)"
     }
   },
   "definitions": {
+    "VaultMode": {
+      "type": "string",
+      "enum": ["local-key", "agent-vault", "nulth"],
+      "description": "Agent vault / custody mode for payments from this provider"
+    },
     "PaymentMode": {
       "type": "string",
       "enum": ["x402", "mpp-charge", "mpp-session"],
@@ -122,13 +210,17 @@
         "facilitator": {
           "type": "string",
           "description": "x402 facilitator URL (required for x402 mode). OpenZeppelin Channels endpoint."
+        },
+        "payee": {
+          "type": "string",
+          "description": "Optional per-mode payee override (Stellar G... address). Directs settlements for this mode to a separate account for treasury separation. Falls back to the top-level 'payee' when omitted."
         }
       }
     },
     "SessionPricingConfig": {
       "type": "object",
       "description": "Per-voucher pricing for mpp-session (one-way-channel) mode",
-      "required": ["rate", "per", "channel_contract", "min_deposit", "refund_waiting_period_ledgers"],
+      "required": ["rate", "per", "channel_factory", "min_deposit", "refund_waiting_period_ledgers"],
       "additionalProperties": false,
       "properties": {
         "rate": {
@@ -140,9 +232,9 @@
           "const": "voucher",
           "description": "Billing unit — always 'voucher' for session mode"
         },
-        "channel_contract": {
+        "channel_factory": {
           "type": "string",
-          "description": "Soroban contract address (C...) for the one-way-channel contract"
+          "description": "Stable Soroban factory address (C...) used to deploy a per-session channel"
         },
         "min_deposit": {
           "type": "string",
@@ -152,6 +244,82 @@
           "type": "integer",
           "minimum": 1,
           "description": "Ledgers the server has to settle before the funder can reclaim. Default: 17280 (~24h). Do not reduce in production."
+        }
+      }
+    },
+    "SLAConfig": {
+      "type": "object",
+      "description": "Service Level Agreement for the provider",
+      "required": ["uptime_30d_percent", "p95_latency_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "uptime_30d_percent": {
+          "type": "number",
+          "description": "Uptime percentage over the last 30 days"
+        },
+        "p95_latency_ms": {
+          "type": "number",
+          "description": "P95 latency in milliseconds"
+        },
+        "maintenance_windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cron", "duration_minutes"],
+            "additionalProperties": false,
+            "properties": {
+              "cron": {
+                "type": "string",
+                "description": "Cron expression for the maintenance window"
+              },
+              "duration_minutes": {
+                "type": "number",
+                "description": "Duration of the maintenance window in minutes"
+              }
+            }
+          }
+        }
+      }
+    },
+    "EndpointDescriptor": {
+      "type": "object",
+      "description": "Descriptor for a provider endpoint",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "HTTP method for the endpoint"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path for the endpoint"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Expected request headers"
+        },
+        "request_schema": {
+          "description": "JSON schema for the request body"
+        },
+        "response_schema": {
+          "description": "JSON schema for the response body"
+        },
+        "rate_limit": {
+          "type": "object",
+          "required": ["requests", "window_seconds"],
+          "additionalProperties": false,
+          "properties": {
+            "requests": {
+              "type": "number"
+            },
+            "window_seconds": {
+              "type": "number"
+            }
+          }
         }
       }
     }

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient, type RouteDockClientConfig } from '../client/RouteDockClient.js'
 
@@ -23,9 +23,15 @@ export function useRouteDockClient(config: RouteDockClientConfig): RouteDockClie
     ? `${config.retryPolicy.maxAttempts}|${config.retryPolicy.baseDelayMs}`
     : ''
 
-  return useMemo(
+  const client = useMemo(
     () => new RouteDockClient(config),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [walletKey, config.network, spendCapKey, config.commitmentSecret, retryKey],
   )
+
+  // Dispose the commitment secret when the client instance is replaced or the
+  // component unmounts, so the secret does not linger in the WeakMap.
+  useEffect(() => () => client.dispose(), [client])
+
+  return client
 }
