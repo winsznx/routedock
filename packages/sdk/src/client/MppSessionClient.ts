@@ -308,9 +308,12 @@ export class MppSessionClient {
           preparedTx.sign(agentKeypair)
 
           const result = await server.sendTransaction(preparedTx)
-          if (result.status === 'ERROR' || !result.hash) {
-            const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : result.status
+          if (result.status === 'ERROR') {
+            const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Refund request transaction failed: ${errDetail}`)
+          }
+          if (!result.hash) {
+            throw new RouteDockDisputeError('Refund request transaction not sent')
           }
 
           return result.hash
@@ -357,9 +360,12 @@ export class MppSessionClient {
           const preparedSettleTx = await server.prepareTransaction(settleTx)
           preparedSettleTx.sign(agentKeypair)
           const settleResult = await server.sendTransaction(preparedSettleTx)
-          if (settleResult.status === 'ERROR' || !settleResult.hash) {
-            const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : settleResult.status
+          if (settleResult.status === 'ERROR') {
+            const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Settlement transaction failed: ${errDetail}`)
+          }
+          if (!settleResult.hash) {
+            throw new RouteDockDisputeError('Settlement transaction not sent')
           }
 
           return settleResult.hash
