@@ -5,9 +5,7 @@ import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
 import Ajv from 'ajv'
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
-const schema = require('./routedock.schema.json') as Record<string, unknown>
+import schema from '@routedock/routedock/schema'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -50,8 +48,11 @@ const manifest: RouteDockManifest = {
     },
     'mpp-charge': { amount: '0.0008', per: 'request' },
   },
-  endpoints: { price: 'GET /price' },
+  endpoints: { price: { method: 'GET', path: '/price' } },
   tags: ['price', 'stellar', 'dex', 'orderbook', 'usdc'],
+  regions: ['IAD', 'AMS'],
+  latency_hints: { IAD: 14, AMS: 22 },
+  categories: ['data/price/crypto'],
 }
 
 // Required env var check — abort with clear message rather than a deep stack trace
@@ -103,8 +104,8 @@ app.use(
     payeeSecretKey: STELLAR_PAYEE_SECRET,
     manifest,
     ...(OPENZEPPELIN_API_KEY ? { facilitatorApiKey: OPENZEPPELIN_API_KEY } : {}),
-    onSettled: async (txHash: string, amount: string, mode: string) => {
-      console.log(`[settled] mode=${mode} txHash=${txHash} amount=${amount}`)
+    onSettled: async (txHash: string, amount: string, mode: string, payer: string | null) => {
+      console.log(`[settled] mode=${mode} txHash=${txHash} amount=${amount} payer=${payer ?? 'unknown'}`)
       if (!supabase) return
       const txType = mode === 'mpp-charge' ? 'mpp_charge' : 'x402_settle'
       const { error } = await supabase.from('tx_log').insert({
@@ -114,7 +115,7 @@ app.use(
         mode,
         network: STELLAR_NETWORK,
         provider_url: `http://localhost:${PORT}/price`,
-        agent_address: null,
+        agent_address: payer,
         metadata: { settled_at: new Date().toISOString() },
       })
       if (error) console.error('[supabase] tx_log insert failed:', error.message)

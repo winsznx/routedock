@@ -34,3 +34,7 @@ stellar contract deploy \
 > **⚠️ SECURITY WARNING:** The underlying `stellar-experimental/one-way-channel` contract
 > is **unaudited**. RouteDock wraps it with safe defaults and a durable server-side
 > session store, but production use should await a formal audit.
+>
+> **Audit Status:**
+> - Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
+> - SCF Audit Bank application: Submitted
