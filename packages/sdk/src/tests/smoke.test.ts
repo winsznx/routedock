@@ -43,7 +43,7 @@ function startTestServer(
     routedock: '1.0',
     name: 'Test Provider',
     description: 'Smoke test provider',
-    modes: ['x402', 'mpp-charge'],
+    modes: ['x402', 'mpp-charge'] as import('../types.js').PaymentMode[],
     network: 'testnet',
     asset: 'USDC',
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -91,7 +91,7 @@ function startTestServer(
       },
     }
 
-    const costOptimizedMode = selectMode(costAwareManifest, { optimize: 'cost' })
+    const costOptimizedMode = selectMode(costAwareManifest as import('../types.js').RouteDockManifest, { optimize: 'cost' })
     assert.equal(costOptimizedMode, 'x402', 'cost optimization should prefer the lower-cost per-request mode')
 
     const modeForced = selectMode(manifest, { sustained: true })
@@ -152,7 +152,7 @@ function startTestServer(
     const manifest = await fetchManifest(server.url)
     assert.equal(
       manifest.pricing['mpp-session']?.channel_factory,
-      signedFactoryManifest.pricing['mpp-session'].channel_factory,
+      signedFactoryManifest.pricing['mpp-session']?.channel_factory,
       'manifest should preserve channel_factory in mpp-session pricing',
     )
     console.log('✓ Test 2: channel_factory manifest acceptance PASSED')
