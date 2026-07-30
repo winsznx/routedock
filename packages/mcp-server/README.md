@@ -8,6 +8,8 @@ This MCP server implements the thesis that base payment infrastructure should be
 
 - `pay_for_data(url, max_amount)` - Pay for a single data request
 - `open_session(url)` - Open a sustained MPP session for streaming
+- `stream_session(channel_id)` - Pull streamed data from an open session
+- `close_session(channel_id)` - Settle and close an open session
 - `check_balance()` - Check wallet balance
 - `list_providers(tags)` - Discover available providers
 
@@ -57,13 +59,37 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
 
 ### open_session
 
-Open a sustained MPP session for streaming data. Requires `COMMITMENT_SECRET`.
+Open a sustained MPP session for streaming data. Requires `COMMITMENT_SECRET`. RouteDock channels
+are pre-deployed and funded out-of-band before the agent runs, so `initial_deposit` is a safety
+check against the provider's `min_deposit`, not a fund transfer. Pass the returned `channel_id` to
+`stream_session` and `close_session` — the channel's collateral cannot be settled otherwise.
 
 **Parameters:**
 - `url` (required): Base URL of the provider
-- `initial_deposit` (optional): Initial deposit amount in USDC
+- `initial_deposit` (optional): Amount in USDC you intend the channel to be funded with
 
-**Returns:** Session handle with channel ID and open transaction hash
+**Returns:** `channel_id` and open transaction hash
+
+### stream_session
+
+Pull the next batch of streamed responses from a session opened with `open_session`. Each message
+sends a voucher and waits for the provider's response.
+
+**Parameters:**
+- `channel_id` (required): The `channel_id` returned by `open_session`
+- `max_messages` (optional): Maximum number of messages to pull in this call (default 1)
+
+**Returns:** The pulled messages
+
+### close_session
+
+Close a session opened with `open_session`, settling the channel on-chain with the highest signed
+voucher. Required to release the session's locked collateral.
+
+**Parameters:**
+- `channel_id` (required): The `channel_id` returned by `open_session`
+
+**Returns:** Close transaction hash, total amount paid, and vouchers issued
 
 ### check_balance
 
@@ -118,6 +144,8 @@ Once configured, you can ask Claude to:
 > "List providers that offer price data"
 > "Pay for data from https://api-a.routedock.xyz/price with a max of 0.01 USDC"
 > "Open a session with https://api-b.routedock.xyz for streaming orderbook data"
+> "Pull the next few messages from that session"
+> "Close the session and settle the channel"
 
 ## Development
 

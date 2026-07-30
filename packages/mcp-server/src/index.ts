@@ -7,6 +7,7 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js'
 import { RouteDockClient } from '@routedock/routedock'
+import type { SessionHandle } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { createClient } from '@supabase/supabase-js'
 
@@ -35,6 +36,13 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 }
 
+// Sessions opened via open_session, keyed by channelId, so a later
+// close_session/stream_session call in the same server process can find the
+// live handle again. If the process restarts, in-flight sessions are not
+// recoverable here — the SDK's own maxDurationMs guard still auto-closes the
+// underlying channel on-chain so collateral is never stranded indefinitely.
+const openSessions = new Map<string, SessionHandle>()
+
 // Tool definitions
 const TOOLS: Tool[] = [
   {
@@ -62,7 +70,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'open_session',
-    description: 'Open a sustained MPP session with a provider for streaming data. Requires commitmentSecret to be configured. Returns a session handle for streaming and closing.',
+    description: 'Open a sustained MPP session with a provider for streaming data. Requires COMMITMENT_SECRET to be configured. Returns a channel_id — pass it to stream_session to pull data and to close_session when done, or the channel collateral can never be settled.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -72,10 +80,42 @@ const TOOLS: Tool[] = [
         },
         initial_deposit: {
           type: 'string',
-          description: 'Initial deposit amount in USDC for the channel (e.g., "1.0")',
+          description: 'Amount in USDC you intend the channel to be funded with (e.g., "1.0"). RouteDock channels are pre-deployed and funded out-of-band before the agent runs — this is checked against the provider\'s advertised min_deposit as a safety guard, it does not itself move funds.',
         },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'stream_session',
+    description: 'Pull the next batch of streamed responses from a session opened with open_session. Each message sends a voucher and waits for the provider to acknowledge it. Call repeatedly to keep streaming, then call close_session to settle and release the channel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel_id: {
+          type: 'string',
+          description: 'The channel_id returned by open_session',
+        },
+        max_messages: {
+          type: 'number',
+          description: 'Maximum number of messages to pull in this call (default 1)',
+        },
+      },
+      required: ['channel_id'],
+    },
+  },
+  {
+    name: 'close_session',
+    description: 'Close an MPP session opened with open_session, settling the channel on-chain with the highest signed voucher. This is required to release the session\'s locked collateral — an open session left unclosed keeps funds locked until the SDK\'s wall-clock auto-close guard fires.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel_id: {
+          type: 'string',
+          description: 'The channel_id returned by open_session',
+        },
+      },
+      required: ['channel_id'],
     },
   },
   {
@@ -98,7 +138,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'list_providers',
-    description: 'List available RouteDock providers from the registry. Can filter by capability tags using trigram search.',
+    description: 'List available RouteDock providers from the registry. Can filter by capability tags (returns providers matching any of the given tags) and by network.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -187,14 +227,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'open_session': {
-        const { url } = args as { url: string }
+        const { url, initial_deposit } = args as { url: string; initial_deposit?: string }
 
         if (!COMMITMENT_SECRET) {
           throw new Error('COMMITMENT_SECRET environment variable is required for session mode')
         }
 
+        if (initial_deposit) {
+          const baseUrl = new URL(url).origin
+          const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
+          const manifest = (await manifestResponse.json()) as { pricing?: Record<string, { min_deposit?: string }> }
+          const minDeposit = manifest?.pricing?.['mpp-session']?.min_deposit
+          if (minDeposit && parseFloat(initial_deposit) < parseFloat(minDeposit)) {
+            throw new Error(
+              `initial_deposit ${initial_deposit} is below this provider's min_deposit ${minDeposit}. ` +
+              `RouteDock channels are pre-deployed and funded out-of-band before the agent runs — ` +
+              `make sure the channel is funded with at least min_deposit before opening a session.`
+            )
+          }
+        }
+
         const session = await client.openSession(url)
-        
+        openSessions.set(session.channelId, session)
+
         return {
           content: [
             {
@@ -203,7 +258,72 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 success: true,
                 channel_id: session.channelId,
                 open_tx_hash: session.openTxHash,
-                message: 'Session opened successfully. Use the session handle to stream data or close the session.',
+                message: 'Session opened successfully. Use stream_session to pull data and close_session to settle and release the channel collateral.',
+              }, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'stream_session': {
+        const { channel_id, max_messages } = args as { channel_id: string; max_messages?: number }
+
+        const session = openSessions.get(channel_id)
+        if (!session) {
+          throw new Error(
+            `No open session found for channel_id ${channel_id}. It may have already been closed, ` +
+            `auto-closed after its wall-clock lifetime guard, or opened by a different server process.`
+          )
+        }
+
+        const limit = Math.max(1, max_messages ?? 1)
+        const messages: unknown[] = []
+        const iterator = session.stream()[Symbol.asyncIterator]()
+        for (let i = 0; i < limit; i++) {
+          const { value, done } = await iterator.next()
+          if (done) break
+          messages.push(value)
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                channel_id,
+                count: messages.length,
+                messages,
+              }, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'close_session': {
+        const { channel_id } = args as { channel_id: string }
+
+        const session = openSessions.get(channel_id)
+        if (!session) {
+          throw new Error(
+            `No open session found for channel_id ${channel_id}. It may have already been closed or ` +
+            `auto-closed after its wall-clock lifetime guard.`
+          )
+        }
+
+        const result = await session.close()
+        openSessions.delete(channel_id)
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                channel_id,
+                close_tx_hash: result.closeTxHash,
+                total_paid: result.totalPaid,
+                vouchers_issued: result.vouchersIssued,
               }, null, 2),
             },
           ],
@@ -295,10 +415,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (tags) {
-          const tagList = tags.split(',').map(t => t.trim())
-          // Use trigram search for each tag
-          for (const tag of tagList) {
-            query = query.textSearch('tags', tag)
+          const tagList = tags.split(',').map(t => t.trim()).filter(Boolean)
+          // tags is a TEXT[] column (see idx_providers_tags GIN index) — array
+          // overlap, not to_tsvector/textSearch, is the correct operator here.
+          if (tagList.length > 0) {
+            query = query.overlaps('tags', tagList)
           }
         }
 
