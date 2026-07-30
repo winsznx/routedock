@@ -303,8 +303,16 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
           // empty or non-JSON body
         }
 
-        const closeAmount = body?.amount ? BigInt(body.amount) : lastCumulativeAmount
-        const closeSig = body?.signature ?? lastSignatureHex
+        const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+        let closeAmount: bigint
+        let closeSig: string
+        if (bodyAmount > lastCumulativeAmount) {
+          closeAmount = bodyAmount
+          closeSig = body?.signature ?? lastSignatureHex
+        } else {
+          closeAmount = lastCumulativeAmount
+          closeSig = lastSignatureHex
+        }
 
         if (closeAmount > 0n && closeSig) {
           const closeTxHash = await channelClose({
@@ -316,7 +324,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
           })
 
           if (opts.onSettled) {
-            const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+            const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
             await opts.onSettled(closeTxHash, totalPaid, 'mpp-session')
           }
 
