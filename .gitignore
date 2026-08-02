@@ -23,3 +23,11 @@ AGENT_PROGRESS.md
 docs/DEMO_SCRIPT.md
 .claude/
 .vercel
+DRIP6_ISSUES.md
+DRIP7_ISSUES.md
+.env.cf.production
+.env.production.local
+.wrangler
+.open-next
+apps/web/.env.production.local
+apps/web/.env.cf.production
