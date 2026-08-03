@@ -39,11 +39,11 @@ function startTestServer(
   const { signManifest } = await import('../manifest/sign.js')
   const payeeKp = Keypair.random()
 
-  const validManifest = {
+  const validManifest: import('../types.js').RouteDockManifest = {
     routedock: '1.0',
     name: 'Test Provider',
     description: 'Smoke test provider',
-    modes: ['x402', 'mpp-charge'],
+    modes: ['x402' as const, 'mpp-charge' as const],
     network: 'testnet',
     asset: 'USDC',
     asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
@@ -83,7 +83,7 @@ function startTestServer(
     const mode = selectMode(manifest)
     assert.equal(mode, 'mpp-charge', 'mpp-charge should be preferred over x402')
 
-    const costAwareManifest = {
+    const costAwareManifest: import('../types.js').RouteDockManifest = {
       ...validManifest,
       pricing: {
         x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' },
@@ -152,7 +152,7 @@ function startTestServer(
     const manifest = await fetchManifest(server.url)
     assert.equal(
       manifest.pricing['mpp-session']?.channel_factory,
-      signedFactoryManifest.pricing['mpp-session'].channel_factory,
+      signedFactoryManifest.pricing['mpp-session']?.channel_factory,
       'manifest should preserve channel_factory in mpp-session pricing',
     )
     console.log('✓ Test 2: channel_factory manifest acceptance PASSED')
