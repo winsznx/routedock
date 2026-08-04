@@ -6,7 +6,7 @@
  * signs ed25519 commitments per the one-way-channel protocol — the
  * @stellar/mpp library handles the 402 challenge-response cycle.
  */
-import { Keypair } from '@stellar/stellar-sdk'
+import { Keypair, Networks } from '@stellar/stellar-sdk'
 import { stellar } from '@stellar/mpp/channel/client'
 import { Mppx } from 'mppx/client'
 import type {
@@ -111,6 +111,8 @@ export class MppSessionClient {
       }
     }
 
+    const network = this.network
+
     const handle: SessionHandle = {
       channelId: channelFactory,
       // The channel is pre-deployed and funded before the agent runs, so the
@@ -180,10 +182,12 @@ export class MppSessionClient {
 
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
           await import('@stellar/stellar-sdk')
-        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const rpcUrl = network === 'testnet'
+          ? 'https://soroban-testnet.stellar.org'
+          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
-        const passphrase = 'Test SDF Network ; September 2015'
+        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
 
         const account = await withRetry(async () => {
           try {
@@ -287,10 +291,12 @@ export class MppSessionClient {
 
       async requestRefund(): Promise<string> {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const rpcUrl = network === 'testnet'
+          ? 'https://soroban-testnet.stellar.org'
+          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
-        const passphrase = 'Test SDF Network ; September 2015'
+        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
 
         try {
           const account = await server.getAccount(agentPublicKey)
@@ -319,10 +325,12 @@ export class MppSessionClient {
 
       async settleWithLatestVoucher(): Promise<string> {
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const rpcUrl = network === 'testnet'
+          ? 'https://soroban-testnet.stellar.org'
+          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
-        const passphrase = 'Test SDF Network ; September 2015'
+        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
 
         try {
           const account = await server.getAccount(agentPublicKey)
@@ -365,10 +373,12 @@ export class MppSessionClient {
 
       async getDisputeStatus(): Promise<DisputeStatus> {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = 'https://soroban-testnet.stellar.org'
+        const rpcUrl = network === 'testnet'
+          ? 'https://soroban-testnet.stellar.org'
+          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
-        const passphrase = 'Test SDF Network ; September 2015'
+        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
 
         try {
           const account = await server.getAccount(agentPublicKey)
