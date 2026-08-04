@@ -46,6 +46,7 @@ pub enum Error {
     LifetimeCapExceeded = 7,
     NoPendingAdmin = 8,
     ContractFrozen = 9,
+    InvalidAmount = 10,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -291,6 +292,14 @@ impl CustomAccountInterface for AgentVault {
                     let amount: i128 = ctx.args.get(2).unwrap().into_val(&env);
                     let asset: Address = ctx.contract.clone();
 
+                    // Reject non-positive amounts: a negative amount would
+                    // deflate the day/payee/lifetime spend counters via
+                    // checked_add, letting subsequent real transfers exceed
+                    // every cap. Zero amounts are meaningless and also rejected.
+                    if amount <= 0 {
+                        return Err(Error::InvalidAmount);
+                    }
+
                     // Policy 2 — EndpointAllowlistPolicy (also fetches per-payee sub-cap)
                     let payee_sub_cap = allowlist.get(to.clone()).ok_or(Error::PayeeNotAllowed)?;
 
@@ -409,6 +418,31 @@ mod tests {
             contract: token,
             fn_name: symbol_short!("transfer"),
             args: (from, to.clone(), amount).into_val(env),
+        })
+    }
+
+    /// Read (day_spend, per_payee_spend, lifetime_spend) directly from storage.
+    fn read_spend_counters(env: &Env, vault_id: &Address, to: &Address) -> (i128, i128, i128) {
+        let day_bucket: u32 = env.ledger().sequence() / 17_280;
+        let spend_key = (SPEND_PREFIX, day_bucket);
+        let payee_key = (PAYEE_SPEND_PREFIX, day_bucket, to.clone());
+        env.as_contract(vault_id, || {
+            let day = env
+                .storage()
+                .temporary()
+                .get::<(Symbol, u32), i128>(&spend_key)
+                .unwrap_or(0);
+            let payee = env
+                .storage()
+                .temporary()
+                .get::<(Symbol, u32, Address), i128>(&payee_key)
+                .unwrap_or(0);
+            let lifetime = env
+                .storage()
+                .instance()
+                .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
+                .unwrap_or(0);
+            (day, payee, lifetime)
         })
     }
 
@@ -1672,5 +1706,97 @@ mod tests {
         let updated_allowlist = client.allowlist();
         assert_eq!(updated_allowlist.len(), 2);
         assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
+    }
+
+    /// Test 32: negative transfer amount is rejected and counters stay untouched
+    #[test]
+    fn test_negative_transfer_amount_rejected() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &agent_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, -100)]);
+        let result =
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::InvalidAmount,
+            "negative transfer amount must be rejected with InvalidAmount"
+        );
+
+        assert_eq!(
+            read_spend_counters(&env, &vault_id, &provider_a),
+            (0, 0, 0),
+            "rejected negative transfer must not mutate any spend counter"
+        );
+    }
+
+    /// Test 33: zero transfer amount is also rejected
+    #[test]
+    fn test_zero_transfer_amount_rejected() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &agent_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 0)]);
+        let result =
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::InvalidAmount,
+            "zero transfer amount must be rejected with InvalidAmount"
+        );
+    }
+
+    /// Test 34: negative transfer after a real payment must not deflate the counters
+    #[test]
+    fn test_negative_transfer_does_not_deflate_counters() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+
+        // Legitimate payment of 4_000_000 (cap = 5_000_000)
+        let p1 = BytesN::<32>::random(&env);
+        let s1 = sign_payload(&env, &agent_sk, &p1);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
+            .unwrap();
+
+        assert_eq!(
+            read_spend_counters(&env, &vault_id, &provider_a),
+            (4_000_000, 4_000_000, 4_000_000),
+            "valid payment should advance all three counters"
+        );
+
+        // Hostile "transfer" with a negative amount — must be rejected, not deflate.
+        let p2 = BytesN::<32>::random(&env);
+        let s2 = sign_payload(&env, &agent_sk, &p2);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, -4_000_000)]);
+        let result =
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            Error::InvalidAmount,
+            "negative transfer must be rejected with InvalidAmount"
+        );
+
+        assert_eq!(
+            read_spend_counters(&env, &vault_id, &provider_a),
+            (4_000_000, 4_000_000, 4_000_000),
+            "negative transfer must not deflate the spend counters"
+        );
+
+        // The cap is still respected: 2_000_000 more would exceed the 5_000_000 daily cap.
+        let p3 = BytesN::<32>::random(&env);
+        let s3 = sign_payload(&env, &agent_sk, &p3);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let result3 =
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3);
+        assert_eq!(
+            result3.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "cap must still be enforced — counters were not deflated"
+        );
     }
 }
