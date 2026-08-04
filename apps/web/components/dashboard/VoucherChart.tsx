@@ -37,7 +37,7 @@ export function VoucherChart() {
   const fetchData = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
     const { data: rows } = await supabase
-      .from('sessions')
+      .from('public_sessions')
       .select('opened_at, voucher_count')
       .not('voucher_count', 'eq', 0)
       .order('opened_at', { ascending: true })
@@ -68,9 +68,12 @@ export function VoucherChart() {
   }, [])
 
   useEffect(() => {
-    void fetchData()
+    const initialFetch = setTimeout(() => void fetchData(), 0)
     const interval = setInterval(() => void fetchData(), 30_000)
-    return () => clearInterval(interval)
+    return () => {
+      clearTimeout(initialFetch)
+      clearInterval(interval)
+    }
   }, [fetchData])
 
   if (data.length === 0) {

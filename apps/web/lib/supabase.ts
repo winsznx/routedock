@@ -29,9 +29,7 @@ export interface Session {
   payee: string
   payer: string
   cumulative_amount: number
-  last_signature: string | null
   status: 'open' | 'closing' | 'closed'
-  channel_contract: string
   network: string
   opened_at: string
   updated_at: string
