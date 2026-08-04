@@ -214,6 +214,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.47.0
         version: 2.102.1
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
