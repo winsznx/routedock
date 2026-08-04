@@ -5,16 +5,27 @@ export interface RetryPolicy {
   maxAttempts?: number
   /** Base delay for exponential backoff in ms. Default: 250. */
   baseDelayMs?: number
+  /** Maximum jittered backoff delay in ms. Default: 30000. */
+  maxDelayMs?: number
 }
 
 export const DEFAULT_RETRY_POLICY: Required<RetryPolicy> = {
   maxAttempts: 4,
   baseDelayMs: 250,
+  maxDelayMs: 30_000,
 }
 
-/** Delays between attempts: 250ms, 500ms, 1s, 2s, 4s (index = attempt - 1). */
-export function backoffDelayMs(attempt: number, baseDelayMs: number): number {
-  return baseDelayMs * 2 ** attempt
+/**
+ * Full jitter exponential backoff delay.
+ * Delay range: 0..min(maxDelayMs, baseDelayMs * 2 ** attempt).
+ */
+export function backoffDelayMs(
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs = DEFAULT_RETRY_POLICY.maxDelayMs,
+): number {
+  const cappedDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt)
+  return Math.floor(Math.random() * (cappedDelay + 1))
 }
 
 function sleep(ms: number): Promise<void> {
@@ -29,7 +40,10 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   policy: RetryPolicy = {},
 ): Promise<T> {
-  const { maxAttempts, baseDelayMs } = { ...DEFAULT_RETRY_POLICY, ...policy }
+  const { maxAttempts, baseDelayMs, maxDelayMs } = {
+    ...DEFAULT_RETRY_POLICY,
+    ...policy,
+  }
   let lastError: RouteDockError | undefined
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -48,7 +62,7 @@ export async function withRetry<T>(
       const delay =
         err.retryAfterMs !== undefined
           ? err.retryAfterMs
-          : backoffDelayMs(attempt, baseDelayMs)
+          : backoffDelayMs(attempt, baseDelayMs, maxDelayMs)
 
       await sleep(delay)
     }

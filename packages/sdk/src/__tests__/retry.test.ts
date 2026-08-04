@@ -10,12 +10,30 @@ import {
 import { withRetry, backoffDelayMs, DEFAULT_RETRY_POLICY } from '../internal/retry.js'
 
 describe('backoffDelayMs', () => {
-  it('doubles from baseDelayMs per attempt', () => {
-    assert.equal(backoffDelayMs(0, 250), 250)
-    assert.equal(backoffDelayMs(1, 250), 500)
-    assert.equal(backoffDelayMs(2, 250), 1000)
-    assert.equal(backoffDelayMs(3, 250), 2000)
-    assert.equal(backoffDelayMs(4, 250), 4000)
+  it('applies full jitter within exponential backoff range', () => {
+    const originalRandom = Math.random
+    Math.random = () => 0.5
+
+    try {
+      assert.equal(backoffDelayMs(0, 250), 125)
+      assert.equal(backoffDelayMs(1, 250), 250)
+      assert.equal(backoffDelayMs(2, 250), 500)
+      assert.equal(backoffDelayMs(3, 250), 1000)
+      assert.equal(backoffDelayMs(4, 250), 2000)
+    } finally {
+      Math.random = originalRandom
+    }
+  })
+
+  it('caps jittered backoff at maxDelayMs', () => {
+    const originalRandom = Math.random
+    Math.random = () => 0.5
+
+    try {
+      assert.equal(backoffDelayMs(10, 250, 1000), 500)
+    } finally {
+      Math.random = originalRandom
+    }
   })
 })
 
@@ -83,6 +101,37 @@ describe('withRetry', () => {
       )
     } finally {
       globalThis.setTimeout = originalSetTimeout
+    }
+  })
+
+  it('uses capped full jitter for retry delays when retryAfterMs is absent', async () => {
+    const delays: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    const originalRandom = Math.random
+    Math.random = () => 0.25
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      delays.push(ms ?? 0)
+      return originalSetTimeout(fn, 0)
+    }) as typeof setTimeout
+
+    let calls = 0
+    try {
+      const result = await withRetry(
+        async () => {
+          calls++
+          if (calls < 3) {
+            throw new RouteDockNetworkError('transient')
+          }
+          return Promise.resolve('ok')
+        },
+        { maxAttempts: 4, baseDelayMs: 100, maxDelayMs: 150 },
+      )
+      assert.equal(result, 'ok')
+      assert.equal(calls, 3)
+      assert.deepEqual(delays, [25, 37])
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+      Math.random = originalRandom
     }
   })
 
