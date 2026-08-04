@@ -66,8 +66,20 @@ export class X402Client {
       }
 
       if (init.status !== 402) {
-        const data = await init.json()
-        return { data, txHash: null, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
+        if (!init.ok) {
+          throw httpStatusToError(
+            `x402 initial request failed: HTTP ${init.status}`,
+            init.status,
+            init,
+          )
+        }
+        let data: unknown
+        try {
+          data = await init.json()
+        } catch {
+          throw new RouteDockManifestError(`Failed to parse JSON from non-402 response (HTTP ${init.status})`)
+        }
+        return { data, txHash: null, mode: 'x402', amount: '0', timestamp: Date.now() }
       }
 
       const reqHeader = init.headers.get('X-Payment-Requirements')
@@ -117,7 +129,12 @@ export class X402Client {
         }
       }
 
-      const data = await settled.json()
+      let data: unknown
+      try {
+        data = await settled.json()
+      } catch {
+        throw new RouteDockManifestError('Failed to parse JSON from settled response')
+      }
       return { data, txHash, mode: 'x402', amount: pricing.amount, timestamp: Date.now() }
     }, this.retryPolicy)
   }
