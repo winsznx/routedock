@@ -490,7 +490,14 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
           closeSig = body?.signature ?? lastSignatureHex
         } else {
           closeAmount = lastCumulativeAmount
-          closeSig = lastSignatureHex
+          // Prefer the provider's own tracked signature. Fall back to the
+          // client's only when it signs the same amount and the provider never
+          // captured one (voucher reached the mppx store without a Payment
+          // credential) — otherwise a close for a genuinely tracked amount
+          // no-ops and the session is never flagged for recovery.
+          closeSig =
+            lastSignatureHex ||
+            (bodyAmount === lastCumulativeAmount ? body?.signature ?? '' : '')
         }
 
         if (closeAmount > 0n && closeSig) {
