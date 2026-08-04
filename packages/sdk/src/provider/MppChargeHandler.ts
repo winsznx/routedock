@@ -3,6 +3,7 @@ import { stellar } from '@stellar/mpp/charge/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
+import { extractPayerAddress } from './payer.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import {
   InMemorySeenTxStore,
@@ -72,9 +73,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
               payload?: { sender?: string; from?: string }
             }
             const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            if (typeof key === 'string' && key.startsWith('G')) {
-              payerAddress = key
-            }
+            payerAddress = extractPayerAddress(key)
           }
         }
       } catch {

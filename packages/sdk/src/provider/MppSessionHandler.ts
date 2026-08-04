@@ -4,6 +4,7 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 import { resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
+import { extractPayerAddress } from './payer.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -279,9 +280,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             // Capture payer address on first voucher (before sessionOpened is set)
             if (!sessionPayerAddress) {
               const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-              if (typeof key === 'string' && key.startsWith('G')) {
-                sessionPayerAddress = key
-              }
+              sessionPayerAddress = extractPayerAddress(key)
             }
           }
         } catch {
