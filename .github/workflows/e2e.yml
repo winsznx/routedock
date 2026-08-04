@@ -41,7 +41,12 @@ jobs:
         if: ${{ env.AGENT_SECRET != '' }}
         env:
           NODE_ENV: test
-        run: pnpm --filter agent test:e2e
+          PROVIDER_SECRET: ${{ env.AGENT_SECRET }}
+        run: |
+          pnpm --filter provider-a dev &
+          pnpm --filter provider-b dev &
+          sleep 5
+          pnpm --filter agent test:e2e
 
       - name: Skip E2E — no AGENT_SECRET
         if: ${{ env.AGENT_SECRET == '' }}
