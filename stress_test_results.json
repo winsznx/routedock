@@ -1,0 +1,3308 @@
+{
+  "runAt": "2026-06-27T13:22:44.438Z",
+  "wallMs": 2347.9198,
+  "table": [
+    {
+      "phase": "channel-open",
+      "n": 50,
+      "successPct": 100,
+      "p50": 1034,
+      "p95": 1086,
+      "p99": 1096,
+      "min": 954.3346000000001,
+      "max": 1096.1925999999999
+    },
+    {
+      "phase": "payment",
+      "n": 500,
+      "successPct": 100,
+      "p50": 5,
+      "p95": 16,
+      "p99": 17,
+      "min": 0.04870000000028085,
+      "max": 19.222999999999956
+    },
+    {
+      "phase": "channel-close",
+      "n": 50,
+      "successPct": 100,
+      "p50": 291,
+      "p95": 325,
+      "p99": 336,
+      "min": 269.84619999999995,
+      "max": 336.06179999999995
+    },
+    {
+      "phase": "x402-pay",
+      "n": 50,
+      "successPct": 100,
+      "p50": 821,
+      "p95": 924,
+      "p99": 941,
+      "min": 673.6922,
+      "max": 940.6337000000003
+    },
+    {
+      "phase": "dispute",
+      "n": 0,
+      "successPct": 0,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "min": 0,
+      "max": 0
+    }
+  ],
+  "raw": [
+    {
+      "phase": "channel-open",
+      "ms": 1000.3335,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.6898000000001048,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.1765999999997803,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.786200000000008,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.133499999999913,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.522300000000087,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.678899999999885,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.524200000000292,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.247200000000248,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.509099999999762,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.0733000000000175,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 291.69119999999975,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 817.1961999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 963.0482000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.9785000000001673,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.875799999999799,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.4331999999999425,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.657199999999648,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.479200000000219,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6527000000000953,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.500100000000202,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.2784999999998945,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5084999999999127,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.2707000000000335,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 286.4265999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 827.9277000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 961.2162999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.523400000000038,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.451600000000326,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.639400000000023,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.497200000000248,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.660699999999906,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.497699999999895,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.280799999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.5032000000001062,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.978900000000067,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.826299999999719,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 298.0673999999999,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 879.3195999999998,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 959.5156999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.478399999999965,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.857500000000073,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.085599999999886,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.525800000000345,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.644999999999982,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.503299999999854,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.290600000000268,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.4749000000001615,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.086999999999989,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.38570000000027,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 281.5488,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 803.7526000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 991.5320999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.1675999999997657,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6508999999996377,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.504699999999957,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.292899999999918,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5050999999998567,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.408899999999903,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.0237999999999374,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.115699999999833,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.605000000000018,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.016399999999976,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 325.2891999999997,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 852.3403999999996,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 960.2575999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.104800000000068,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.4617000000002918,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.695999999999913,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.4529999999999745,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.673999999999978,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.495800000000145,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.288300000000163,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5039999999999054,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.253000000000156,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 18.20550000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 292.8229000000001,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 924.2829000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 954.3346000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.277599999999893,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.277900000000045,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.767499999999927,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.4673999999999978,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.04870000000028085,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.655999999999949,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.453899999999976,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6547999999997955,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.503699999999753,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.66840000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 304.9875000000002,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 885.2494000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 968.3525000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.855999999999767,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.515100000000075,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.666200000000117,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.4965000000001965,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.261099999999715,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.490099999999984,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.83640000000014,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.855199999999968,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.936099999999897,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.25610000000006,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 298.5763000000002,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 806.7485000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 989.5958999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.089500000000044,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.515399999999772,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.263699999999972,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5075999999999112,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.2520000000004075,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9388000000003558,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.351799999999912,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.289499999999862,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.927900000000136,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.2082000000000335,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 296.2078999999999,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 847.8478,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1003.1110999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.14870000000019,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.8297999999999774,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.369799999999941,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.335099999999784,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.3078999999997905,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.260299999999916,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.2204999999999018,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.8213000000000648,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.965200000000095,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.490299999999934,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 293.4234999999999,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 784.7719999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 987.8431,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.390799999999672,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.525000000000091,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.248700000000099,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5119999999997162,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.057800000000043,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.3924999999999272,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.11409999999978,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.608299999999872,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.583700000000135,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.86869999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 286.91629999999986,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 815.0751,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 965.1987000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.7449000000001433,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.673899999999776,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.448100000000068,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6736000000000786,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.495899999999892,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.260299999999916,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.5238000000003922,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9816999999998188,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.284500000000207,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9281999999998334,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 287.8631999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 888.7188000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 990.8113000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.006600000000162,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.2797999999997955,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.5063000000000102,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.24980000000005,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 19.201100000000224,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.685899999999947,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.017700000000332,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.4386999999996988,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5192999999999302,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.071600000000217,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 294.72819999999956,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 841.7811999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 986.9630999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.19509999999991123,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6491000000000895,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.505099999999857,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.259299999999712,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.5248999999998887,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.075199999999768,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 18.388800000000174,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.704999999999927,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.980099999999766,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0475000000001273,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 298.6025999999997,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 940.6337000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 989.2349000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.550199999999677,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.321800000000167,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.5093000000001666,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9845000000000255,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.07529999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.54300000000012,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.769800000000032,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.76240000000007,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.6732999999999265,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.41820000000007,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 291.91330000000016,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 788.9225999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1055.5591000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1055999999998676,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5106000000000677,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.404899999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.1556000000000495,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.570099999999911,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.8034999999999854,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.852099999999609,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.2500999999997475,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5039999999999054,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0419999999999163,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 311.62609999999995,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 810.7972,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1005.8556000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.4746000000000095,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.795200000000023,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.733899999999721,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.67470000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.620600000000195,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.23090000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.316400000000158,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.350500000000011,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.458900000000085,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.3989999999998872,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 287.24810000000025,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 821.1934000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1056.46,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.710099999999784,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.830800000000181,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.739799999999832,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.153399999999692,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.253099999999904,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.8409999999998945,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.311799999999948,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.967799999999897,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.025100000000293,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.735599999999977,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 283.7921000000001,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 856.8111999999996,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 999.4774999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.90079999999989,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.8759000000000015,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.790300000000116,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.712800000000243,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.674099999999726,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6233000000001994,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.6880000000001019,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.384000000000015,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.459100000000035,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0625,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 293.71720000000005,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 906.7795000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1061.4846999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.208900000000085,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.534799999999905,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.861300000000028,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.852599999999711,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.9558999999999287,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.259599999999864,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.424199999999928,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.958999999999833,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.211299999999937,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.497199999999793,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 292.88539999999966,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 767.7426,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1004.1622,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.9145999999996093,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.0637999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.656400000000303,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.569799999999759,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.8817999999996573,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.51700000000028,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.82320000000027,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5408000000002176,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5199000000002343,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.400299999999788,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 291.21119999999974,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 820.4767000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1030.7992,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.528999999999996,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.6163000000001375,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.5875999999998385,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.126800000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.6737000000002809,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.990899999999783,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8483000000001084,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.352799999999661,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.810899999999947,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.414099999999962,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 275.2311999999997,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 867.9715000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1031.1256000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.469800000000305,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.931999999999789,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.6768999999999323,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.682800000000043,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.839799999999741,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5257000000001426,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.311300000000301,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.7192000000000007,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.61010000000033,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 282.65009999999984,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 891.3485000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1040.2154999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.252300000000105,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8105000000000473,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5120999999999185,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.310199999999895,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.014599999999973,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.270300000000134,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.876700000000255,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.816199999999753,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.9381999999995969,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6516999999998916,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 287.88809999999967,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 837.7930999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1034.6225000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.560899999999947,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.791900000000169,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.982500000000073,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8585000000002765,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5250999999998385,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5354000000002088,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.1129000000000815,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.3997999999996864,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.532900000000154,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.419599999999718,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 329.88549999999987,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 806.4283999999998,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1047.0561,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.961899999999787,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.391200000000026,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.850800000000163,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0148999999996704,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.899200000000292,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.216399999999794,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.873699999999644,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.5516999999999825,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.172700000000077,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.5562000000004446,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 287.8611000000001,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 771.0942999999997,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1079.3546000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.005400000000009,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.2036000000002787,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.575199999999768,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.992000000000189,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.452800000000025,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.88760000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.549600000000282,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.871599999999944,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 13.966899999999896,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.2823000000003049,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 269.84619999999995,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 834.3199,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 983.0443000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.7840000000001055,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.281199999999899,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.4650000000001455,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.287000000000262,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 19.222999999999956,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.664599999999609,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.675399999999627,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.5086999999998625,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.132300000000214,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.21329999999989,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 285.9310999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 908.6426000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1068.0093000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.25700000000006185,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.863399999999729,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.197099999999864,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.495899999999892,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.828100000000177,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.576800000000276,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.559799999999996,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.462999999999738,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.825400000000172,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9810999999999694,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 295.4472999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 824.3695000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1034.231,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.6938999999997577,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.937800000000152,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.074799999999868,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8062999999997373,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.355399999999918,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.814900000000307,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.3859999999999673,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.533400000000256,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.887699999999768,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.856300000000374,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 295.30279999999993,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 834.6683000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 999.7123000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.2939000000001215,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.917199999999866,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.271300000000338,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.28229999999985,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.201100000000224,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1384000000002743,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.6868999999996959,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.395500000000084,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.4697000000001026,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.504399999999805,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 293.8296999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 924.4488000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1078.4621000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8717999999998938,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1761999999998807,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8998999999998887,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.678000000000338,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.389400000000023,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.9050000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.535499999999956,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.824200000000019,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.938000000000102,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.158300000000054,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 291.98369999999977,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 755.2156,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1056.8102,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.9556000000002314,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.931799999999839,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.800099999999929,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.880500000000211,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.5625999999997475,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1784999999999854,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.5565999999998894,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.9944000000000415,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.452600000000075,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.5612999999998465,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 290.3489000000004,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 773.5759000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1083.5312000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.186999999999898,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.576300000000174,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.572900000000118,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.409100000000308,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.853200000000015,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.9882000000002336,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 13.922099999999773,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.004300000000057,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.292900000000373,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.05029999999988,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 285.8149000000003,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 824.1230999999998,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1084.6607999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.2270000000003165,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.013400000000274,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.586999999999989,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.3947000000002845,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.854800000000068,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.85149999999976,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.3078999999997905,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.79469999999992,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.265499999999975,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.230099999999766,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 280.08089999999993,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 725.0943000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1085.6193999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.816899999999805,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.690499999999702,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.634399999999914,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.532600000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.824100000000271,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.312199999999848,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.80679999999984,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.20589999999993,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.050199999999677,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.404700000000048,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 336.06179999999995,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 720.7284,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1049.2227,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.481999999999971,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0220000000003893,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.262200000000121,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.853799999999865,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.8659999999999854,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.821000000000367,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.848099999999704,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.552999999999884,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.590599999999995,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.030099999999948,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 288.8304000000003,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 837.9998,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1032.4403000000002,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.163000000000011,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.07719999999972,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.792399999999816,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0286000000000968,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.819700000000012,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.711999999999989,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.167699999999968,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.232899999999972,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.8793000000000575,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.316799999999603,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 291.65149999999994,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 807.8335000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1083.4908,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.7217000000000553,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.978399999999965,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.470899999999801,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.570099999999911,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.869600000000446,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.8461999999999534,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 13.983700000000226,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.955800000000181,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.296800000000076,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.43239999999969,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 277.89840000000004,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 772.8102000000003,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1069.1851000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.369099999999889,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.314300000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.965700000000197,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.0250999999998385,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.4650000000001455,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.496900000000096,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.885399999999663,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.8429999999998472,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.000999999999749,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.957699999999932,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 285.2323000000001,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 820.1542999999997,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1044.3512,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.4764000000000124,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.531800000000203,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.819999999999709,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.712600000000293,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.583099999999831,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.864799999999832,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.808899999999994,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.247199999999793,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.405799999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.963000000000193,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 275.92700000000013,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 841.06,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1073.6496,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.0626999999999498,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.6536000000000968,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.151299999999992,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.046100000000024,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.534500000000207,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.4517000000000735,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.853200000000015,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.527900000000045,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.312000000000353,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 13.576300000000174,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 278.97630000000026,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 860.5647999999997,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1087.7689000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.396700000000237,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.5353000000000065,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.884700000000066,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.3040000000000873,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.720400000000154,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.873699999999644,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.225900000000365,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.24770000000035,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.840299999999843,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 14.70719999999983,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 322.93269999999984,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 673.6922,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1061.5053,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.8565999999996166,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.854699999999866,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.8267000000000735,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.56860000000006,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1687000000001717,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.044499999999971,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.535899999999856,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.448699999999917,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.220400000000154,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.221300000000156,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 290.60559999999987,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 804.9612999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 994.5316,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.974499999999807,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.922199999999975,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.267899999999827,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.319300000000112,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.164900000000216,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.1374000000000706,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 8.671800000000076,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.8319000000001324,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.0781999999999243,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.791400000000067,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 293.1855999999998,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 938.6718000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1051.2541,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.9981999999999971,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.015600000000177,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.272399999999834,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.859699999999975,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.852300000000014,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.56230000000005,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.06939999999986,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.6621000000000095,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.45029999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.880799999999908,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 293.1041,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 771.8535999999999,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1053.9043000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 7.096399999999903,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.798400000000129,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.880300000000261,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.315499999999702,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.35819999999967,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.614500000000135,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.501699999999801,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.481299999999919,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.86220000000003,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.2574000000004162,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 294.97209999999995,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 879.7782000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1096.1925999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 11.050400000000081,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 2.0196999999998297,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 13.921399999999721,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.995400000000245,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.30119999999988,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 17.004799999999705,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.015499999999975,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.50630000000001,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.380599999999959,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.07400000000007,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 286.32659999999987,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 711.9034000000001,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1044.7695,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 0.1829000000002452,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.405799999999999,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.152099999999791,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.572699999999713,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.832499999999982,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.861100000000079,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.8279999999999745,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 3.842699999999695,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 5.576000000000022,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.575000000000273,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 279.6034999999997,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 811.7148000000002,
+      "ok": true
+    },
+    {
+      "phase": "channel-open",
+      "ms": 1079.3504999999998,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.260699999999815,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 4.573899999999867,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 6.4121000000000095,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 9.854100000000017,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.823300000000017,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 1.3472999999999047,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.763000000000375,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.22470000000021,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 15.23109999999997,
+      "ok": true
+    },
+    {
+      "phase": "payment",
+      "ms": 16.23199999999997,
+      "ok": true
+    },
+    {
+      "phase": "channel-close",
+      "ms": 280.8492000000001,
+      "ok": true
+    },
+    {
+      "phase": "x402-pay",
+      "ms": 777.4391,
+      "ok": true
+    }
+  ]
+}

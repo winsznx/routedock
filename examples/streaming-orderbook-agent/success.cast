@@ -1,0 +1,12 @@
+{"version":2,"width":120,"height":32,"timestamp":1763768400,"env":{"SHELL":"bash","TERM":"xterm-256color"}}
+[0.120000,"o","$ pnpm start\r\n"]
+[0.420000,"o","\r\n> @routedock/example-streaming-orderbook-agent@0.1.0 start /repo/examples/streaming-orderbook-agent\r\n> node --experimental-strip-types --env-file-if-exists=.env index.ts\r\n\r\n"]
+[0.810000,"o","[client] network=testnet\r\n[client] provider=https://api-b.routedock.xyz/stream/orderbook\r\n[session] opening MPP session...\r\n"]
+[1.220000,"o","[session] channel: CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH\r\n[session] open tx hash: <open-testnet-tx-hash>\r\n[stream] consuming 100 orderbook updates\r\n\r\n"]
+[1.640000,"o","#001 | 2026-05-27T08:55:41.142Z | XLM/USDC | bestBid=0.1280000 | bestAsk=0.1289000 | spread=0.0009000 | mid=0.1284500\r\n"]
+[1.980000,"o","#002 | 2026-05-27T08:55:41.530Z | XLM/USDC | bestBid=0.1280000 | bestAsk=0.1289000 | spread=0.0009000 | mid=0.1284500\r\n"]
+[2.310000,"o","#003 | 2026-05-27T08:55:41.872Z | XLM/USDC | bestBid=0.1281000 | bestAsk=0.1290000 | spread=0.0009000 | mid=0.1285500\r\n"]
+[2.640000,"o","...\r\n"]
+[8.440000,"o","#100 | 2026-05-27T08:56:18.983Z | XLM/USDC | bestBid=0.1282000 | bestAsk=0.1291000 | spread=0.0009000 | mid=0.1286500\r\n"]
+[8.650000,"o","\r\n[session] closing (received 100 updates)...\r\n"]
+[10.020000,"o","[session] settled tx hash: <settled-testnet-tx-hash>\r\n[session] vouchers issued: 100\r\n[session] total paid: 0.0100000 USDC\r\n"]

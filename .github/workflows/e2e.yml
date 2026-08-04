@@ -1,0 +1,48 @@
+name: End-to-End Tests
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  e2e:
+    name: Run Stellar Testnet Payments
+    runs-on: ubuntu-latest
+    # The `secrets` context is not allowed in `if:` expressions, so expose the
+    # secret through env and gate the steps on `env` instead.
+    env:
+      AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Build nulth-sdk (workspace dependency)
+        run: pnpm --filter @routedock/nulth-sdk build
+
+      - name: Build SDK
+        run: pnpm --filter @routedock/routedock build
+
+      - name: Run E2E Test Suite
+        if: ${{ env.AGENT_SECRET != '' }}
+        env:
+          NODE_ENV: test
+        run: pnpm --filter agent test:e2e
+
+      - name: Skip E2E — no AGENT_SECRET
+        if: ${{ env.AGENT_SECRET == '' }}
+        run: echo "AGENT_SECRET not set — skipping e2e tests"

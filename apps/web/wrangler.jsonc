@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "routedock",
+  "compatibility_date": "2026-06-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "NEXT_PUBLIC_PROVIDER_A_URL": "https://api-a.routedock.xyz",
+    "NEXT_PUBLIC_PROVIDER_B_URL": "https://api-b.routedock.xyz",
+    "NEXT_PUBLIC_STELLAR_EXPERT_URL": "https://stellar.expert/explorer/testnet",
+    "NEXT_PUBLIC_STELLAR_NETWORK": "testnet",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydXlvdWJubnJqa2J6cXl2a25pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYwMjk0NTAsImV4cCI6MjA5MTYwNTQ1MH0.MTPYMdKDtnL-nQBwv3KyCI0ptQ2zMsXSjFb2phuPThk",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://druyoubnnrjkbzqyvkni.supabase.co"
+  }
+}
