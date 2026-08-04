@@ -6,6 +6,7 @@ import {
   RouteDockManifestError,
   RouteDockManifestTimeoutError,
   RouteDockNoSupportedModeError,
+  RouteDockPolicyRejectError,
   RouteDockClientVersionError,
   httpStatusToError,
   wrapFetchError,
@@ -110,7 +111,7 @@ export interface ModeSelectOptions {
   sustained?: boolean
   session?: boolean
   /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
-  optimize?: 'cost' | 'reliability' | 'latency'
+  optimize?: 'cost'
   /** Optional maximum acceptable per-request amount for cost-based selection. */
   budget_per_request?: string
   /**
@@ -234,6 +235,12 @@ export function selectMode(
       if (cheapestCandidate) {
         log(`[RouteDock] ${manifest.name} → ${cheapestCandidate.mode} (cost-optimized)`)
         return cheapestCandidate.mode
+      }
+
+      // All candidates exceed the caller's budget ceiling — error instead of
+      // silently falling through to an over-budget mode.
+      if (options.budget_per_request !== undefined) {
+        throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
       }
     }
   }
