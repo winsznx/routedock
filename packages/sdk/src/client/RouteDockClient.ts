@@ -188,6 +188,10 @@ export class RouteDockClient {
     manifest: import('../types.js').RouteDockManifest,
     mode: import('../types.js').PaymentMode,
   ): Promise<PaymentResult> {
+    const prover = this.vault?.prover ?? 'mock';
+    if (this.network === 'mainnet' && prover === 'mock') {
+      throw new RouteDockManifestError('nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet');
+    }
     if (mode !== 'x402') {
       throw new RouteDockManifestError(
         'nulth vault currently supports x402 mode — force x402 via { forceMode: "x402" }',

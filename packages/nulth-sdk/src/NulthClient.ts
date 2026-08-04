@@ -5,6 +5,8 @@ import {
   encodeAuthSignature,
   hashPayee,
   mockGroth16Proof,
+  type ProverBackend,
+  DEFAULT_PROVER,
 } from './proof.js'
 import type {
   NulthClientConfig,
@@ -16,9 +18,11 @@ import { NulthPolicyError } from './types.js'
 
 export class NulthClient {
   private policy: NulthPolicyState
+  private readonly prover: ProverBackend
 
   constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
+    this.prover = config.prover ?? DEFAULT_PROVER
   }
 
   get nulthAccount(): string {
@@ -36,6 +40,11 @@ export class NulthClient {
   /** Current off-chain daily spend (never published) */
   get dailySpendStroops(): bigint {
     return this.policy.dailySpendStroops
+  }
+
+  /** Prover backend selected for this client */
+  get proverBackend(): ProverBackend {
+    return this.prover
   }
 
   /**

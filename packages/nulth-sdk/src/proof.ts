@@ -34,6 +34,10 @@ export function authDigestFromEntry(authEntryBase64: string): string {
   return sha256Hex(entryHash)
 }
 
+export type ProverBackend = 'mock' | 'wasm'
+
+export const DEFAULT_PROVER: ProverBackend = 'mock'
+
 /**
  * Deterministic mock Groth16 proof bytes for testnet/dev.
  * Production deployments swap this for a real prover WASM.
