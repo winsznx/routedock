@@ -32,6 +32,8 @@ const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 const EVT_PAYMENT_AUTHORIZED: &str = "payment_authorized";
 const EVT_SESSION_SETTLED: &str = "session_settled";
 const EVT_UPGRADED: &str = "upgraded";
+const EVT_EXPIRY_UPDATED: &str = "expiry_updated";
+const EVT_AGENT_KEY_ROTATED: &str = "agent_key_rotated";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -141,6 +143,42 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         storage.set(&LIFETIME_CAP_KEY, &new_cap);
+    }
+
+    /// Extend (or otherwise set) the session expiry ledger. Admin only.
+    /// This is the recovery escape hatch after expiry: an admin can push the
+    /// expiry forward so payments resume without reinitializing the vault.
+    pub fn set_expiry(env: Env, new_expiry: u32) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&EXPIRY_KEY, &new_expiry);
+        // topics: (Symbol("expiry_updated"), admin)
+        // data:   new_expiry
+        env.events().publish(
+            (Symbol::new(&env, EVT_EXPIRY_UPDATED), admin),
+            new_expiry,
+        );
+    }
+
+    /// Rotate the agent's Ed25519 public key. Admin only.
+    /// Recovery control for a leaked/compromised agent key — subsequent auth
+    /// must be signed with the new key, and the old key is immediately invalid.
+    pub fn set_agent_pubkey(env: Env, new_pk: BytesN<32>) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        storage.set(&AGENT_KEY, &new_pk);
+        // topics: (Symbol("agent_key_rotated"),)
+        // data:   new_pk
+        env.events().publish(
+            (Symbol::new(&env, EVT_AGENT_KEY_ROTATED),),
+            new_pk,
+        );
     }
 
     /// Return the vault's cumulative lifetime spend counter (stroops). Read-only.
@@ -1841,5 +1879,188 @@ mod tests {
             },
         }]);
         client.upgrade(&new_wasm_hash);
+    }
+
+    /// Test: admin extends expiry after it lapsed — payments succeed again.
+    #[test]
+    fn test_extend_expiry_after_lapse_restores_payments() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Fast-forward past the initial expiry (10_000) -> payments rejected.
+        env.ledger().set_sequence_number(10_001);
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &agent_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        assert_eq!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
+                .unwrap_err()
+                .unwrap(),
+            Error::SessionExpired,
+            "payment should be rejected once the expiry lapsed"
+        );
+
+        // Admin extends expiry far into the future.
+        env.mock_all_auths();
+        client.set_expiry(&100_000_u32);
+
+        // Read events immediately after the call (before any other invocation).
+        let evt = Symbol::new(&env, "expiry_updated");
+        let expiry_events: std::vec::Vec<_> = env
+            .events()
+            .all()
+            .iter()
+            .filter(|(addr, topics, _)| {
+                *addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt)
+            })
+            .collect();
+        assert_eq!(expiry_events.len(), 1, "exactly one expiry_updated event expected");
+        let data_expiry: u32 = expiry_events[0].2.clone().into_val(&env);
+        assert_eq!(data_expiry, 100_000, "event data should carry the new expiry");
+
+        assert_eq!(client.expiry_ledger(), 100_000, "expiry should be extended");
+
+        // Now the same payment (still signed by the agent key) succeeds again.
+        let p2 = BytesN::<32>::random(&env);
+        let s2 = sign_payload(&env, &agent_sk, &p2);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
+                .is_ok(),
+            "payment should succeed once admin extends the expiry"
+        );
+    }
+
+    /// Test: set_expiry by a non-admin panics.
+    #[test]
+    #[should_panic]
+    fn test_set_expiry_requires_admin() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &Map::new(&env), &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_expiry",
+                args: (&100_000_u32,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_expiry(&100_000_u32);
+    }
+
+    /// Test: admin rotates the agent key; only the new key can authorize payments.
+    #[test]
+    fn test_rotate_agent_pubkey_authorizes_new_key() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Admin rotates to a fresh key pair.
+        let (new_sk, new_pk) = gen_keypair(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_agent_pubkey",
+                args: (&new_pk,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_agent_pubkey(&new_pk);
+
+        // A payment signed with the NEW key succeeds.
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &new_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).is_ok(),
+            "payment signed with the rotated key should succeed"
+        );
+    }
+
+    /// Test: after rotation, the OLD key no longer authorizes payments.
+    #[test]
+    #[should_panic]
+    fn test_old_agent_key_invalid_after_rotation() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (old_sk, old_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        client.initialize(&admin, &old_pk, &5_000_000_i128, &allowlist, &10_000_u32, &0_i128);
+
+        // Rotate to a new key.
+        let (_, new_pk) = gen_keypair(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_agent_pubkey",
+                args: (&new_pk,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_agent_pubkey(&new_pk);
+
+        // A payment signed with the OLD key must fail (rejected signature).
+        let p = BytesN::<32>::random(&env);
+        let s = sign_payload(&env, &old_sk, &p);
+        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).unwrap();
+    }
+
+    /// Test: set_agent_pubkey from a non-admin panics.
+    #[test]
+    #[should_panic]
+    fn test_set_agent_pubkey_requires_admin() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &soroban_sdk::Map::new(&env), &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        let (_, new_pk) = gen_keypair(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "set_agent_pubkey",
+                args: (&new_pk,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.set_agent_pubkey(&new_pk);
     }
 }
