@@ -83,7 +83,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --experimental-test-module-mocks --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\""
+    "test": "tsx --experimental-test-module-mocks --test $(find src -name '*.test.ts' -o -name '*.test.tsx' | sort)"
   },
   "dependencies": {
     "@routedock/nulth-sdk": "workspace:*",
