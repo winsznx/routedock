@@ -216,9 +216,7 @@ const server = new Server(
 
 // List tools handler
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: TOOLS,
-  }
+  return { tools: TOOLS }
 })
 
 // Call tool handler

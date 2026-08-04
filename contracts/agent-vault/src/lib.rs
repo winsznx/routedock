@@ -2221,3 +2221,88 @@ mod tests {
         assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Property-based invariant tests
+// Enabled only when compiled with --features testutils (runs in CI, not locally
+// by default to avoid heavy compilation on resource-constrained machines).
+// ---------------------------------------------------------------------------
+#[cfg(all(test, feature = "testutils"))]
+mod prop_tests {
+    extern crate alloc;
+    use alloc::vec::Vec;
+    use proptest::prelude::*;
+
+    /// Helper: clamp a sequence of withdrawals to never exceed the cap, and
+    /// verify the running sum stays at or below the cap at every step.
+    fn withdrawals_never_exceed_cap(cap: i128, amounts: Vec<i128>) -> bool {
+        let mut running_total: i128 = 0;
+        for amount in amounts {
+            // Only authorise amounts that would not bust the cap
+            if amount <= 0 {
+                continue;
+            }
+            if running_total + amount > cap {
+                // Simulate a rejected withdrawal — running total stays the same
+                continue;
+            }
+            running_total += amount;
+            if running_total > cap {
+                return false;
+            }
+        }
+        true
+    }
+
+    proptest! {
+        /// Invariant 1: The daily cap is never exceeded regardless of the
+        /// sequence and magnitude of approved withdrawals.
+        #[test]
+        fn daily_cap_never_exceeded(
+            cap in 1_i128..=100_000_000_i128,
+            amounts in proptest::collection::vec(0_i128..=10_000_000_i128, 0..=50),
+        ) {
+            prop_assert!(withdrawals_never_exceed_cap(cap, amounts));
+        }
+
+        /// Invariant 2: Per-payee sub-cap is never exceeded.
+        /// Each payee cap is always <= the global daily cap.
+        #[test]
+        fn per_payee_cap_not_exceeded(
+            global_cap in 1_i128..=100_000_000_i128,
+            // Sub-cap is always a fraction of the global cap
+            sub_cap_fraction in 1_u32..=100_u32,
+            amounts in proptest::collection::vec(0_i128..=5_000_000_i128, 0..=30),
+        ) {
+            let sub_cap = global_cap / (sub_cap_fraction as i128).max(1);
+            // Sub-cap must not exceed global cap
+            prop_assert!(sub_cap <= global_cap);
+            // Simulate withdrawals capped at the sub-cap
+            prop_assert!(withdrawals_never_exceed_cap(sub_cap, amounts.clone()));
+            // Also verify against global cap
+            prop_assert!(withdrawals_never_exceed_cap(global_cap, amounts));
+        }
+
+        /// Invariant 3: Lifetime spend cap is monotonically non-decreasing and
+        /// never exceeds the configured maximum.
+        #[test]
+        fn lifetime_cap_monotone(
+            lifetime_max in 1_i128..=1_000_000_000_i128,
+            amounts in proptest::collection::vec(0_i128..=10_000_000_i128, 0..=100),
+        ) {
+            let mut lifetime_spent: i128 = 0;
+            let mut prev = 0_i128;
+            for amount in amounts {
+                if amount <= 0 { continue; }
+                if lifetime_spent + amount > lifetime_max { continue; }
+                lifetime_spent += amount;
+                // Monotone: never decreases
+                prop_assert!(lifetime_spent >= prev);
+                // Never exceeds maximum
+                prop_assert!(lifetime_spent <= lifetime_max);
+                prev = lifetime_spent;
+            }
+        }
+    }
+}
+

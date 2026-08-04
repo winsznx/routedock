@@ -101,6 +101,11 @@ const startedAt = Date.now()
 
 // ── Session tracking (via SDK onSessionOpen / onVoucher / onOrphaned hooks) ──────
 
+// The channel currently serving traffic, so graceful shutdown can mark it
+// closing. Keyed by the real channel id the SDK hooks report — the old
+// `${channelId}:${Date.now()}` form is what the reconciler could never match.
+let activeSessionChannelId: string | null = null
+
 async function markActiveSessionClosing(reason: string): Promise<void> {
   if (!supabase || !activeSessionChannelId) return
 
@@ -153,12 +158,13 @@ app.use(
         network: STELLAR_NETWORK,
         voucher_count: 0,
       })
+      activeSessionChannelId = channelId
       if (error) console.error('[supabase] session insert failed:', error.message)
       else console.log(`[supabase] session opened: ${channelId} payer=${payer ?? 'unknown'}`)
     },
     onVoucher: async (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => {
       if (!supabase) return
-      const stroopAmount = Math.round(parseFloat(cumulativeAmount) * 1e7).toString()
+      const stroopAmount = usdcToUnits(cumulativeAmount).toString()
       const { error } = await supabase
         .from('sessions')
         .update({
@@ -187,6 +193,7 @@ app.use(
     },
     onSettled: async (txHash: string, totalPaid: string, mode: string, payer: string | null) => {
       console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid} payer=${payer ?? 'unknown'}`)
+      activeSessionChannelId = null
       if (!supabase) return
 
       const { error: closeErr } = await supabase

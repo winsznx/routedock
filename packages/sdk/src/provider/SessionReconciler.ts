@@ -10,7 +10,6 @@
  */
 
 import { Keypair } from '@stellar/stellar-sdk'
-import { close as channelClose } from '@stellar/mpp/channel/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type Network = 'testnet' | 'mainnet'
@@ -33,6 +32,7 @@ export interface SessionReconcilerOptions {
   network: Network
   payeeSecretKey: string
   onRecovered?: (channelId: string, txHash: string, totalPaid: string) => Promise<void>
+  /** Injectable for testing. Defaults to @stellar/mpp/channel/server close() */
   channelClose?: ChannelCloseFn
 }
 
@@ -120,7 +120,7 @@ export async function reconcileAbandonedSessions(
           amount: closeAmount,
           signature: closeSig,
           feePayer: { envelopeSigner: payeeKeypair },
-          network: networkId,
+          network: networkId as 'stellar:testnet' | 'stellar:pubnet',
         })
 
         // Mark session as recovered

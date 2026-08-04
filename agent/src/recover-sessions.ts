@@ -52,7 +52,7 @@ async function main(): Promise<void> {
       supabase,
       network: STELLAR_NETWORK,
       payeeSecretKey: STELLAR_PAYEE_SECRET,
-      onRecovered: async (channelId, txHash, totalPaid) => {
+      onRecovered: async (channelId: string, txHash: string, totalPaid: string) => {
         console.log(`[SessionRecovery] Recovered: ${channelId}`)
         console.log(`  → Settled ${totalPaid} USDC`)
         console.log(`  → TxHash: ${txHash}`)
