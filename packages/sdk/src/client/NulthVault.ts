@@ -318,7 +318,7 @@ export async function prepareNulthSigner(
 
   const config: NulthSignerConfig = {
     nulthAccount: vault.nulthAccount,
-    prover: vault.prover,
+    prover,
     policy,
     ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),
   }
