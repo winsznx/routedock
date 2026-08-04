@@ -234,9 +234,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session'
         }
 
-        // Use estimateCost to validate price for the exact selected mode
-        const estimate = await client.estimateCost(url, { preferredMode: preferred_mode })
-        
+        // preferred_mode maps to ModeSelectOptions.forceMode; the field is not
+        // called preferredMode, so passing that name silently drops it (#199).
+        const modeOptions = preferred_mode
+          ? { forceMode: preferred_mode as import('@routedock/routedock').PaymentMode }
+          : undefined
+
+        // Validate price for the exact selected mode. max_amount is a required
+        // tool argument, so this cap is unconditional (#144).
+        const estimate = await client.estimateCost(url, modeOptions)
+
         if (estimate.amount === undefined || isNaN(parseFloat(estimate.amount))) {
           throw new Error('Provider returned an undefined or invalid price')
         }
@@ -245,9 +252,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(`Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`)
         }
 
-        const result = await client.pay(url, {
-          ...(preferred_mode ? { forceMode: preferred_mode as import('@routedock/routedock').PaymentMode } : {}),
-        })
+        const result = await client.pay(url, modeOptions)
         
         return {
           content: [

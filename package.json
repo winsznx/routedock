@@ -8,13 +8,16 @@
     "lint": "pnpm -r lint",
     "stress:test": "pnpm exec tsx scripts/stress_test.ts",
     "version": "changeset version",
-    "release": "changeset publish"
+    "release": "pnpm run release:build && changeset publish",
+    "release:build": "pnpm --filter @routedock/nulth-sdk build && pnpm --filter @routedock/routedock build && pnpm --filter @routedock/mcp-server build"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   },
   "dependencies": {
     "@changesets/cli": "^2.31.0"
-  }
+  },
+  "packageManager": "pnpm@9.15.9"
 }
