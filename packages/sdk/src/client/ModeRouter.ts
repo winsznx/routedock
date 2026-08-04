@@ -123,14 +123,28 @@ export interface ModeSelectOptions {
   logger?: RouteDockLogger
 }
 
-/** Fetch, validate, and cache a RouteDock manifest from `baseUrl`. */
+/**
+ * Fetch, validate, and cache a RouteDock manifest from `baseUrl`.
+ *
+ * `expectedPayee`, when provided, is the out-of-band trust anchor for the
+ * manifest (e.g. the account this provider registered on-chain): the fetched
+ * manifest's `payee` must equal it or `RouteDockSignatureError` is thrown.
+ * Callers that obtained a payee from a registry/pinned allowlist MUST pass it;
+ * without it the self-signed signature alone proves nothing about who served
+ * the manifest.
+ */
 export async function fetchManifest(
   baseUrl: string,
   retryPolicy?: RetryPolicy,
   manifestTimeoutMs = DEFAULT_MANIFEST_TIMEOUT_MS,
+  expectedPayee?: string,
 ): Promise<RouteDockManifest> {
   const cached = manifestCache.get(baseUrl)
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    // Re-assert the trust anchor even on cache hits: the manifest content is
+    // immutable, but `expectedPayee` is per-caller, so a caller with a
+    // different anchor must still have the binding enforced.
+    verifyManifestSignature(cached.manifest, expectedPayee)
     assertClientVersionSupported(cached.manifest, baseUrl)
     return cached.manifest
   }
@@ -171,7 +185,7 @@ export async function fetchManifest(
     }
 
     const manifest = raw as unknown as RouteDockManifest
-    verifyManifestSignature(manifest)
+    verifyManifestSignature(manifest, expectedPayee)
     assertClientVersionSupported(manifest, baseUrl)
     manifestCache.set(baseUrl, { manifest, fetchedAt: Date.now() })
     return manifest

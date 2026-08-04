@@ -22,7 +22,7 @@ const baseManifest: RouteDockManifest = {
   asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
   payee: keypair.publicKey(),
   pricing: { x402: { amount: '0.001', per: 'request' } },
-  endpoints: { price: 'GET /price' },
+  endpoints: { price: { method: 'GET', path: '/price' } },
   tags: ['test'],
 }
 
@@ -88,6 +88,35 @@ describe('verifyManifestSignature', () => {
     const tampered = { ...signed, name: 'Evil Provider' }
     assert.throws(
       () => verifyManifestSignature(tampered),
+      (err) => err instanceof RouteDockSignatureError,
+    )
+  })
+
+  it('passes when the manifest payee matches the expectedPayee trust anchor', () => {
+    const signed = signManifest(baseManifest, keypair.secret())
+    assert.doesNotThrow(() => verifyManifestSignature(signed, keypair.publicKey()))
+  })
+
+  it('throws when the manifest payee does not match expectedPayee', () => {
+    const signed = signManifest(baseManifest, keypair.secret())
+    assert.throws(
+      () => verifyManifestSignature(signed, otherKeypair.publicKey()),
+      (err) =>
+        err instanceof RouteDockSignatureError &&
+        err.message.includes('does not match expected payee'),
+    )
+  })
+
+  it('rejects a substituted self-signed manifest even when its signature is valid', () => {
+    // Attacker serves a manifest signed by THEIR key. Without a trust anchor it
+    // verifies fine; bound to the trusted payee it must be rejected.
+    const substituted = signManifest(
+      { ...baseManifest, payee: otherKeypair.publicKey() },
+      otherKeypair.secret(),
+    )
+    assert.doesNotThrow(() => verifyManifestSignature(substituted))
+    assert.throws(
+      () => verifyManifestSignature(substituted, keypair.publicKey()),
       (err) => err instanceof RouteDockSignatureError,
     )
   })

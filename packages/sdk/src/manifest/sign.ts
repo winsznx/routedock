@@ -5,7 +5,18 @@
  * `signature` field omitted and keys sorted deterministically (JSON.stringify
  * of the sorted-key object). The payee Stellar keypair signs this hash.
  *
- * Clients call `verifyManifestSignature` before trusting any routing field.
+ * TRUST MODEL: the `payee` field is part of the document being signed, so a
+ * valid signature only proves that whoever signed it controlled the signing
+ * key declared in `payee`. It does NOT, by itself, prove the manifest was
+ * served by that entity — any host serving `/.well-known/routedock.json` can
+ * substitute its own payee and self-sign.
+ *
+ * Verification must therefore be bound to an out-of-band trust anchor. Callers
+ * that already know the expected payee (e.g. the account a provider registered
+ * in the on-chain registry, or a pinned/allowlisted key) MUST pass it as
+ * `expectedPayee` so a substituted document is rejected before any signature
+ * work is trusted.
+ *
  * Providers call `signManifest` once at startup to embed the signature.
  */
 
@@ -38,12 +49,29 @@ export function signManifest(
 
 /**
  * Verify the manifest's Ed25519 signature.
- * Throws `RouteDockSignatureError` if the signature is missing or invalid.
+ *
+ * `expectedPayee` binds the manifest to an out-of-band trust anchor: when
+ * provided, the (attacker-controllable) `manifest.payee` must equal it,
+ * otherwise `RouteDockSignatureError` is thrown before signature verification.
+ * Callers that have a registry/pinned payee MUST pass it; omitting it leaves
+ * only self-signed authenticity, which is insufficient for routing trust.
+ *
+ * Throws `RouteDockSignatureError` if the signature is missing, the payee does
+ * not match `expectedPayee`, or the signature is invalid.
  */
-export function verifyManifestSignature(manifest: RouteDockManifest & { signature?: string }): void {
+export function verifyManifestSignature(
+  manifest: RouteDockManifest & { signature?: string },
+  expectedPayee?: string,
+): void {
   if (!manifest.signature) {
     throw new RouteDockSignatureError(
       'Manifest is missing a signature field — cannot verify payee authenticity',
+    )
+  }
+
+  if (expectedPayee !== undefined && manifest.payee !== expectedPayee) {
+    throw new RouteDockSignatureError(
+      `Manifest payee ${manifest.payee} does not match expected payee ${expectedPayee}`,
     )
   }
 
