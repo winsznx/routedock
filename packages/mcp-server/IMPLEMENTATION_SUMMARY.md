@@ -31,16 +31,23 @@ A complete Model Context Protocol (MCP) server for RouteDock that exposes Stella
 2. **open_session(url, initial_deposit)**
    - Opens MPP session for streaming data
    - Requires COMMITMENT_SECRET
-   - Returns session handle with channel ID
+   - Persists the returned session handle (keyed by channel_id) so it can be
+     looked up again by stream_session/close_session
 
-3. **check_balance(asset_code, asset_issuer)**
+3. **stream_session(channel_id, max_messages)**
+   - Pulls the next batch of streamed responses from an open session
+
+4. **close_session(channel_id)**
+   - Settles and closes an open session on-chain, releasing its collateral
+
+5. **check_balance(asset_code, asset_issuer)**
    - Checks Stellar wallet balance
    - Supports native XLM and custom assets
    - Returns balance information
 
-4. **list_providers(tags, network)**
+6. **list_providers(tags, network)**
    - Queries provider registry via Supabase
-   - Supports trigram search by tags
+   - Filters by tags via array overlap (tags is a TEXT[] column)
    - Filters by network (testnet/mainnet)
    - Returns list of matching providers
 

@@ -55,9 +55,25 @@ Open a sustained MPP session for streaming data. Uses off-chain vouchers for low
 
 **Use case:** Streaming orderbooks, real-time data feeds, sustained access
 
-**Returns:** Session handle with channel ID and open transaction hash
+**Returns:** `channel_id` and open transaction hash — pass `channel_id` to `stream_session` and `close_session`
 
-### 3. check_balance(asset_code, asset_issuer)
+### 3. stream_session(channel_id, max_messages)
+
+Pull the next batch of streamed responses from a session opened with `open_session`.
+
+**Use case:** Consuming a streaming session's data after opening it
+
+**Returns:** The pulled messages
+
+### 4. close_session(channel_id)
+
+Close a session opened with `open_session`, settling the channel on-chain with the highest signed voucher.
+
+**Use case:** Releasing a session's locked collateral when done streaming
+
+**Returns:** Close transaction hash, total amount paid, and vouchers issued
+
+### 5. check_balance(asset_code, asset_issuer)
 
 Check the Stellar wallet balance for the configured account.
 
@@ -65,9 +81,9 @@ Check the Stellar wallet balance for the configured account.
 
 **Returns:** Balance information for the specified asset
 
-### 4. list_providers(tags, network)
+### 6. list_providers(tags, network)
 
-List available RouteDock providers from the registry with trigram search.
+List available RouteDock providers from the registry, filterable by capability tags (array overlap) and network.
 
 **Use case:** Discover providers by capability, find services for specific needs
 
@@ -166,12 +182,10 @@ The MCP server works with the live RouteDock testnet providers:
 
 Potential additions to the MCP server:
 
-1. **Session streaming tool**: Expose the session stream() as an MCP resource
-2. **Session close tool**: Explicit close operation with settlement details
-3. **Dispute resolution tools**: Expose refund and settlement operations
-4. **Transaction history tool**: Query past payments and sessions
-5. **Provider manifest tool**: Direct manifest inspection
-6. **Multi-wallet support**: Switch between multiple configured wallets
+1. **Dispute resolution tools**: Expose refund and settlement operations
+2. **Transaction history tool**: Query past payments and sessions
+3. **Provider manifest tool**: Direct manifest inspection
+4. **Multi-wallet support**: Switch between multiple configured wallets
 
 ## Comparison: Before vs After
 
