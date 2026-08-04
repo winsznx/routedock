@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   InMemorySeenTxStore,
-  hashString,
   paymentIdempotencyKey,
 } from '../SeenTxStore.js'
 
@@ -42,45 +41,38 @@ describe('InMemorySeenTxStore', () => {
   })
 })
 
-describe('hashString', () => {
-  it('is deterministic', () => {
-    assert.equal(hashString('payment-header-xyz'), hashString('payment-header-xyz'))
-  })
-
-  it('differs for different inputs', () => {
-    assert.notEqual(hashString('a'), hashString('b'))
-  })
-
-  it('returns 8 hex chars', () => {
-    assert.match(hashString('anything'), /^[0-9a-f]{8}$/)
-  })
-})
-
 describe('paymentIdempotencyKey', () => {
-  const key = (h: Record<string, string>) =>
-    paymentIdempotencyKey((name) => h[name])
+  const key = async (h: Record<string, string>) =>
+    await paymentIdempotencyKey((name) => h[name])
 
-  it('returns null when no payment header is present', () => {
-    assert.equal(key({ 'content-type': 'application/json' }), null)
+  it('returns null when no payment header is present', async () => {
+    assert.equal(await key({ 'content-type': 'application/json' }), null)
   })
 
-  it('keys off payment-signature when present', () => {
-    assert.equal(key({ 'payment-signature': 'sig' }), hashString('sig'))
+  it('keys off payment-signature when present', async () => {
+    const result = await key({ 'payment-signature': 'sig' })
+    assert.ok(result)
+    assert.equal(result!.length, 64)
   })
 
-  it('prefers payment-signature over x-payment and authorization', () => {
-    assert.equal(
-      key({ 'payment-signature': 'sig', 'x-payment': 'xp', authorization: 'Payment a' }),
-      hashString('sig'),
-    )
+  it('prefers payment-signature over x-payment and authorization', async () => {
+    const result = await key({
+      'payment-signature': 'sig',
+      'x-payment': 'xp',
+      authorization: 'Payment a',
+    })
+    const sigResult = await key({ 'payment-signature': 'sig' })
+    assert.equal(result, sigResult)
   })
 
-  it('falls back to authorization for mpp credentials', () => {
-    assert.equal(key({ authorization: 'Payment credential="abc"' }), hashString('Payment credential="abc"'))
+  it('falls back to authorization for mpp credentials', async () => {
+    const authKey = await key({ authorization: 'Payment credential="abc"' })
+    assert.ok(authKey)
+    assert.equal(authKey!.length, 64)
   })
 
-  it('yields the same key for a byte-identical retry', () => {
+  it('yields the same key for a byte-identical retry', async () => {
     const headers = { 'x-payment': 'identical-signed-payment' }
-    assert.equal(key(headers), key(headers))
+    assert.equal(await key(headers), await key(headers))
   })
 })
