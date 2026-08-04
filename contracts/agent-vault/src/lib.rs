@@ -31,6 +31,7 @@ const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
 const EVT_PAYMENT_AUTHORIZED: &str = "payment_authorized";
 const EVT_SESSION_SETTLED: &str = "session_settled";
+const EVT_UPGRADED: &str = "upgraded";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -189,6 +190,21 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         storage.set(&FROZEN_KEY, &false);
+    }
+
+    /// Upgrade the vault's wasm to `new_wasm_hash`. Admin only.
+    /// The new wasm must already be uploaded on-chain (e.g. via `upload_contract_wasm`)
+    /// before this is called — this only swaps which code the deployed instance runs.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        env.events()
+            .publish((Symbol::new(&env, EVT_UPGRADED),), new_wasm_hash);
     }
 
     /// Return the global daily spend cap (view-only).
@@ -1798,5 +1814,32 @@ mod tests {
             Error::DailyCapExceeded,
             "cap must still be enforced — counters were not deflated"
         );
+    }
+
+    /// Test 39: upgrade() rejects a caller that isn't the admin
+    #[test]
+    #[should_panic]
+    fn test_upgrade_requires_admin_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &soroban_sdk::Map::new(&env), &10_000_u32, &0_i128);
+
+        let non_admin = Address::generate(&env);
+        let new_wasm_hash = BytesN::<32>::random(&env);
+
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.upgrade(&new_wasm_hash);
     }
 }
