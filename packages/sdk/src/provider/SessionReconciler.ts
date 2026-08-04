@@ -35,6 +35,15 @@ export interface ReconciliationStats {
   errors: Array<{ channelId: string; reason: string }>
 }
 
+export function decimalToStroops(amountStr: string): bigint {
+  if (!amountStr.includes('.')) {
+    return BigInt(amountStr)
+  }
+  const [whole, frac] = amountStr.split('.')
+  const paddedFrac = (frac || '').padEnd(7, '0').slice(0, 7)
+  return BigInt((whole || '0') + paddedFrac)
+}
+
 /**
  * Scan for abandoned sessions and attempt recovery.
  * Idempotent: sessions with settlement_tx_hash are skipped (already recovered).
@@ -89,7 +98,7 @@ export async function reconcileAbandonedSessions(
           continue
         }
 
-        const closeAmount = BigInt(cumulative_amount)
+        const closeAmount = decimalToStroops(cumulative_amount)
         const closeSig = Buffer.from(last_signature, 'hex')
 
         // Broadcast channel close transaction
