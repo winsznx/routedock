@@ -486,10 +486,6 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         const closeSig = body?.signature ?? lastSignatureHex
 
         if (closeAmount > 0n && closeSig) {
-          // Clean close — suppress any orphan flagging for this session.
-          settledCleanly = true
-          clearIdleTimer()
-
           const closeTxHash = await channelClose({
             channel: sessionPricing.channelFactory,
             amount: closeAmount,
@@ -497,6 +493,13 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
             feePayer: { envelopeSigner: payeeKeypair },
             network: networkId,
           })
+
+          // Clean close — suppress any orphan flagging for this session. Only
+          // after the close broadcast succeeded: if channelClose throws, the
+          // orphan state must stay armed so the reconciler can still recover
+          // this channel. Matches MppSessionHandler.ts ordering.
+          settledCleanly = true
+          clearIdleTimer()
 
           if (opts.onSettled) {
             const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
