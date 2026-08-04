@@ -61,6 +61,7 @@ function buildManifest(): RouteDockManifest {
 interface RpcScript {
   getAccount?: (publicKey: string) => unknown
   simulateTransaction?: (tx: unknown) => unknown
+  prepareTransaction?: (tx: unknown) => unknown
   sendTransaction?: (tx: unknown) => unknown
   isSimulationError?: (result: unknown) => boolean
 }
@@ -81,6 +82,9 @@ function buildFakeSdk() {
     }
     async simulateTransaction(tx: unknown) {
       return (rpc.simulateTransaction ?? (() => ({})))(tx)
+    }
+    async prepareTransaction(tx: unknown) {
+      return (rpc.prepareTransaction ?? (async () => tx))(tx)
     }
     async sendTransaction(tx: unknown) {
       return (rpc.sendTransaction ?? (() => ({ hash: 'DEFAULT_HASH' })))(tx)
