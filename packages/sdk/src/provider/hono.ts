@@ -52,7 +52,7 @@ export interface RouteDockHonoOptions {
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
-  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => Promise<void>
   onCallbackError?: (err: unknown, cbName: string) => void
   /**
    * Called when an mpp-session connection aborts or goes idle before a clean
@@ -444,7 +444,7 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
 
         if (opts.onVoucher) {
           const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-          Promise.resolve().then(() => opts.onVoucher!(voucherCount, humanAmount)).catch(err => {
+          Promise.resolve().then(() => opts.onVoucher!(sessionPricing.channelFactory, voucherCount, humanAmount, lastSignatureHex)).catch(err => {
             console.error('[mpp-session] onVoucher callback error:', err)
             opts.onCallbackError?.(err, 'onVoucher')
           })

@@ -6,6 +6,7 @@ import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { routedock } from '@routedock/routedock/provider'
 import type { OrphanedSessionInfo } from '@routedock/routedock/provider'
 import type { RouteDockManifest } from '@routedock/routedock'
+import { usdcToUnits } from '@routedock/routedock'
 import Ajv from 'ajv'
 import schema from '@routedock/routedock/schema'
 
@@ -98,9 +99,7 @@ const supabase =
 const horizonServer = new Horizon.Server(HORIZON_URL)
 const startedAt = Date.now()
 
-// ── Session tracking (via SDK onSessionOpen / onVoucher hooks) ───────────────
-
-let activeSessionChannelId = ''
+// ── Session tracking (via SDK onSessionOpen / onVoucher / onOrphaned hooks) ──────
 
 async function markActiveSessionClosing(reason: string): Promise<void> {
   if (!supabase || !activeSessionChannelId) return
@@ -144,58 +143,59 @@ app.use(
     commitmentPublicKey: COMMITMENT_PUBLIC_KEY,
     onSessionOpen: async (channelId: string, payer: string | null) => {
       if (!supabase) return
-      activeSessionChannelId = `${channelId}:${Date.now()}`
       const { error } = await supabase.from('sessions').insert({
-        channel_id: activeSessionChannelId,
+        channel_id: channelId,
         payee: STELLAR_PAYEE_ADDRESS,
         payer: payer ?? 'unknown',
-        cumulative_amount: 0,
+        cumulative_amount: '0',
         status: 'open',
         channel_contract: channelId,
         network: STELLAR_NETWORK,
         voucher_count: 0,
       })
       if (error) console.error('[supabase] session insert failed:', error.message)
-      else console.log(`[supabase] session opened: ${activeSessionChannelId} payer=${payer ?? 'unknown'}`)
+      else console.log(`[supabase] session opened: ${channelId} payer=${payer ?? 'unknown'}`)
     },
-    onVoucher: async (voucherIndex: number, cumulativeAmount: string) => {
-      if (!supabase || !activeSessionChannelId) return
+    onVoucher: async (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => {
+      if (!supabase) return
+      const stroopAmount = Math.round(parseFloat(cumulativeAmount) * 1e7).toString()
       const { error } = await supabase
         .from('sessions')
         .update({
-          cumulative_amount: parseFloat(cumulativeAmount),
+          cumulative_amount: stroopAmount,
           voucher_count: voucherIndex,
+          last_signature: signature,
         })
-        .eq('channel_id', activeSessionChannelId)
+        .eq('channel_id', channelId)
       if (error) console.error('[supabase] session voucher update failed:', error.message)
     },
-    onOrphaned: async (_channelId: string, info: OrphanedSessionInfo) => {
-      if (!supabase || !activeSessionChannelId) return
+    onOrphaned: async (channelId: string, info: OrphanedSessionInfo) => {
+      if (!supabase) return
+      const stroopAmount = usdcToUnits(info.cumulativeAmount).toString()
       const { error } = await supabase
         .from('sessions')
         .update({
           status: 'closing',
+          cumulative_amount: stroopAmount,
           last_signature: info.lastSignature || null,
           voucher_count: info.voucherCount,
         })
-        .eq('channel_id', activeSessionChannelId)
+        .eq('channel_id', channelId)
 
       if (error) console.error('[supabase] session orphan update failed:', error.message)
-      else console.log(`[supabase] session marked closing (${info.reason}): ${activeSessionChannelId}`)
+      else console.log(`[supabase] session marked closing (${info.reason}): ${channelId}`)
     },
     onSettled: async (txHash: string, totalPaid: string, mode: string, payer: string | null) => {
       console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid} payer=${payer ?? 'unknown'}`)
       if (!supabase) return
 
-      if (activeSessionChannelId) {
-        const { error: closeErr } = await supabase
-          .from('sessions')
-          .update({ status: 'closed', settlement_tx_hash: txHash })
-          .eq('channel_id', activeSessionChannelId)
-        if (closeErr) console.error('[supabase] session close failed:', closeErr.message)
-        else console.log('[supabase] session closed')
-        activeSessionChannelId = ''
-      }
+      const { error: closeErr } = await supabase
+        .from('sessions')
+        .update({ status: 'closed', settlement_tx_hash: txHash })
+        .eq('channel_contract', CHANNEL_CONTRACT_ID)
+        .eq('status', 'open')
+      if (closeErr) console.error('[supabase] session close failed:', closeErr.message)
+      else console.log('[supabase] session closed')
 
       const { error } = await supabase.from('tx_log').insert({
         tx_type: 'channel_close',

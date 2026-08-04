@@ -40,7 +40,7 @@ export interface RouteDockMiddlewareOptions {
    */
   onSessionOpen?: (channelId: string, payer: string | null) => Promise<void>
   /** Called after each verified voucher in an mpp-session */
-  onVoucher?: (voucherIndex: number, cumulativeAmount: string) => Promise<void>
+  onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => Promise<void>
   /** Called if any of the above callbacks throw an error */
   onCallbackError?: (err: unknown, cbName: string) => void
   /**
