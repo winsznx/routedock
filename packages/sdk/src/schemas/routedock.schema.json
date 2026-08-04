@@ -118,6 +118,13 @@
       "uniqueItems": true,
       "description": "Capability tags indexed with trigram search in the provider registry"
     },
+    "vault": {
+      "$ref": "#/definitions/VaultMode"
+    },
+    "nulth_account": {
+      "type": "string",
+      "description": "Optional Nulth smart account address associated with this provider"
+    },
     "capabilities": {
       "type": "object",
       "description": "Optional protocol features this provider supports",
