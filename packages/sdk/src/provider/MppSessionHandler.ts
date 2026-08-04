@@ -167,8 +167,16 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     try {
       if (req.method === 'DELETE') {
         const body = req.body as { amount?: string; signature?: string } | undefined
-        const closeAmount = body?.amount ? BigInt(body.amount) : lastCumulativeAmount
-        const closeSig = body?.signature ?? lastSignatureHex
+        const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+        let closeAmount: bigint
+        let closeSig: string
+        if (bodyAmount > lastCumulativeAmount) {
+          closeAmount = bodyAmount
+          closeSig = body?.signature ?? lastSignatureHex
+        } else {
+          closeAmount = lastCumulativeAmount
+          closeSig = lastSignatureHex
+        }
 
         if (closeAmount > 0n && closeSig) {
           const closeTxHash = await channelClose({
@@ -184,7 +192,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
           clearIdleTimer()
 
           if (opts.onSettled) {
-            const totalPaid = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+            const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
             Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)).catch(err => {
               console.error('[mpp-session] onSettled callback error:', err)
               opts.onCallbackError?.(err, 'onSettled')
