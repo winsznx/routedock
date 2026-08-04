@@ -91,7 +91,7 @@ function startTestServer(
       },
     }
 
-    const costOptimizedMode = selectMode(costAwareManifest, { optimize: 'cost' })
+    const costOptimizedMode = selectMode(costAwareManifest as import('../types.js').RouteDockManifest, { optimize: 'cost' })
     assert.equal(costOptimizedMode, 'x402', 'cost optimization should prefer the lower-cost per-request mode')
 
     const modeForced = selectMode(manifest, { sustained: true })

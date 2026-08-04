@@ -245,7 +245,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(`Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`)
         }
 
-        const result = await client.pay(url, { preferredMode: preferred_mode })
+        const result = await client.pay(url, {
+          ...(preferred_mode ? { forceMode: preferred_mode as import('@routedock/routedock').PaymentMode } : {}),
+        })
         
         return {
           content: [
