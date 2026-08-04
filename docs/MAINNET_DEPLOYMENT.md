@@ -70,11 +70,11 @@ stellar keys address ledger-mainnet --hd-path "44'/148'/0'" --network mainnet
 
 ## 3) USDC trustline (mainnet)
 
-RouteDock mainnet flow expects USDC trustline to Circle's official Stellar issuer:
+RouteDock mainnet flow expects USDC trustline to Circle's official Stellar issuer. If the payer account lacks a trustline, `client.pay()` now throws `RouteDockTrustlineError` preflight — before any transaction is submitted — with the exact remediation command.
 
 - **Issuer:** `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`
 
-Create trustline from the vault funding account:
+Create trustline from the funding account:
 
 ```bash
 stellar tx new --source <MAINNET_SIGNER_ALIAS> --network mainnet \
@@ -88,6 +88,19 @@ Verify trustline exists:
 ```bash
 stellar account balance <ACCOUNT_ADDRESS> --network mainnet
 ```
+
+### Runtime preflight
+
+Starting in SDK v0.1.3+, each `client.pay()` call runs a trustline preflight check before submitting any on-chain transaction:
+
+1. Queries Horizon for the payer account's balances.
+2. Checks for a balance entry matching the manifest's `asset` code (e.g. `USDC`).
+3. **Trustline found** → caches the result for 5 minutes (keyed by `network:pubkey:asset`) so subsequent payments to the same asset cost zero RPC calls.
+4. **No trustline** → throws `RouteDockTrustlineError` with the exact `stellar tx new change-trust` CLI command for remediation.
+
+The check is non-blocking in degraded scenarios: if Horizon is unreachable, the SDK logs a warning and continues without blocking the payment.
+
+Call `client.preflight(manifest)` explicitly to validate a manifest's asset trustline without executing a payment.
 
 ---
 

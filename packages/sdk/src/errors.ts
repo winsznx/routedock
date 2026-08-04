@@ -12,6 +12,7 @@ export type RouteDockErrorCode =
   | 'DISPUTE'
   | 'REFUND_WINDOW'
   | 'CLIENT_VERSION_TOO_OLD'
+  | 'TRUSTLINE'
 
 export interface RouteDockErrorOptions {
   cause?: unknown
@@ -70,6 +71,35 @@ export class RouteDockClientVersionError extends RouteDockError {
   constructor(message: string, options: RouteDockErrorOptions = {}) {
     super(message, 'CLIENT_VERSION_TOO_OLD', false, options)
     this.name = 'RouteDockClientVersionError'
+  }
+}
+
+/**
+ * Account is missing a trustline for the payment asset.
+ * Thrown preflight — before any payment transaction is submitted —
+ * so the caller can establish the trustline first.
+ */
+export class RouteDockTrustlineError extends RouteDockError {
+  readonly asset: string
+  readonly issuer: string
+  readonly remediation: string
+
+  constructor(
+    asset: string,
+    issuer: string,
+    remediation: string,
+    options: RouteDockErrorOptions = {},
+  ) {
+    super(
+      `Missing trustline for ${asset} (issuer: ${issuer}). ${remediation}`,
+      'TRUSTLINE',
+      false,
+      options,
+    )
+    this.name = 'RouteDockTrustlineError'
+    this.asset = asset
+    this.issuer = issuer
+    this.remediation = remediation
   }
 }
 
