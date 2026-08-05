@@ -11,8 +11,16 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { RouteDockClient } from '@routedock/routedock'
 import type { SessionHandle } from '@routedock/routedock'
-import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { createClient } from '@supabase/supabase-js'
+import {
+  handlePayForData,
+  handleOpenSession,
+  handleStreamSession,
+  handleCloseSession,
+  handleCheckBalance,
+  handleListProviders,
+  type HandlerDeps,
+} from './handlers.js'
 
 // Load environment variables (supports .env files for external secret management)
 const envPath = process.env.ROUTEDOCK_ENV_FILE
@@ -65,6 +73,7 @@ class FileSpendStore {
 }
 
 const spendStorePath = process.env.ROUTEDOCK_SPEND_STORE_PATH || path.join(os.homedir(), '.routedock', 'spend.json')
+
 // Initialize RouteDock client
 const client = new RouteDockClient({
   wallet: STELLAR_SECRET,
@@ -86,6 +95,15 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 // recoverable here — the SDK's own maxDurationMs guard still auto-closes the
 // underlying channel on-chain so collateral is never stranded indefinitely.
 const openSessions = new Map<string, SessionHandle>()
+
+// Shared dependency bundle passed into every handler
+const deps: HandlerDeps = {
+  client,
+  openSessions,
+  supabase: supabase as HandlerDeps['supabase'],
+  stellarSecret: STELLAR_SECRET,
+  stellarNetwork: STELLAR_NETWORK,
+}
 
 // Tool definitions
 const TOOLS: Tool[] = [
@@ -219,280 +237,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: TOOLS }
 })
 
-// Call tool handler
+// Call tool handler — delegates to pure handler functions in handlers.ts
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
   try {
     switch (name) {
-      case 'pay_for_data': {
-        const { url, max_amount, preferred_mode } = args as {
-          url: string
-          max_amount: string
-          preferred_mode?: 'x402' | 'mpp-charge' | 'mpp-session'
-        }
+      case 'pay_for_data':
+        return await handlePayForData(args as any, deps)
 
-        // preferred_mode maps to ModeSelectOptions.forceMode; the field is not
-        // called preferredMode, so passing that name silently drops it (#199).
-        const modeOptions = preferred_mode
-          ? { forceMode: preferred_mode as import('@routedock/routedock').PaymentMode }
-          : undefined
+      case 'open_session':
+        return await handleOpenSession(args as any, deps, COMMITMENT_SECRET)
 
-        // Validate price for the exact selected mode. max_amount is a required
-        // tool argument, so this cap is unconditional (#144).
-        const estimate = await client.estimateCost(url, modeOptions)
+      case 'stream_session':
+        return await handleStreamSession(args as any, deps)
 
-        if (estimate.amount === undefined || isNaN(parseFloat(estimate.amount))) {
-          throw new Error('Provider returned an undefined or invalid price')
-        }
+      case 'close_session':
+        return await handleCloseSession(args as any, deps)
 
-        if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
-          throw new Error(`Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`)
-        }
+      case 'check_balance':
+        return await handleCheckBalance(args as any, deps)
 
-        const result = await client.pay(url, modeOptions)
-        
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                mode: result.mode,
-                amount: result.amount,
-                tx_hash: result.txHash,
-                timestamp: result.timestamp,
-                data: result.data,
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'open_session': {
-        const { url, initial_deposit } = args as { url: string; initial_deposit?: string }
-
-        if (!COMMITMENT_SECRET) {
-          throw new Error('COMMITMENT_SECRET environment variable is required for session mode')
-        }
-
-        if (initial_deposit) {
-          const baseUrl = new URL(url).origin
-          const manifestResponse = await fetch(`${baseUrl}/.well-known/routedock.json`)
-          const manifest = (await manifestResponse.json()) as { pricing?: Record<string, { min_deposit?: string }> }
-          const minDeposit = manifest?.pricing?.['mpp-session']?.min_deposit
-          if (minDeposit && parseFloat(initial_deposit) < parseFloat(minDeposit)) {
-            throw new Error(
-              `initial_deposit ${initial_deposit} is below this provider's min_deposit ${minDeposit}. ` +
-              `RouteDock channels are pre-deployed and funded out-of-band before the agent runs — ` +
-              `make sure the channel is funded with at least min_deposit before opening a session.`
-            )
-          }
-        }
-
-        const session = await client.openSession(url)
-        openSessions.set(session.channelId, session)
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                channel_id: session.channelId,
-                open_tx_hash: session.openTxHash,
-                message: 'Session opened successfully. Use stream_session to pull data and close_session to settle and release the channel collateral.',
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'stream_session': {
-        const { channel_id, max_messages } = args as { channel_id: string; max_messages?: number }
-
-        const session = openSessions.get(channel_id)
-        if (!session) {
-          throw new Error(
-            `No open session found for channel_id ${channel_id}. It may have already been closed, ` +
-            `auto-closed after its wall-clock lifetime guard, or opened by a different server process.`
-          )
-        }
-
-        const limit = Math.max(1, max_messages ?? 1)
-        const messages: unknown[] = []
-        const iterator = session.stream()[Symbol.asyncIterator]()
-        for (let i = 0; i < limit; i++) {
-          const { value, done } = await iterator.next()
-          if (done) break
-          messages.push(value)
-        }
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                channel_id,
-                count: messages.length,
-                messages,
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'close_session': {
-        const { channel_id } = args as { channel_id: string }
-
-        const session = openSessions.get(channel_id)
-        if (!session) {
-          throw new Error(
-            `No open session found for channel_id ${channel_id}. It may have already been closed or ` +
-            `auto-closed after its wall-clock lifetime guard.`
-          )
-        }
-
-        const result = await session.close()
-        openSessions.delete(channel_id)
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                channel_id,
-                close_tx_hash: result.closeTxHash,
-                total_paid: result.totalPaid,
-                vouchers_issued: result.vouchersIssued,
-              }, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'check_balance': {
-        const { asset_code, asset_issuer } = args as {
-          asset_code?: string
-          asset_issuer?: string
-        }
-
-        const keypair = typeof STELLAR_SECRET === 'string' 
-          ? Keypair.fromSecret(STELLAR_SECRET) 
-          : STELLAR_SECRET
-        
-        const horizonUrl = STELLAR_NETWORK === 'mainnet' 
-          ? 'https://horizon.stellar.org' 
-          : 'https://horizon-testnet.stellar.org'
-        
-        const server = new Horizon.Server(horizonUrl)
-        const account = await server.loadAccount(keypair.publicKey())
-        
-        if (asset_code && asset_issuer) {
-          // Check specific asset balance
-          const balance = account.balances.find(
-            (b: any) => b.asset_code === asset_code && b.asset_issuer === asset_issuer
-          )
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: asset_code,
-                  issuer: asset_issuer,
-                  balance: balance ? balance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        } else if (asset_code) {
-          // Check asset by code only (first match)
-          const balance = account.balances.find((b: any) => b.asset_code === asset_code)
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: asset_code,
-                  balance: balance ? balance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        } else {
-          // Return native XLM balance
-          const nativeBalance = account.balances.find((b: any) => b.asset_type === 'native')
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  asset: 'XLM',
-                  balance: nativeBalance ? nativeBalance.balance : '0',
-                  account: keypair.publicKey(),
-                }, null, 2),
-              },
-            ],
-          }
-        }
-      }
-
-      case 'list_providers': {
-        const { tags, network } = args as {
-          tags?: string
-          network?: 'testnet' | 'mainnet'
-        }
-
-        if (!supabase) {
-          throw new Error('SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access')
-        }
-
-        let query = supabase.from('providers').select('*')
-
-        if (network) {
-          query = query.eq('network', network)
-        }
-
-        if (tags) {
-          const tagList = tags.split(',').map(t => t.trim()).filter(Boolean)
-          // tags is a TEXT[] column (see idx_providers_tags GIN index) — array
-          // overlap, not to_tsvector/textSearch, is the correct operator here.
-          if (tagList.length > 0) {
-            query = query.overlaps('tags', tagList)
-          }
-        }
-
-        const { data, error } = await query
-
-        if (error) {
-          throw new Error(`Failed to fetch providers: ${error.message}`)
-        }
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                count: data?.length || 0,
-                providers: data?.map((p: any) => ({
-                  name: p.name,
-                  description: p.description,
-                  network: p.network,
-                  asset: p.asset,
-                  modes: p.modes,
-                  tags: p.tags,
-                  base_url: p.base_url,
-                })) || [],
-              }, null, 2),
-            },
-          ],
-        }
-      }
+      case 'list_providers':
+        return await handleListProviders(args as any, deps)
 
       default:
         throw new Error(`Unknown tool: ${name}`)
