@@ -284,7 +284,7 @@ expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
 routedock/
 ├── packages/sdk/            # @routedock/routedock — npm
 ├── packages/mcp-server/     # @routedock/mcp-server — MCP server for LLM agents
-├── apps/web/                # Next.js 16 dashboard + landing — Vercel
+├── apps/web/                # Next.js 16 dashboard + landing — Cloudflare Workers
 ├── apps/provider-a/         # Express price endpoint (x402 + MPP charge) — Railway
 ├── apps/provider-b/         # Express orderbook endpoint (MPP session) — Railway
 ├── contracts/agent-vault/   # Soroban contract account — Stellar
