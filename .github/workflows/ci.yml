@@ -29,7 +29,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
@@ -39,6 +39,8 @@ jobs:
         run: pnpm --filter @routedock/routedock test
       - name: Run MCP server tests
         run: pnpm --filter @routedock/mcp-server test
+      - name: Run provider-a tests
+        run: pnpm --filter provider-a test
 
   app-build:
     runs-on: ubuntu-latest
@@ -49,7 +51,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
@@ -69,7 +71,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
