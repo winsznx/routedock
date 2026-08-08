@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "routedock-provider-a",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-06-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Non-secret configuration only. STELLAR_PAYEE_SECRET, SUPABASE_SERVICE_KEY
+  // and OPENZEPPELIN_API_KEY are set with `wrangler secret put` and must never
+  // appear here — this file is committed.
+  "vars": {
+    "STELLAR_NETWORK": "testnet",
+    "PUBLIC_BASE_URL": "https://api-a.routedock.xyz"
+  }
+}

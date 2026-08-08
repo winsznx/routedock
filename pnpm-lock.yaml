@@ -52,31 +52,34 @@ importers:
       '@routedock/routedock':
         specifier: workspace:*
         version: link:../../packages/sdk
-      '@stellar/stellar-sdk':
-        specifier: ^14.6.1
-        version: 14.6.1
       '@supabase/supabase-js':
         specifier: ^2.47.0
         version: 2.102.1
-      ajv:
-        specifier: ^8.17.1
-        version: 8.18.0
-      express:
-        specifier: ^4.18.2
-        version: 4.22.1
+      hono:
+        specifier: ^4.12.23
+        version: 4.12.25
     devDependencies:
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
+      '@cloudflare/workers-types':
+        specifier: ^4.20250109.0
+        version: 4.20260702.1
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.39
-      ts-node-dev:
-        specifier: ^2.0.0
-        version: 2.0.0(@types/node@20.19.39)(typescript@5.9.3)
+      ajv:
+        specifier: ^8.17.1
+        version: 8.18.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.18.0)
+      tsx:
+        specifier: ^4.22.3
+        version: 4.23.4
       typescript:
         specifier: ^5.4.5
         version: 5.9.3
+      wrangler:
+        specifier: ^4.118.0
+        version: 4.118.0(@cloudflare/workers-types@4.20260702.1)
 
   apps/provider-b:
     dependencies:
@@ -201,7 +204,7 @@ importers:
         version: 5.9.3
       wrangler:
         specifier: ^4.118.0
-        version: 4.118.0
+        version: 4.118.0(@cloudflare/workers-types@4.20260702.1)
 
   packages/mcp-server:
     dependencies:
@@ -445,6 +448,9 @@ packages:
   '@aws-sdk/core@3.977.4':
     resolution: {integrity: sha512-CEkcQlMOQJCvul60U7wdAOACjtdgFWDsfJI+6wUOGdhGNV2lGbuJpi/R50QLpFG3Tp+sQxa/RmzC3X7KHbhuTA==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      Deprecated due to Document number parsing bug in JSON, see
+        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
 
   '@aws-sdk/credential-provider-env@3.972.65':
     resolution: {integrity: sha512-lJT2aRw9wCV8jPHyFJjdZLD4HTydL6/22AnCSOB8e/LqOc55nEJGLHkJQeSxhn8QiqyjFwPKQFtMw0ovjRUY/g==}
@@ -838,6 +844,9 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/workers-types@4.20260702.1':
+    resolution: {integrity: sha512-mOhf5TUEB1m2vPrxtqoIGfz0fUC9xyxRDx5gWHy5s+OCo6dcV+g7wI1R7gYCMFohhqF/2y2xeKVwMwCJjfn/WA==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -7196,6 +7205,8 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260730.1':
     optional: true
 
+  '@cloudflare/workers-types@4.20260702.1': {}
+
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
@@ -8123,7 +8134,7 @@ snapshots:
       glob: 12.0.0
       next: 16.2.2(@babel/core@7.29.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       ts-tqdm: 0.8.6
-      wrangler: 4.118.0
+      wrangler: 4.118.0(@cloudflare/workers-types@4.20260702.1)
       yargs: 18.1.0
     transitivePeerDependencies:
       - encoding
@@ -12758,7 +12769,7 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260730.1
       '@cloudflare/workerd-windows-64': 1.20260730.1
 
-  wrangler@4.118.0:
+  wrangler@4.118.0(@cloudflare/workers-types@4.20260702.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260730.1)
@@ -12769,6 +12780,7 @@ snapshots:
       unenv: 2.0.0-rc.24
       workerd: 1.20260730.1
     optionalDependencies:
+      '@cloudflare/workers-types': 4.20260702.1
       fsevents: 2.3.3
     transitivePeerDependencies:
       - bufferutil

@@ -2,23 +2,26 @@
   "name": "provider-a",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "tsc",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "start": "node dist/index.js",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "tsx --test $(find src -name '*.test.ts' | sort)",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@routedock/routedock": "workspace:*",
-    "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0",
-    "ajv": "^8.17.1",
-    "express": "^4.18.2"
+    "hono": "^4.12.23"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@cloudflare/workers-types": "^4.20250109.0",
     "@types/node": "^20.0.0",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.5"
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "tsx": "^4.22.3",
+    "typescript": "^5.4.5",
+    "wrangler": "^4.118.0"
   }
 }
