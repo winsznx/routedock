@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import { config as loadDotenv } from 'dotenv'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
@@ -28,6 +28,14 @@ import {
   type ListProvidersArgs,
 } from './handlers.js'
 
+// Load environment variables (supports .env files for external secret management)
+const envPath = process.env.ROUTEDOCK_ENV_FILE
+if (envPath) {
+  loadDotenv({ path: envPath })
+} else {
+  loadDotenv()
+}
+
 // Environment variables
 const STELLAR_SECRET = process.env.STELLAR_SECRET || process.env.ROUTEDOCK_WALLET_SECRET
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || 'testnet') as 'testnet' | 'mainnet'
@@ -56,17 +64,14 @@ class FileSpendStore {
   constructor(filePath: string) {
     this.filePath = filePath
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async read(): Promise<any | null> {
     try {
       const data = await fs.readFile(this.filePath, 'utf-8')
       return JSON.parse(data)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       return null
     }
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async write(state: any): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     await fs.writeFile(this.filePath, JSON.stringify(state, null, 2), 'utf-8')
@@ -75,17 +80,14 @@ class FileSpendStore {
 
 const spendStorePath = process.env.ROUTEDOCK_SPEND_STORE_PATH || path.join(os.homedir(), '.routedock', 'spend.json')
 
-// Initialize RouteDock client.
-// spendStore exists in the workspace SDK (packages/sdk) but not in the published
-// @routedock/routedock@0.1.2 type — cast via `any` so this compiles against both.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Initialize RouteDock client
 const client = new RouteDockClient({
   wallet: STELLAR_SECRET,
   network: STELLAR_NETWORK,
   commitmentSecret: COMMITMENT_SECRET,
   spendCap: { daily: ROUTEDOCK_DAILY_CAP, asset: 'USDC' },
   spendStore: new FileSpendStore(spendStorePath),
-} as any)
+})
 
 // Initialize Supabase client for provider registry
 let supabase: ReturnType<typeof createClient> | null = null
@@ -242,10 +244,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 })
 
 // Call tool handler — delegates to pure handler functions in handlers.ts
-// Cast to `any` suppresses the MCP SDK's expanding ServerResult union mismatch;
-// the runtime shape (content array) is correct per the protocol spec.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-server.setRequestHandler(CallToolRequestSchema, async (request): Promise<any> => {
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
   try {
