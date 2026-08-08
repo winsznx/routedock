@@ -37,6 +37,8 @@ jobs:
         run: pnpm --filter @routedock/nulth-sdk build
       - name: Run SDK tests
         run: pnpm --filter @routedock/routedock test
+      - name: Run MCP server tests
+        run: pnpm --filter @routedock/mcp-server test
 
   app-build:
     runs-on: ubuntu-latest
