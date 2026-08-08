@@ -18,8 +18,10 @@ import { Keypair, Horizon } from '@stellar/stellar-sdk'
 // Shared types
 // ---------------------------------------------------------------------------
 
-/** The shape every handler returns — compatible with MCP CallToolResult. */
-export interface ToolResult {
+/** The shape every handler returns — compatible with MCP CallToolResult.
+ * Must be a type alias (not interface) so TypeScript infers the implicit index
+ * signature required by MCP SDK 1.29's ServerResult union. */
+export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>
   isError?: true
 }
@@ -52,9 +54,7 @@ export interface HandlerDeps {
    * When omitted the handler creates a real Horizon.Server from stellarNetwork.
    */
   createHorizonServer?: (url: string) => {
-    loadAccount: (publicKey: string) => Promise<{
-      balances: Array<{ asset_type?: string; asset_code?: string; asset_issuer?: string; balance: string }>
-    }>
+    loadAccount: (publicKey: string) => Promise<{ balances: HorizonBalance[] }>
   }
   /**
    * Optional: override the fetch used by open_session's min_deposit preflight.
@@ -287,6 +287,29 @@ const HORIZON_URLS = {
 } as const
 
 /**
+ * Normalized Horizon balance line, flattened across Horizon's discriminated
+ * union (BalanceLineNative | BalanceLineAsset | BalanceLineLiquidityPool).
+ * exactOptionalPropertyTypes requires explicit `| undefined` on each optional.
+ */
+export type HorizonBalance = {
+  asset_type?: string | undefined
+  asset_code?: string | undefined
+  asset_issuer?: string | undefined
+  balance: string
+}
+
+function normalizeBalances(
+  balances: ReadonlyArray<HorizonBalance | Horizon.HorizonApi.BalanceLine>,
+): HorizonBalance[] {
+  return balances.map((b) => ({
+    asset_type: b.asset_type,
+    asset_code: 'asset_code' in b ? b.asset_code : undefined,
+    asset_issuer: 'asset_issuer' in b ? b.asset_issuer : undefined,
+    balance: b.balance,
+  }))
+}
+
+/**
  * Load the Stellar account and return the requested balance.
  * Uses `createHorizonServer` from deps when provided (for tests), otherwise
  * constructs a real Horizon.Server.
@@ -306,9 +329,12 @@ export async function handleCheckBalance(
     : new Horizon.Server(horizonUrl)
 
   const account = await horizonServer.loadAccount(keypair.publicKey())
+  // Normalize the discriminated union into a flat shape so asset_code /
+  // asset_issuer field access compiles under strictNullChecks.
+  const balances = normalizeBalances(account.balances)
 
   if (asset_code && asset_issuer) {
-    const balance = account.balances.find(
+    const balance = balances.find(
       (b) => b.asset_code === asset_code && b.asset_issuer === asset_issuer,
     )
     return ok({
@@ -320,7 +346,7 @@ export async function handleCheckBalance(
   }
 
   if (asset_code) {
-    const balance = account.balances.find((b) => b.asset_code === asset_code)
+    const balance = balances.find((b) => b.asset_code === asset_code)
     return ok({
       asset: asset_code,
       balance: balance ? balance.balance : '0',
@@ -329,7 +355,7 @@ export async function handleCheckBalance(
   }
 
   // Default: native XLM
-  const nativeBalance = account.balances.find((b) => b.asset_type === 'native')
+  const nativeBalance = balances.find((b) => b.asset_type === 'native')
   return ok({
     asset: 'XLM',
     balance: nativeBalance ? nativeBalance.balance : '0',

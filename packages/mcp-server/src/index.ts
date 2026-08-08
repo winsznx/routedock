@@ -20,6 +20,12 @@ import {
   handleCheckBalance,
   handleListProviders,
   type HandlerDeps,
+  type PayForDataArgs,
+  type OpenSessionArgs,
+  type StreamSessionArgs,
+  type CloseSessionArgs,
+  type CheckBalanceArgs,
+  type ListProvidersArgs,
 } from './handlers.js'
 
 // Environment variables
@@ -245,28 +251,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request): Promise<any> =>
   try {
     switch (name) {
       case 'pay_for_data':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handlePayForData(args as any, deps)
+        return await handlePayForData(args as unknown as PayForDataArgs, deps)
 
       case 'open_session':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handleOpenSession(args as any, deps, COMMITMENT_SECRET)
+        return await handleOpenSession(args as unknown as OpenSessionArgs, deps, COMMITMENT_SECRET)
 
       case 'stream_session':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handleStreamSession(args as any, deps)
+        return await handleStreamSession(args as unknown as StreamSessionArgs, deps)
 
       case 'close_session':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handleCloseSession(args as any, deps)
+        return await handleCloseSession(args as unknown as CloseSessionArgs, deps)
 
       case 'check_balance':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handleCheckBalance(args as any, deps)
+        return await handleCheckBalance(args as unknown as CheckBalanceArgs, deps)
 
       case 'list_providers':
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await handleListProviders(args as any, deps)
+        return await handleListProviders(args as unknown as ListProvidersArgs, deps)
 
       default:
         throw new Error(`Unknown tool: ${name}`)

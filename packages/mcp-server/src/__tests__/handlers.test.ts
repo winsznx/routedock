@@ -1,15 +1,7 @@
-/**
- * handlers.test.ts
- *
- * Unit tests for packages/mcp-server/src/handlers.ts using Node's built-in
- * test runner (node:test + node:assert/strict).
- *
- * All I/O is faked through HandlerDeps — no network calls are made.
- */
-
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
+import type { RouteDockManifest, EstimateCostResult } from '@routedock/routedock'
 import {
   handlePayForData,
   handleOpenSession,
@@ -19,6 +11,7 @@ import {
   handleListProviders,
   type HandlerDeps,
   type ToolResult,
+  type HorizonBalance,
 } from '../handlers.js'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +22,26 @@ function parseResult(result: ToolResult): unknown {
   return JSON.parse(result.content[0]!.text)
 }
 
+/** Minimal RouteDockManifest fixture required by EstimateCostResult. */
+const FAKE_MANIFEST: RouteDockManifest = {
+  routedock: '1.0',
+  name: 'Fake Provider',
+  description: 'Test fixture provider',
+  modes: ['x402'],
+  network: 'testnet',
+  asset: 'USDC',
+  asset_contract: 'CFAKESACADDRESS',
+  payee: 'GFAKEPAYEEADDRESS',
+  pricing: {},
+  endpoints: {},
+  tags: [],
+}
+
+/** Build a valid EstimateCostResult for test fakes. */
+function estimate(amount: string): EstimateCostResult {
+  return { amount, asset: 'USDC', mode: 'x402', manifest: FAKE_MANIFEST }
+}
+
 /** Minimal fake RouteDockClient */
 function makeClient(overrides: Partial<{
   estimateCost: HandlerDeps['client']['estimateCost']
@@ -36,7 +49,7 @@ function makeClient(overrides: Partial<{
   openSession: HandlerDeps['client']['openSession']
 }> = {}): HandlerDeps['client'] {
   return {
-    estimateCost: overrides.estimateCost ?? (async () => ({ amount: '0.001', asset: 'USDC' })),
+    estimateCost: overrides.estimateCost ?? (async () => estimate('0.001')),
     pay: overrides.pay ?? (async () => ({
       mode: 'x402' as const,
       amount: '0.001',
@@ -100,7 +113,7 @@ describe('handlePayForData', () => {
   it('returns isError when estimate exceeds max_amount', async () => {
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async () => ({ amount: '5.00', asset: 'USDC' }),
+        estimateCost: async () => estimate('5.00'),
       }),
     })
     const result = await handlePayForData(
@@ -115,7 +128,7 @@ describe('handlePayForData', () => {
   it('returns isError when provider returns an undefined amount', async () => {
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async () => ({ amount: undefined as any, asset: 'USDC' }),
+        estimateCost: async () => ({ ...estimate('0'), amount: undefined as unknown as string }),
       }),
     })
     const result = await handlePayForData(
@@ -133,7 +146,7 @@ describe('handlePayForData', () => {
       client: makeClient({
         estimateCost: async (_url: string, opts: unknown) => {
           capturedModeOptions = opts
-          return { amount: '0.001', asset: 'USDC' }
+          return estimate('0.001')
         },
       }),
     })
@@ -316,7 +329,7 @@ describe('handleCheckBalance', () => {
   const secret = Keypair.random().secret()
   const keypair = Keypair.fromSecret(secret)
 
-  const makeHorizon = (balances: unknown[]) => (_url: string) => ({
+  const makeHorizon = (balances: HorizonBalance[]) => (_url: string) => ({
     loadAccount: async (_pk: string) => ({ balances }),
   })
 
