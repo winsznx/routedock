@@ -7,6 +7,12 @@
   "observability": {
     "enabled": true
   },
+  "routes": [
+    {
+      "pattern": "api-a.routedock.xyz",
+      "custom_domain": true
+    }
+  ],
   // Non-secret configuration only. STELLAR_PAYEE_SECRET, SUPABASE_SERVICE_KEY
   // and OPENZEPPELIN_API_KEY are set with `wrangler secret put` and must never
   // appear here — this file is committed.
