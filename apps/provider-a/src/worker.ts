@@ -101,10 +101,14 @@ function createApp(env: Env): Hono {
 
   const app = new Hono()
 
-  app.get('/.well-known/routedock.json', (c) => c.json(manifest))
-
+  // Mounted at '*', not '/price', so routedockHono's own
+  // /.well-known/routedock.json branch serves the SIGNED manifest. Scoping it
+  // to /price leaves the well-known route unsigned, and mandatory signature
+  // verification (PR #86) then makes every client.pay() throw
+  // RouteDockSignatureError before any payment — issue #134. /health is
+  // answered in fetch() below, before this middleware can demand payment.
   app.use(
-    '/price',
+    '*',
     routedockHono({
       modes: ['x402', 'mpp-charge'],
       pricing: { x402: X402_PRICE, 'mpp-charge': MPP_CHARGE_PRICE },
@@ -166,17 +170,17 @@ function createApp(env: Env): Hono {
     }
   })
 
-  app.get('/health', (c) => {
-    const addr = env.STELLAR_PAYEE_ADDRESS
-    return c.json({
-      status: 'ok',
-      network,
-      payee: addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : 'not configured',
-      registry: supabase ? 'connected' : 'not configured',
-    })
-  })
-
   return app
+}
+
+function healthResponse(env: Env): Response {
+  const addr = env.STELLAR_PAYEE_ADDRESS
+  return Response.json({
+    status: 'ok',
+    network: resolveNetwork(env.STELLAR_NETWORK),
+    payee: addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : 'not configured',
+    registry: env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY ? 'connected' : 'not configured',
+  })
 }
 
 /**
@@ -187,6 +191,9 @@ let cachedApp: Hono | null = null
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Answered before the app so the '*' payment middleware never sees it.
+    if (new URL(request.url).pathname === '/health') return healthResponse(env)
+
     try {
       cachedApp ??= createApp(env)
     } catch (err) {
