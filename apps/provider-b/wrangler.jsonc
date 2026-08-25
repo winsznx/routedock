@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "routedock-provider-b",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-06-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "api-b.routedock.xyz",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNEL_SESSION",
+        "class_name": "ChannelSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ChannelSession"]
+    }
+  ],
+  // Non-secret configuration only. STELLAR_PAYEE_SECRET, SUPABASE_SERVICE_KEY,
+  // CHANNEL_CONTRACT_ID and COMMITMENT_PUBLIC_KEY are set with
+  // `wrangler secret put` — this file is committed.
+  "vars": {
+    "STELLAR_NETWORK": "testnet",
+    "PUBLIC_BASE_URL": "https://api-b.routedock.xyz"
+  }
+}

@@ -39,13 +39,15 @@ jobs:
         run: pnpm --filter @routedock/routedock test
       - name: Run MCP server tests
         run: pnpm --filter @routedock/mcp-server test
-      # provider-a's manifest test imports @routedock/routedock/schema, which
+      # The provider manifest tests import @routedock/routedock/schema, which
       # resolves to the SDK's built dist/. The SDK's own tests run from source,
       # so nothing above this point builds it.
-      - name: Build sdk (provider-a tests import its built schema)
+      - name: Build sdk (provider tests import its built schema)
         run: pnpm --filter @routedock/routedock build
       - name: Run provider-a tests
         run: pnpm --filter provider-a test
+      - name: Run provider-b tests
+        run: pnpm --filter provider-b test
 
   app-build:
     runs-on: ubuntu-latest
