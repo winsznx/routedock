@@ -41,6 +41,8 @@ export interface RouteDockHonoOptions {
     x402?: string
     'mpp-charge'?: string
     'mpp-session'?: { rate: string; channelFactory: string }
+    /** WebSocket transport variant of mpp-session — same channel, WS streaming */
+    'mpp-session-ws'?: { rate: string; channelFactory: string }
   }
   asset: string
   assetContract: string
@@ -357,9 +359,58 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
   }
 }
 
-function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
+/**
+ * Context key set by the mpp-session-ws middleware after a request's payment
+ * credential has been verified, so the app's WebSocket upgrade route can
+ * refuse to upgrade unauthenticated handshakes.
+ */
+export const MPP_SESSION_WS_VERIFIED = 'routedock.mppSessionWs.verified'
+
+/**
+ * True when the routedockHono mpp-session-ws middleware verified the
+ * handshake request's Payment credential (see {@link MPP_SESSION_WS_VERIFIED}).
+ * WebSocket upgrade routes should refuse to upgrade when this is false.
+ */
+export function mppSessionWsVerified(c: { get: (key: string) => unknown }): boolean {
+  return c.get(MPP_SESSION_WS_VERIFIED) === true
+}
+
+/** Contexts the shared session state is invoked with (subset of hono's Context). */
+interface DeleteContext {
+  req: { json(): Promise<unknown> }
+  json: (data: unknown) => Response
+}
+interface AuthContext {
+  req: { header(name: string): string | undefined }
+}
+interface SignalContext {
+  req: { raw: { signal?: AbortSignal } }
+}
+
+/**
+ * Mutable per-channel session state shared by the mpp-session and
+ * mpp-session-ws handlers. Extracted so a provider advertising both transports
+ * (same channel factory) verifies vouchers against ONE store and closes the
+ * channel with the combined cumulative — two independent stores would let a
+ * DELETE close see only the vouchers of whichever handler received it.
+ */
+interface MppSessionHandlerState {
+  /** mppx server instance (channel method) used for voucher verification. */
+  mppx: unknown
+  /** Handle a DELETE channel-close request; returns the HTTP response. */
+  handleDelete(c: DeleteContext): Promise<Response>
+  /** Extract payer + latest signature from a Payment authorization header. */
+  extractPayer(c: AuthContext): void
+  /** Arm the connection-closed orphan guard (idempotent). */
+  armAbortGuard(c: SignalContext): void
+}
+
+function createMppSessionHandlerState(
+  opts: RouteDockHonoOptions,
+  sessionPricing: { rate: string; channelFactory: string },
+  reportMode: 'mpp-session' | 'mpp-session-ws',
+): MppSessionHandlerState {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
-  const sessionPricing = opts.pricing['mpp-session']!
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
 
@@ -469,100 +520,134 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
     ],
   })
 
+  return {
+    mppx,
+
+    async handleDelete(c: DeleteContext): Promise<Response> {
+      let body: { amount?: string; signature?: string } | undefined
+      try {
+        body = await c.req.json() as { amount?: string; signature?: string }
+      } catch {
+        // empty or non-JSON body
+      }
+
+      const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+      let closeAmount: bigint
+      let closeSig: string
+      if (bodyAmount > lastCumulativeAmount) {
+        closeAmount = bodyAmount
+        closeSig = body?.signature ?? lastSignatureHex
+      } else {
+        closeAmount = lastCumulativeAmount
+        // Prefer the provider's own tracked signature. Fall back to the
+        // client's only when it signs the same amount and the provider never
+        // captured one (voucher reached the mppx store without a Payment
+        // credential) — otherwise a close for a genuinely tracked amount
+        // no-ops and the session is never flagged for recovery.
+        closeSig =
+          lastSignatureHex ||
+          (bodyAmount === lastCumulativeAmount ? body?.signature ?? '' : '')
+      }
+
+      if (closeAmount > 0n && closeSig) {
+        const closeTxHash = await channelClose({
+          channel: sessionPricing.channelFactory,
+          amount: closeAmount,
+          signature: hexToBytes(closeSig),
+          feePayer: { envelopeSigner: payeeKeypair },
+          network: networkId,
+        })
+
+        // Clean close — suppress any orphan flagging for this session. Only
+        // after the close broadcast succeeded: if channelClose throws, the
+        // orphan state must stay armed so the reconciler can still recover
+        // this channel. Matches MppSessionHandler.ts ordering.
+        settledCleanly = true
+        clearIdleTimer()
+
+        if (opts.onSettled) {
+          const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
+          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, sessionPayerAddress)).catch(err => {
+            console.error(`[mpp-session] onSettled callback error:`, err)
+            opts.onCallbackError?.(err, 'onSettled')
+          })
+        }
+
+        sessionOpened = false
+        voucherCount = 0
+        lastCumulativeAmount = 0n
+        sessionPayerAddress = null
+        abortListenerArmed = false
+
+        return c.json({ closeTxHash })
+      }
+
+      return c.json({ closeTxHash: null, message: 'no vouchers received' })
+    },
+
+    extractPayer(c: AuthContext): void {
+      const authHeader = c.req.header('authorization')
+      if (!authHeader?.startsWith('Payment ')) return
+      try {
+        const credB64 = authHeader
+          .replace(/^Payment\s+/, '')
+          .split(',')
+          .find((p) => p.trim().startsWith('credential='))
+        if (credB64) {
+          const credJson = base64ToUtf8(
+            credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
+          )
+          const cred = JSON.parse(credJson) as {
+            sender?: string
+            payload?: { signature?: string; sender?: string; from?: string }
+          }
+          if (cred.payload?.signature) {
+            lastSignatureHex = cred.payload.signature
+          }
+          if (!sessionPayerAddress) {
+            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
+            sessionPayerAddress = extractPayerAddress(key)
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    },
+
+    armAbortGuard(c: SignalContext): void {
+      // Payment verified. The Workers/edge runtime exposes connection teardown
+      // via the request's AbortSignal — use it (in place of Node's
+      // `req.on('close')`) so a client crash mid-session flags the channel for
+      // the reconciler instead of leaking state.
+      const signal = c.req.raw.signal
+      if (signal && !abortListenerArmed) {
+        abortListenerArmed = true
+        signal.addEventListener(
+          'abort',
+          () => { void flagOrphan('connection-closed') },
+          { once: true },
+        )
+      }
+    },
+  }
+}
+
+function createMppSessionHonoHandler(
+  opts: RouteDockHonoOptions,
+  config: { mode: 'mpp-session' | 'mpp-session-ws' },
+  state: MppSessionHandlerState,
+): MiddlewareHandler {
+  const sessionPricing = opts.pricing[config.mode]!
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
-        let body: { amount?: string; signature?: string } | undefined
-        try {
-          body = await c.req.json() as { amount?: string; signature?: string }
-        } catch {
-          // empty or non-JSON body
-        }
-
-        const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
-        let closeAmount: bigint
-        let closeSig: string
-        if (bodyAmount > lastCumulativeAmount) {
-          closeAmount = bodyAmount
-          closeSig = body?.signature ?? lastSignatureHex
-        } else {
-          closeAmount = lastCumulativeAmount
-          // Prefer the provider's own tracked signature. Fall back to the
-          // client's only when it signs the same amount and the provider never
-          // captured one (voucher reached the mppx store without a Payment
-          // credential) — otherwise a close for a genuinely tracked amount
-          // no-ops and the session is never flagged for recovery.
-          closeSig =
-            lastSignatureHex ||
-            (bodyAmount === lastCumulativeAmount ? body?.signature ?? '' : '')
-        }
-
-        if (closeAmount > 0n && closeSig) {
-          const closeTxHash = await channelClose({
-            channel: sessionPricing.channelFactory,
-            amount: closeAmount,
-            signature: hexToBytes(closeSig),
-            feePayer: { envelopeSigner: payeeKeypair },
-            network: networkId,
-          })
-
-          // Clean close — suppress any orphan flagging for this session. Only
-          // after the close broadcast succeeded: if channelClose throws, the
-          // orphan state must stay armed so the reconciler can still recover
-          // this channel. Matches MppSessionHandler.ts ordering.
-          settledCleanly = true
-          clearIdleTimer()
-
-          if (opts.onSettled) {
-            const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', sessionPayerAddress)).catch(err => {
-              console.error('[mpp-session] onSettled callback error:', err)
-              opts.onCallbackError?.(err, 'onSettled')
-            })
-          }
-
-          sessionOpened = false
-          voucherCount = 0
-          lastCumulativeAmount = 0n
-          sessionPayerAddress = null
-          abortListenerArmed = false
-
-          return c.json({ closeTxHash })
-        }
-
-        return c.json({ closeTxHash: null, message: 'no vouchers received' })
+        return state.handleDelete(c as unknown as DeleteContext)
       }
 
-      const authHeader = c.req.header('authorization')
-      if (authHeader?.startsWith('Payment ')) {
-        try {
-          const credB64 = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credB64) {
-            const credJson = base64ToUtf8(
-              credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
-            )
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { signature?: string; sender?: string; from?: string }
-            }
-            if (cred.payload?.signature) {
-              lastSignatureHex = cred.payload.signature
-            }
-            if (!sessionPayerAddress) {
-              const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-              sessionPayerAddress = extractPayerAddress(key)
-            }
-          }
-        } catch {
-          // non-fatal
-        }
-      }
+      state.extractPayer(c as unknown as AuthContext)
 
       const result = await (
-        mppx as unknown as {
+        state.mppx as unknown as {
           channel: (o: { amount: string; description?: string }) => (
             r: globalThis.Request,
           ) => Promise<{
@@ -583,18 +668,15 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
         return new Response(await challenge.text(), { status: 402, headers })
       }
 
-      // Payment verified. The Workers/edge runtime exposes connection teardown
-      // via the request's AbortSignal — use it (in place of Node's
-      // `req.on('close')`) so a client crash mid-session flags the channel for
-      // the reconciler instead of leaking state.
-      const signal = c.req.raw.signal
-      if (signal && !abortListenerArmed) {
-        abortListenerArmed = true
-        signal.addEventListener(
-          'abort',
-          () => { void flagOrphan('connection-closed') },
-          { once: true },
-        )
+      state.armAbortGuard(c as unknown as SignalContext)
+
+      // mpp-session-ws: the verified request is a WebSocket handshake, so hand
+      // control to the app's upgrade route (it checks MPP_SESSION_WS_VERIFIED)
+      // instead of letting the data route answer with a 200 body.
+      if (config.mode === 'mpp-session-ws' && isWebSocketUpgradeRequest(c)) {
+        c.set(MPP_SESSION_WS_VERIFIED, true)
+        await next()
+        return
       }
 
       await next()
@@ -602,6 +684,13 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
       throw err
     }
   }
+}
+
+/** True when the request is a WebSocket upgrade handshake. */
+function isWebSocketUpgradeRequest(c: {
+  req: { header: (name: string) => string | undefined }
+}): boolean {
+  return (c.req.header('upgrade') ?? '').toLowerCase() === 'websocket'
 }
 
 /**
@@ -639,11 +728,24 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     handlers.push(createMppChargeHonoHandler({ ...opts, manifest: signedManifest }))
   }
 
-  if (opts.modes.includes('mpp-session') && opts.pricing['mpp-session']) {
+  // Session modes (mpp-session, mpp-session-ws) share one channel store so a
+  // provider advertising both transports verifies vouchers against the same
+  // cumulative state and a DELETE close sees the combined total.
+  const sessionModes = (['mpp-session', 'mpp-session-ws'] as const).filter(
+    (mode) => opts.modes.includes(mode) && !!opts.pricing[mode],
+  )
+  const primarySessionMode = sessionModes[0]
+  if (primarySessionMode) {
     if (!opts.commitmentPublicKey) {
-      throw new Error('routedockHono: mpp-session mode requires commitmentPublicKey')
+      throw new Error('routedockHono: mpp-session/mpp-session-ws mode requires commitmentPublicKey')
     }
-    handlers.push(createMppSessionHonoHandler({ ...opts, manifest: signedManifest }))
+    const sessionPricing = opts.pricing[primarySessionMode]!
+    const sharedState = createMppSessionHandlerState(opts, sessionPricing, primarySessionMode)
+    for (const mode of sessionModes) {
+      handlers.push(
+        createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState),
+      )
+    }
   }
 
   return async (c, next) => {

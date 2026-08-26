@@ -271,8 +271,9 @@ export class RouteDockClient {
         result = await this.charge.pay(url, manifest)
         break
       case 'mpp-session':
+      case 'mpp-session-ws':
         throw new RouteDockManifestError(
-          'Use client.openSession() for mpp-session mode — client.pay() only handles discrete payments',
+          `Use client.openSession() for ${mode} mode — client.pay() only handles discrete payments`,
         )
       default:
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
@@ -330,6 +331,9 @@ export class RouteDockClient {
       case 'mpp-session':
         amount = manifest.pricing['mpp-session']!.rate
         break
+      case 'mpp-session-ws':
+        amount = manifest.pricing['mpp-session-ws']!.rate
+        break
       default:
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
@@ -349,9 +353,10 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
 
-    if (!manifest.modes.includes('mpp-session')) {
+    const mode = options?.mode ?? 'mpp-session'
+    if (!manifest.modes.includes(mode)) {
       throw new RouteDockManifestError(
-        `Provider at ${baseUrl} does not support mpp-session mode`,
+        `Provider at ${baseUrl} does not support ${mode} mode`,
       )
     }
 

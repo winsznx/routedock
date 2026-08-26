@@ -17,7 +17,7 @@ import { RouteDockClient } from '@routedock/routedock'
 
 const client = new RouteDockClient({ wallet, network: 'testnet' })
 const result = await client.pay('https://provider.example.com/price')
-// result.mode → 'x402' | 'mpp-charge' | 'mpp-session' (selected automatically)
+// result.mode → 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws' (selected automatically)
 ```
 
 One SDK. One function call. The mode is selected from the provider's `routedock.json` manifest. The agent writes nothing else.
@@ -174,10 +174,28 @@ Raises: `RouteDockDisputeError`, `RouteDockChannelStateError`, `RouteDockRefundW
 
 Deterministic, manifest-driven:
 
-1. Sustained access requested + `mpp-session` available → session
+1. Sustained access requested + a session mode available → session
+   (`mpp-session-ws` when the caller asks for a WebSocket transport and the
+   provider advertises it, otherwise `mpp-session`)
 2. `mpp-charge` available → charge (lower fees, no facilitator)
-3. `mpp-session` available → x402 (facilitator-backed)
+3. `x402` available → x402 (facilitator-backed)
 4. Nothing available → throw
+
+### `mpp-session-ws` — WebSocket streaming sessions
+
+Open a channel, negotiate the voucher, then upgrade the HTTP connection to
+WebSocket — the transport OpenAI/Anthropic/Google-style inference providers
+speak natively, without an SSE wrapper:
+
+```ts
+const session = await client.openSession('https://provider.example.com/stream', {
+  mode: 'mpp-session-ws',
+})
+for await (const chunk of session.stream()) {
+  // each WebSocket frame, JSON-decoded
+}
+await session.close()
+```
 
 ---
 

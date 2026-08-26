@@ -28,7 +28,7 @@ describe('provider-b manifest', () => {
     assert.equal(valid, true, JSON.stringify(validate.errors, null, 2))
   })
 
-  it('carries the channel factory through to mpp-session pricing', () => {
+  it('carries the channel factory through to mpp-session and mpp-session-ws pricing', () => {
     // #given
     const manifest = buildManifest({
       network: 'testnet',
@@ -38,9 +38,10 @@ describe('provider-b manifest', () => {
     })
 
     // #then
+    assert.deepEqual(manifest.modes, ['mpp-session', 'mpp-session-ws'])
     assert.equal(manifest.pricing['mpp-session']!.channel_factory, CHANNEL)
-    assert.equal(manifest.modes.length, 1)
-    assert.equal(manifest.modes[0], 'mpp-session')
+    assert.equal(manifest.pricing['mpp-session-ws']!.channel_factory, CHANNEL)
+    assert.equal(manifest.pricing['mpp-session-ws']!.rate, '0.0001')
   })
 
   it('does not advertise sse or realtime, which the endpoint never served', () => {

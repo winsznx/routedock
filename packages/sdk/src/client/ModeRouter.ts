@@ -129,6 +129,14 @@ export interface ModeSelectOptions {
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
+  /**
+   * Preferred streaming transport for sustained sessions. When 'websocket',
+   * the mpp-session-ws variant is preferred when the provider advertises it;
+   * when 'sse' (or omitted), the classic mpp-session mode is preferred.
+   * Either transport falls back to the other session variant when the
+   * preferred one is not advertised.
+   */
+  transport?: 'sse' | 'websocket'
   /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
   optimize?: 'cost'
   /** Optional maximum acceptable per-request amount for cost-based selection. */
@@ -223,8 +231,16 @@ function selectFromModes(
   manifest: RouteDockManifest,
   options: ModeSelectOptions,
 ): ModeSelection | undefined {
-  if ((options.sustained || options.session) && modes.includes('mpp-session')) {
-    return { mode: 'mpp-session' }
+  if (options.sustained || options.session) {
+    // Prefer the session variant matching the requested transport, falling
+    // back to the other session variant when the preferred one is missing.
+    if (options.transport === 'websocket') {
+      if (modes.includes('mpp-session-ws')) return { mode: 'mpp-session-ws' }
+      if (modes.includes('mpp-session')) return { mode: 'mpp-session' }
+    } else {
+      if (modes.includes('mpp-session')) return { mode: 'mpp-session' }
+      if (modes.includes('mpp-session-ws')) return { mode: 'mpp-session-ws' }
+    }
   }
 
   if (options.optimize === 'cost') {
