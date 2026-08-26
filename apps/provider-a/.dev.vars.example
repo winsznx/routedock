@@ -1,0 +1,6 @@
+STELLAR_PAYEE_SECRET="S..."           # throwaway testnet secret key
+STELLAR_PAYEE_ADDRESS="G..."          # its public key
+# Optional — omit to run without the registry
+SUPABASE_URL=""
+SUPABASE_SERVICE_KEY=""
+OPENZEPPELIN_API_KEY=""
