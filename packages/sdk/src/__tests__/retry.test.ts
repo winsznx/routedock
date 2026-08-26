@@ -151,6 +151,77 @@ describe('withRetry', () => {
     assert.equal(calls, DEFAULT_RETRY_POLICY.maxAttempts)
   })
 
+  it('calls onRetry with attempt number, error, and delay before each retry', async () => {
+    const retries: Array<{ attempt: number; error: Error; delay: number }> = []
+    let calls = 0
+    const result = await withRetry(
+      async () => {
+        calls++
+        if (calls < 3) {
+          throw new RouteDockNetworkError('transient')
+        }
+        return Promise.resolve('ok')
+      },
+      {
+        maxAttempts: 4,
+        baseDelayMs: 100,
+        onRetry: (attempt, error, nextDelayMs) => {
+          retries.push({ attempt, error, delay: nextDelayMs })
+        },
+      },
+    )
+    assert.equal(result, 'ok')
+    assert.equal(retries.length, 2)
+    const first = retries[0]!
+    const second = retries[1]!
+    assert.equal(first.attempt, 0)
+    assert.ok(first.error instanceof RouteDockNetworkError)
+    assert.ok(first.delay >= 0)
+    assert.equal(second.attempt, 1)
+  })
+
+  it('does not call onRetry when the error is not retryable', async () => {
+    const retries: number[] = []
+    await assert.rejects(
+      () =>
+        withRetry(
+          () => {
+            throw new RouteDockManifestError('bad')
+          },
+          {
+            maxAttempts: 4,
+            baseDelayMs: 1,
+            onRetry: (attempt) => {
+              retries.push(attempt)
+            },
+          },
+        ),
+      (err: unknown) => err instanceof RouteDockManifestError,
+    )
+    assert.equal(retries.length, 0)
+  })
+
+  it('does not call onRetry on the final attempt', async () => {
+    const retries: number[] = []
+    await assert.rejects(
+      () =>
+        withRetry(
+          () => {
+            throw new RouteDockNetworkError('still down')
+          },
+          {
+            maxAttempts: 3,
+            baseDelayMs: 1,
+            onRetry: (attempt) => {
+              retries.push(attempt)
+            },
+          },
+        ),
+      (err: unknown) => err instanceof RouteDockNetworkError,
+    )
+    assert.deepEqual(retries, [0, 1])
+  })
+
   it('rethrows non-RouteDock errors immediately', async () => {
     let calls = 0
     await assert.rejects(

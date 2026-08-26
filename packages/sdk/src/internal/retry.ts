@@ -7,9 +7,11 @@ export interface RetryPolicy {
   baseDelayMs?: number
   /** Maximum jittered backoff delay in ms. Default: 30000. */
   maxDelayMs?: number
+  /** Called before each retry with the attempt number, error, and upcoming delay. */
+  onRetry?: (attempt: number, error: Error, nextDelayMs: number) => void
 }
 
-export const DEFAULT_RETRY_POLICY: Required<RetryPolicy> = {
+export const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'onRetry'>> = {
   maxAttempts: 4,
   baseDelayMs: 250,
   maxDelayMs: 30_000,
@@ -40,7 +42,7 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   policy: RetryPolicy = {},
 ): Promise<T> {
-  const { maxAttempts, baseDelayMs, maxDelayMs } = {
+  const { maxAttempts, baseDelayMs, maxDelayMs, onRetry } = {
     ...DEFAULT_RETRY_POLICY,
     ...policy,
   }
@@ -63,6 +65,8 @@ export async function withRetry<T>(
         err.retryAfterMs !== undefined
           ? err.retryAfterMs
           : backoffDelayMs(attempt, baseDelayMs, maxDelayMs)
+
+      onRetry?.(attempt, err, delay)
 
       await sleep(delay)
     }
