@@ -32,7 +32,13 @@ Needs `CLOUDFLARE_API_TOKEN` in env.
 - **Live (Workers subdomain):** https://routedock.timjosh507.workers.dev
 - **Cloudflare Worker name:** `routedock`
 
-## Custom domain (routedock.xyz) — PENDING
-`routedock.xyz` is not yet added to Cloudflare. To finish: add it as a zone, move nameservers at the
-registrar, then attach `routedock.xyz` + `www.routedock.xyz` to the `routedock` Worker (delete stale
-Vercel records first).
+## Custom domains — COMPLETE
+
+The site and provider Workers are attached to Cloudflare custom domains:
+
+- `routedock.xyz` and `www.routedock.xyz` → dashboard Worker
+- `api-a.routedock.xyz` → provider-a Worker
+- `api-b.routedock.xyz` → provider-b Worker
+
+Deployments use `wrangler deploy`; provider secrets are supplied with
+`wrangler secret bulk`, never committed to `wrangler.jsonc`.
