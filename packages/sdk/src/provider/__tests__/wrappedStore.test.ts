@@ -68,7 +68,10 @@ describe('ChannelStore update capability check', () => {
     }
 
     await wrappedStore.put('test-key', { amount: '100' })
-    await wrappedStore.update!('test-key', (prev: unknown) => prev)
+    await wrappedStore.update!('test-key', (prev: unknown) => ({
+      op: 'noop',
+      result: prev,
+    }))
 
     assert.equal(updateCalled, true)
   })
@@ -103,7 +106,10 @@ describe('ChannelStore update capability check', () => {
 
     await assert.rejects(
       async () => {
-        await wrappedStore.update!('key', (prev: unknown) => prev)
+        await wrappedStore.update!('key', (prev: unknown) => ({
+          op: 'noop',
+          result: prev,
+        }))
       },
       {
         name: 'Error',
