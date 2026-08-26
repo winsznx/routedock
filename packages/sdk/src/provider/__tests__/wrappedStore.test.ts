@@ -44,23 +44,32 @@ describe('isVoucherStoreValue type guard', () => {
 
 describe('ChannelStore update capability check', () => {
   it('delegates to update when innerStore supports update', async () => {
-    const innerStore = Store.memory()
     let updateCalled = false
+    const innerStoreWithUpdate: ChannelStore = {
+      async get() {
+        return null
+      },
+      async put() {},
+      async delete() {},
+      async update(key: string, fn: (prev: unknown) => unknown) {
+        updateCalled = true
+        return fn(null)
+      },
+    }
 
     const wrappedStore: ChannelStore = {
       async get(key: string) {
-        return innerStore.get(key)
+        return innerStoreWithUpdate.get(key)
       },
       async put(key: string, value: unknown) {
-        await innerStore.put(key, value)
+        await innerStoreWithUpdate.put(key, value)
       },
       async delete(key: string) {
-        return innerStore.delete(key)
+        return innerStoreWithUpdate.delete(key)
       },
       async update(key: string, fn: (prev: unknown) => unknown) {
-        const storeWithUpdate = innerStore as Partial<ChannelStore>
+        const storeWithUpdate = innerStoreWithUpdate as Partial<ChannelStore>
         if (typeof storeWithUpdate.update === 'function') {
-          updateCalled = true
           return storeWithUpdate.update(key, fn)
         }
         throw new Error('Store does not support atomic update operations')
@@ -68,10 +77,7 @@ describe('ChannelStore update capability check', () => {
     }
 
     await wrappedStore.put('test-key', { amount: '100' })
-    await wrappedStore.update!('test-key', (prev: unknown) => ({
-      op: 'noop',
-      result: prev,
-    }))
+    await wrappedStore.update!('test-key', (prev: unknown) => prev)
 
     assert.equal(updateCalled, true)
   })
@@ -106,10 +112,7 @@ describe('ChannelStore update capability check', () => {
 
     await assert.rejects(
       async () => {
-        await wrappedStore.update!('key', (prev: unknown) => ({
-          op: 'noop',
-          result: prev,
-        }))
+        await wrappedStore.update!('key', (prev: unknown) => prev)
       },
       {
         name: 'Error',
