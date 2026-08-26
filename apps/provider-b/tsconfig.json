@@ -6,7 +6,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "node"]
+    "types": ["@cloudflare/workers-types", "node"],
+    "paths": {
+      "cloudflare:workers": ["./src/__tests__/mock-cloudflare-workers.ts"]
+    }
   },
   "include": ["src/**/*"]
 }
