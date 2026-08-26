@@ -6,6 +6,7 @@ import {
   routedockHono,
   mppSessionWsVerified,
 } from '@routedock/routedock/provider/hono'
+import { Store } from '@stellar/mpp/channel/server'
 import { usdcToUnits } from '@routedock/routedock'
 import {
   buildManifest,
@@ -58,11 +59,8 @@ interface OrderBookResponse {
  * against: one instance per channel contract, serialized execution, and memory
  * that persists between requests.
  *
- * Residual limitation: `routedockHono` exposes no option to inject the channel
- * store, so mppx state still lives in DO memory rather than DO storage. If the
- * object is evicted mid-session, tracking resets. Sessions are short-lived so
- * this is a narrow window, but closing it properly needs a `sessionStore`
- * option upstream in the SDK.
+ * The SDK receives a store backed by this object's persistent storage, so mppx
+ * channel state and provider-side voucher tracking survive isolate eviction.
  */
 export class ChannelSession extends DurableObject<Env> {
   private app: Hono | null = null
@@ -94,6 +92,12 @@ export class ChannelSession extends DurableObject<Env> {
 
     const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
 
+    const sessionStore = Store.from({
+      get: (key: string) => this.ctx.storage.get(key),
+      put: (key: string, value: unknown) => this.ctx.storage.put(key, value),
+      delete: async (key: string) => { await this.ctx.storage.delete(key) },
+    })
+
     const app = new Hono()
 
     app.use(
@@ -110,6 +114,7 @@ export class ChannelSession extends DurableObject<Env> {
         network,
         payeeSecretKey: env.STELLAR_PAYEE_SECRET,
         commitmentPublicKey,
+        sessionStore,
         manifest,
         onSessionOpen: async (channelId, payer) => {
           if (!supabase) return

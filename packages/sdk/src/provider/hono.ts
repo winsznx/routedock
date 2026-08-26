@@ -68,6 +68,12 @@ export interface RouteDockHonoOptions {
    * retries the same payment. Defaults to a per-handler in-memory store.
    */
   seenTxStore?: SeenTxStore
+  /**
+   * Persistent store backing mpp-session channel state and handler state.
+   * Defaults to an in-memory store per handler; supply a durable store (e.g.
+   * Durable Object storage) so voucher tracking survives isolate eviction.
+   */
+  sessionStore?: Store.Store
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -414,7 +420,7 @@ function createMppSessionHandlerState(
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
 
-  const innerStore = Store.memory()
+  const innerStore = opts.sessionStore ?? Store.memory()
   let lastCumulativeAmount = 0n
   let voucherCount = 0
   let sessionOpened = false
