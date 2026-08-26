@@ -2,8 +2,9 @@
  * Ed25519 manifest signing and verification.
  *
  * The canonical message is the SHA-256 hash of the manifest JSON with the
- * `signature` field omitted and keys sorted deterministically (JSON.stringify
- * of the sorted-key object). The payee Stellar keypair signs this hash.
+ * `signature` field omitted and object keys sorted recursively at every depth.
+ * Array order and JSON primitive semantics are preserved. The payee Stellar
+ * keypair signs this hash.
  *
  * TRUST MODEL: the `payee` field is part of the document being signed, so a
  * valid signature only proves that whoever signed it controlled the signing
@@ -25,11 +26,31 @@ import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest } from '../types.js'
 import { RouteDockSignatureError } from '../errors.js'
 
+export const MANIFEST_SIGNATURE_VERSION = '2' as const
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+
+function canonicalize(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize)
+  }
+
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key]!)]),
+    )
+  }
+
+  return value
+}
+
 /** Produce the canonical SHA-256 digest of the manifest (signature field excluded). */
 export function manifestDigest(manifest: RouteDockManifest): Buffer {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { signature: _omit, ...rest } = manifest as RouteDockManifest & { signature?: string }
-  const canonical = JSON.stringify(rest, Object.keys(rest).sort())
+  const canonical = JSON.stringify(canonicalize(rest as unknown as JsonValue))
   return createHash('sha256').update(canonical, 'utf8').digest()
 }
 
@@ -40,11 +61,15 @@ export function manifestDigest(manifest: RouteDockManifest): Buffer {
 export function signManifest(
   manifest: RouteDockManifest,
   payeeSecretKey: string,
-): RouteDockManifest & { signature: string } {
+): RouteDockManifest & { signature_version: typeof MANIFEST_SIGNATURE_VERSION; signature: string } {
   const keypair = Keypair.fromSecret(payeeSecretKey)
-  const digest = manifestDigest(manifest)
+  const versionedManifest = {
+    ...manifest,
+    signature_version: MANIFEST_SIGNATURE_VERSION,
+  }
+  const digest = manifestDigest(versionedManifest)
   const sig = keypair.sign(digest)
-  return { ...manifest, signature: Buffer.from(sig).toString('base64') }
+  return { ...versionedManifest, signature: Buffer.from(sig).toString('base64') }
 }
 
 /**
@@ -66,6 +91,12 @@ export function verifyManifestSignature(
   if (!manifest.signature) {
     throw new RouteDockSignatureError(
       'Manifest is missing a signature field — cannot verify payee authenticity',
+    )
+  }
+
+  if (manifest.signature_version !== MANIFEST_SIGNATURE_VERSION) {
+    throw new RouteDockSignatureError(
+      `Manifest signature version must be ${MANIFEST_SIGNATURE_VERSION}; legacy signatures are not safe because nested fields were excluded from their digest`,
     )
   }
 

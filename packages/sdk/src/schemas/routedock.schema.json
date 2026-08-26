@@ -177,6 +177,11 @@
       "type": "string",
       "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
     },
+    "signature_version": {
+      "type": "string",
+      "const": "2",
+      "description": "Manifest signature format. Version 2 recursively includes every nested manifest field in the signed digest."
+    },
     "categories": {
       "type": "array",
       "items": {
