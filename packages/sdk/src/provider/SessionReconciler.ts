@@ -11,7 +11,7 @@
 
 import { Keypair } from '@stellar/stellar-sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { usdcToUnits } from '../../internal/usdc.js'
+import { usdcToUnits } from '../internal/usdc.js'
 
 type Network = 'testnet' | 'mainnet'
 
