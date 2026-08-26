@@ -120,16 +120,15 @@ export class ChannelSession extends DurableObject<Env> {
           })
           if (error) console.error('[supabase] session insert failed:', error.message)
         },
-        onVoucher: async (channelId, voucherIndex, cumulativeAmount, signature) => {
+        onVoucher: async (voucherIndex, cumulativeAmount) => {
           if (!supabase) return
           const { error } = await supabase
             .from('sessions')
             .update({
               cumulative_amount: usdcToUnits(cumulativeAmount).toString(),
               voucher_count: voucherIndex,
-              last_signature: signature,
             })
-            .eq('channel_id', channelId)
+            .eq('channel_id', channelContract)
           if (error) console.error('[supabase] voucher update failed:', error.message)
         },
         onOrphaned: async (channelId: string, info: OrphanedSessionInfo) => {

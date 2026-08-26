@@ -17,6 +17,7 @@ const mockEnv: Env = {
   CHANNEL_CONTRACT_ID: TEST_CHANNEL_CONTRACT,
   PUBLIC_BASE_URL: 'https://api-b.routedock.xyz',
   USDC_ASSET_CONTRACT: TESTNET_USDC_CONTRACT,
+  CHANNEL_SESSION: {} as unknown as Env['CHANNEL_SESSION'],
 }
 
 // Helper to create a mock DurableObject instance for testing ChannelSession
@@ -85,7 +86,7 @@ describe('provider-b worker payment path & Durable Object routes', () => {
     assert.equal(body.payee, mockEnv.STELLAR_PAYEE_ADDRESS)
     assert.ok(Array.isArray(body.modes))
     assert.ok(body.modes.includes('mpp-session'))
-    assert.equal(body.pricing['mpp-session']?.channel_factory, TEST_CHANNEL_CONTRACT)
+    assert.equal(body.pricing?.['mpp-session']?.channel_factory, TEST_CHANNEL_CONTRACT)
   })
 
   it('/stream/orderbook returns 402 Payment Required with parsed WWW-Authenticate challenge', async () => {

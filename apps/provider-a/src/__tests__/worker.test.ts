@@ -3,10 +3,10 @@ import { describe, it } from 'node:test'
 import worker, { type Env } from '../worker.js'
 import { TESTNET_USDC_CONTRACT } from '../manifest.js'
 
-const mockCtx: ExecutionContext = {
+const mockCtx = {
   waitUntil() {},
   passThroughOnException() {},
-}
+} as unknown as ExecutionContext
 
 const TEST_PAYEE_SECRET = 'SBB3ER7UC7MYPQYHLNTX4QINRTV4WPFE2T644J64XTAUNKJMOGOVJGLL'
 const TEST_PAYEE_ADDRESS = 'GBRLCID5A2S6HUC4D4DSWPRWNO75CLNHS2SIPS2BPCCP55Z5N7Z36DJD'
