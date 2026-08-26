@@ -86,7 +86,7 @@ export interface RouteDockClientConfig {
  * integer count of microUSDC (1 USDC = 10^7 units on Stellar) as a bigint.
  * Avoids floating point precision loss from parseFloat on repeated additions.
  */
-function usdcToMicros(decimal: string): bigint {
+export function usdcToMicros(decimal: string): bigint {
   const trimmed = decimal.trim()
   const match = /^(\d+)(?:\.(\d+))?$/.exec(trimmed)
   if (!match) {
@@ -149,6 +149,19 @@ export class RouteDockClient {
   private readonly charge: MppChargeClient
   private readonly session: MppSessionClient
 
+  /**
+   * Promise-chain mutex for serializing read-modify-write on the spend
+   * accumulator. Each pay() call awaits the previous one, preventing
+   * concurrent read-modify-write races that could overrun the cap.
+   */
+  private _spendMutex: Promise<unknown> = Promise.resolve()
+
+  /**
+   * Pending spend reservations keyed by reserveId. Used by _rollbackSpend
+   * to revert the accumulator when a payment fails after reservation.
+   */
+  private _pendingReserves = new Map<string, { endpointKey: string; amountMicros: bigint }>()
+
   constructor(config: RouteDockClientConfig) {
     this.keypair =
       typeof config.wallet === 'string' ? Keypair.fromSecret(config.wallet) : config.wallet
@@ -185,6 +198,18 @@ export class RouteDockClient {
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
+  }
+
+  /**
+   * Serialize async work through the per-instance spend mutex so concurrent
+   * pay() calls cannot interleave read-modify-write on the accumulator.
+   */
+  private _withSpendMutex<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this._spendMutex
+    let next: Promise<T>
+    next = prev.then(fn, fn)
+    this._spendMutex = next.then(() => {}, () => {})
+    return next
   }
 
   /**
@@ -247,8 +272,10 @@ export class RouteDockClient {
 
   /**
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
-   * checks local spend cap, executes payment, returns result.
-   * Runs trustline preflight before submitting any on-chain transaction.
+   * runs trustline preflight, reserves local spend cap BEFORE executing the
+   * payment, then commits the spend record on success. Rolls back the
+   * reservation if the on-chain payment fails. Concurrent pay() calls are
+   * serialized through a per-instance mutex to prevent spend-cap overrun.
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
@@ -261,14 +288,13 @@ export class RouteDockClient {
       return this._payWithNulthVault(url, manifest, mode)
     }
 
-    let result: PaymentResult
-
+    let amount: string
     switch (mode) {
       case 'x402':
-        result = await this.x402.pay(url, manifest)
+        amount = manifest.pricing.x402!.amount
         break
       case 'mpp-charge':
-        result = await this.charge.pay(url, manifest)
+        amount = manifest.pricing['mpp-charge']!.amount
         break
       case 'mpp-session':
         throw new RouteDockManifestError(
@@ -278,7 +304,26 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
-    await this._checkAndRecordSpend(result.amount, new URL(url).origin)
+    const reserveId = await this._checkAndReserveSpend(amount, baseUrl)
+
+    let result: PaymentResult
+    try {
+      switch (mode) {
+        case 'x402':
+          result = await this.x402.pay(url, manifest)
+          break
+        case 'mpp-charge':
+          result = await this.charge.pay(url, manifest)
+          break
+        default:
+          throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+      }
+    } catch (err) {
+      await this._rollbackSpend(reserveId).catch(() => {})
+      throw err
+    }
+
+    await this._commitSpend(reserveId)
     return result
   }
 
@@ -362,7 +407,28 @@ export class RouteDockClient {
       )
     }
 
-    return this.session.openSession(url, manifest, secret, options)
+    const endpointKey = new URL(url).origin
+    const onSpend = this.spendCap
+      ? (amount: string) => this._recordSessionSpend(amount, endpointKey)
+      : undefined
+
+    return this.session.openSession(url, manifest, secret, options, onSpend)
+  }
+
+  /**
+   * Record spend for an MPP session voucher. Called before each voucher
+   * fetch in stream(). Enforces the same local daily and per-endpoint caps
+   * as discrete pay() calls. Returns a commit function to clean up the
+   * reservation after the voucher fetch succeeds.
+   */
+  private async _recordSessionSpend(amount: string, endpointKey: string): Promise<void> {
+    const reserveId = await this._checkAndReserveSpend(amount, endpointKey)
+    if (reserveId) {
+      // For sessions, commit immediately — the spend is final once the
+      // voucher is issued. No rollback path on voucher fetch failure since
+      // the cap is checked before the fetch (if it fails, no reserve was made).
+      await this._commitSpend(reserveId)
+    }
   }
 
   /**
@@ -375,55 +441,105 @@ export class RouteDockClient {
   }
 
   /**
-   * Check local daily caps and record the spend. Throws if any cap is exceeded.
+   * Reserve spend against local daily caps BEFORE dispatching payment.
+   * Returns a reserveId that must be passed to _commitSpend() on success
+   * or _rollbackSpend() on failure.
+   *
+   * The entire read-check-write is serialized through the per-instance
+   * mutex (_withSpendMutex) so concurrent pay() calls cannot interleave
+   * and overrun the cap.
    *
    * Enforcement order:
    *   1. Per-endpoint cap (if `endpointCaps[endpointKey]` is set) — checked first.
    *   2. Global daily cap — checked second.
    *
-   * Both limits are independent: a payment is only recorded after **both** pass.
+   * Both limits are independent: a payment is only reserved after **both** pass.
    * All spend (regardless of endpoint) counts toward the global accumulator.
-   *
-   * All arithmetic is done in exact integer microUSDC (bigint) to avoid
-   * floating point precision loss from repeated decimal additions. The
-   * accumulator is read from and written back to the injected SpendStore so
-   * the cap survives process restarts when a durable store is configured.
    */
-  private async _checkAndRecordSpend(amount: string, endpointKey: string): Promise<void> {
-    if (!this.spendCap) return
+  private async _checkAndReserveSpend(amount: string, endpointKey: string): Promise<string> {
+    if (!this.spendCap) return ''
 
-    const today = new Date().toISOString().slice(0, 10)
-    const persisted = await this.spendStore.read()
-    const current: DailySpend =
-      persisted && persisted.date === today
-        ? persisted
-        : { date: today, totalMicros: '0', endpoints: {} }
+    return this._withSpendMutex(async () => {
+      const today = new Date().toISOString().slice(0, 10)
+      const persisted = await this.spendStore.read()
+      const current: DailySpend =
+        persisted && persisted.date === today
+          ? persisted
+          : { date: today, totalMicros: '0', endpoints: {} }
 
-    const amountMicros = usdcToMicros(amount)
-    const total = BigInt(current.totalMicros)
+      const amountMicros = usdcToMicros(amount)
+      const total = BigInt(current.totalMicros)
 
-    // 1. Per-endpoint cap check
-    const endpointCapStr = this.spendCap.endpointCaps?.[endpointKey]
-    if (endpointCapStr !== undefined) {
-      const endpointCapMicros = usdcToMicros(endpointCapStr)
-      const endpointTotal = BigInt(current.endpoints[endpointKey] ?? '0')
-      if (endpointTotal + amountMicros > endpointCapMicros) {
-        throw new RouteDockPolicyRejectError('local_endpoint_cap_exceeded')
+      // 1. Per-endpoint cap check
+      const endpointCapStr = this.spendCap!.endpointCaps?.[endpointKey]
+      if (endpointCapStr !== undefined) {
+        const endpointCapMicros = usdcToMicros(endpointCapStr)
+        const endpointTotal = BigInt(current.endpoints[endpointKey] ?? '0')
+        if (endpointTotal + amountMicros > endpointCapMicros) {
+          throw new RouteDockPolicyRejectError('local_endpoint_cap_exceeded')
+        }
       }
-    }
 
-    // 2. Global daily cap check
-    const globalCapMicros = usdcToMicros(this.spendCap.daily)
-    if (total + amountMicros > globalCapMicros) {
-      throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
-    }
+      // 2. Global daily cap check
+      const globalCapMicros = usdcToMicros(this.spendCap!.daily)
+      if (total + amountMicros > globalCapMicros) {
+        throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
+      }
 
-    // Both checks passed — record the spend
-    current.totalMicros = (total + amountMicros).toString()
-    if (endpointCapStr !== undefined) {
-      current.endpoints[endpointKey] =
-        (BigInt(current.endpoints[endpointKey] ?? '0') + amountMicros).toString()
-    }
-    await this.spendStore.write(current)
+      // Both checks passed — reserve the spend (tentatively record)
+      const reserveId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      this._pendingReserves.set(reserveId, { endpointKey, amountMicros })
+      current.totalMicros = (total + amountMicros).toString()
+      if (endpointCapStr !== undefined) {
+        current.endpoints[endpointKey] =
+          (BigInt(current.endpoints[endpointKey] ?? '0') + amountMicros).toString()
+      }
+      await this.spendStore.write(current)
+      return reserveId
+    })
+  }
+
+  /**
+   * Commit a previously reserved spend after payment succeeds. For discrete
+   * pay() calls this is a no-op (the spend was already recorded by reserve).
+   * Reserved for future use if the committed amount differs from the reserved.
+   */
+  private async _commitSpend(reserveId: string): Promise<void> {
+    this._pendingReserves.delete(reserveId)
+  }
+
+  /**
+   * Rollback a previously reserved spend when payment fails. Reverts the
+   * tentative accumulator write done by _checkAndReserveSpend.
+   */
+  private async _rollbackSpend(reserveId: string): Promise<void> {
+    if (!this.spendCap || !reserveId) return
+
+    const reserve = this._pendingReserves.get(reserveId)
+    if (!reserve) return
+    this._pendingReserves.delete(reserveId)
+
+    const { endpointKey, amountMicros } = reserve
+
+    await this._withSpendMutex(async () => {
+      const today = new Date().toISOString().slice(0, 10)
+      const persisted = await this.spendStore.read()
+      if (!persisted || persisted.date !== today) return
+
+      const currentTotal = BigInt(persisted.totalMicros)
+      persisted.totalMicros = (currentTotal - amountMicros).toString()
+
+      if (persisted.endpoints[endpointKey]) {
+        const endpointTotal = BigInt(persisted.endpoints[endpointKey])
+        const newEndpointTotal = endpointTotal - amountMicros
+        if (newEndpointTotal <= 0n) {
+          delete persisted.endpoints[endpointKey]
+        } else {
+          persisted.endpoints[endpointKey] = newEndpointTotal.toString()
+        }
+      }
+
+      await this.spendStore.write(persisted)
+    })
   }
 }

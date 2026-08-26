@@ -44,6 +44,7 @@ export class MppSessionClient {
     manifest: RouteDockManifest,
     commitmentSecret: string,
     options?: SessionOptions,
+    onSpend?: (amount: string) => Promise<void>,
   ): Promise<SessionHandle> {
     const pricing = manifest.pricing['mpp-session']
     if (!pricing) {
@@ -148,11 +149,18 @@ export class MppSessionClient {
             return resp.json()
           }, retryPolicy)
 
+        // Check the local daily spend cap before issuing each voucher.
+        const checkSpend = (): Promise<void> => {
+          if (!onSpend) return Promise.resolve()
+          return onSpend(pricing.rate)
+        }
+
         if (concurrency === 1) {
           // Default: strictly sequential.
           // The next voucher is not issued until the provider returns HTTP 200
           // for the current one, preventing out-of-order sequence numbers.
           while (true) {
+            await checkSpend()
             const data = await doFetch()
             vouchersIssued++
             yield data
@@ -163,11 +171,15 @@ export class MppSessionClient {
           // sequence integrity. The caller opts in knowing the provider supports
           // concurrent vouchers.
           const queue: Array<Promise<unknown>> = []
-          for (let i = 0; i < concurrency; i++) queue.push(doFetch())
+          for (let i = 0; i < concurrency; i++) {
+            await checkSpend()
+            queue.push(doFetch())
+          }
 
           while (true) {
             const data = await queue.shift()!
             // Replenish the window immediately after draining one slot.
+            await checkSpend()
             queue.push(doFetch())
             vouchersIssued++
             yield data
