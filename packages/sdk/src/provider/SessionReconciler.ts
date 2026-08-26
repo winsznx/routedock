@@ -11,6 +11,7 @@
 
 import { Keypair } from '@stellar/stellar-sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { usdcToUnits } from '../../internal/usdc.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -45,12 +46,7 @@ export interface ReconciliationStats {
 }
 
 export function decimalToStroops(amountStr: string): bigint {
-  if (!amountStr.includes('.')) {
-    return BigInt(amountStr)
-  }
-  const [whole, frac] = amountStr.split('.')
-  const paddedFrac = (frac || '').padEnd(7, '0').slice(0, 7)
-  return BigInt((whole || '0') + paddedFrac)
+  return BigInt(usdcToUnits(amountStr))
 }
 
 /**
