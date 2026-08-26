@@ -110,7 +110,9 @@ pnpm --filter @routedock/provider-b start
 # Verify: curl http://localhost:3002/.well-known/routedock.json
 ```
 
-> If using deployed Railway URLs instead, set `PROVIDER_A_URL` and `PROVIDER_B_URL` in `agent/.env` to the Railway URLs and skip running providers locally.
+> If using deployed Workers instead, set `PROVIDER_A_URL=https://api-a.routedock.xyz`
+> and `PROVIDER_B_URL=https://api-b.routedock.xyz` in `agent/.env` and skip running
+> providers locally.
 
 ---
 

@@ -285,8 +285,8 @@ routedock/
 ├── packages/sdk/            # @routedock/routedock — npm
 ├── packages/mcp-server/     # @routedock/mcp-server — MCP server for LLM agents
 ├── apps/web/                # Next.js 16 dashboard + landing — Cloudflare Workers
-├── apps/provider-a/         # Express price endpoint (x402 + MPP charge) — Railway
-├── apps/provider-b/         # Express orderbook endpoint (MPP session) — Railway
+├── apps/provider-a/         # Cloudflare Worker price endpoint (x402 + MPP charge)
+├── apps/provider-b/         # Cloudflare Worker orderbook endpoint (MPP session)
 ├── contracts/agent-vault/   # Soroban contract account — Stellar
 ├── agent/                   # Reference autonomous agent
 └── supabase/                # Schema + RLS + trigram indexes + Realtime
