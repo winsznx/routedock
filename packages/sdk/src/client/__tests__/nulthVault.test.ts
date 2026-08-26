@@ -86,7 +86,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
     () => prepareNulthSigner(vault, manifest, 'x402', 'mainnet', 100_000),
     (err: unknown) =>
       err instanceof RouteDockManifestError &&
-      err.message.includes('MOCK Groth16 prover'),
+      /mock prover/i.test(err.message),
   )
   console.log('✓ mainnet guard rejects mock prover')
 }

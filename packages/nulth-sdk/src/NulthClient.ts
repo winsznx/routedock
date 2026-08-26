@@ -4,7 +4,7 @@ import {
   dayBucket,
   encodeAuthSignature,
   hashPayee,
-  mockGroth16Proof,
+  insecureMockProof,
   type ProverBackend,
   DEFAULT_PROVER,
 } from './proof.js'
@@ -23,6 +23,14 @@ export class NulthClient {
   constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
     this.prover = config.prover ?? DEFAULT_PROVER
+    if (config.network === 'mainnet' && this.prover === 'mock') {
+      throw new Error(
+        'NulthClient cannot use the insecure mock prover on mainnet; a production prover is required',
+      )
+    }
+    if (this.prover === 'mock') {
+      console.warn('NulthClient is using the insecure mock prover; proofs are not cryptographically sound')
+    }
   }
 
   get nulthAccount(): string {
@@ -76,7 +84,7 @@ export class NulthClient {
 
     const proof: NulthProof = {
       version: 1,
-      proof: mockGroth16Proof(preimage),
+      proof: insecureMockProof(preimage),
       publicInputs: {
         authDigest,
         allowlistCommitment: this.policy.allowlistCommitment,
