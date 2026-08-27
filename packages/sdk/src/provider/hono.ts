@@ -18,7 +18,7 @@ import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
-import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
   InMemorySeenTxStore,
@@ -414,17 +414,12 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
     }
   }
 
-  const wrappedStore: any = {
+  const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
     async put(key: string, value: unknown) {
       await innerStore.put(key, value)
-      if (
-        key === cumulativeKey &&
-        value &&
-        typeof value === 'object' &&
-        'amount' in (value as Record<string, unknown>)
-      ) {
-        lastCumulativeAmount = BigInt((value as { amount: string }).amount)
+      if (key === cumulativeKey && isVoucherStoreValue(value)) {
+        lastCumulativeAmount = BigInt(value.amount)
         voucherCount++
         // Voucher activity — this session is alive again.
         settledCleanly = false
@@ -452,7 +447,13 @@ function createMppSessionHonoHandler(opts: RouteDockHonoOptions): MiddlewareHand
       }
     },
     async delete(key: string) { return innerStore.delete(key) },
-    update(key: any, fn: any) { return (innerStore as any).update(key, fn) },
+    async update(key: string, fn: (prev: unknown) => unknown) {
+      const storeWithUpdate = innerStore as Partial<ChannelStore>
+      if (typeof storeWithUpdate.update === 'function') {
+        return storeWithUpdate.update(key, fn)
+      }
+      throw new Error('Store does not support atomic update operations')
+    },
   }
 
   const mppx = Mppx.create({
