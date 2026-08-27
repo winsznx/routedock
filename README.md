@@ -118,11 +118,16 @@ npm install @routedock/routedock
 git clone https://github.com/winsznx/routedock && cd routedock
 pnpm install
 
-cp apps/provider-a/.env.example apps/provider-a/.env
-# Fill in STELLAR_PAYEE_SECRET, SUPABASE_URL, SUPABASE_SERVICE_KEY
+pnpm --filter @routedock/nulth-sdk build
+pnpm --filter @routedock/routedock build
 
-pnpm --filter @routedock/provider-a dev
+cp apps/provider-a/.dev.vars.example apps/provider-a/.dev.vars
+# fill in a throwaway testnet key
+
+pnpm --filter provider-a dev
 ```
+
+> The build-order requirement (SDK builds before provider dev) is documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Full demo (both providers + agent): see [`docs/AGENT_RUN_CHECKLIST.md`](docs/AGENT_RUN_CHECKLIST.md).
 
