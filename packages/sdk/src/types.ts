@@ -163,6 +163,8 @@ export interface RouteDockManifest {
    * before trusting any routing field (payee, endpoints, pricing).
    */
   signature?: string
+  /** Canonical manifest-signature format. Version 2 signs nested fields recursively. */
+  signature_version?: '2'
   /** Optional hierarchical categories from a published taxonomy (e.g. "data/price/crypto") */
   categories?: string[]
 }
