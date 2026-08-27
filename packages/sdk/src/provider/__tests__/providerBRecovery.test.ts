@@ -49,13 +49,13 @@ describe('Provider-B Session Recovery Pipeline', () => {
   const channelId = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
 
   it('successfully recovers an orphaned closing session written by provider-b', async () => {
-    // Simulate session row written by provider-b with stroop cumulative_amount, last_signature, and status: closing
+    // Provider stores cumulative_amount as a USDC decimal in NUMERIC(20,7).
     const providerBSessions: any[] = [
       {
         channel_id: channelId,
         payee: payeeKp.publicKey(),
         payer: 'GAGENT123',
-        cumulative_amount: '50000', // 0.005 USDC in stroops (integer)
+        cumulative_amount: '0.005',
         status: 'closing',
         channel_contract: channelId,
         network: 'testnet',
