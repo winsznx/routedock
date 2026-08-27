@@ -92,11 +92,13 @@ export class ChannelSession extends DurableObject<Env> {
 
     const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
 
-    const sessionStore = Store.from({
-      get: (key: string) => this.ctx.storage.get(key),
-      put: (key: string, value: unknown) => this.ctx.storage.put(key, value),
-      delete: async (key: string) => { await this.ctx.storage.delete(key) },
-    })
+    const sessionStore = this.ctx?.storage
+      ? Store.from({
+          get: (key: string) => this.ctx.storage.get(key),
+          put: (key: string, value: unknown) => this.ctx.storage.put(key, value),
+          delete: async (key: string) => { await this.ctx.storage.delete(key) },
+        })
+      : Store.memory()
 
     const app = new Hono()
 

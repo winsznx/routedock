@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@routedock/routedock": "workspace:*",
+    "@stellar/mpp": "^0.4.0",
     "@supabase/supabase-js": "^2.47.0",
     "hono": "^4.12.23"
   },
