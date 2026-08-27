@@ -1,0 +1,11 @@
+name: Release Watchdog
+no:
+  schedule:
+    - cron: '0 * * * *'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "$(gh api repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?per_page=1 | jq -r '.workflow_runs[0].conclusion')" = success
+        env:
+          GH_TOKEN: ${ {secrets.GITHUB_TOKEN}}
