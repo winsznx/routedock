@@ -57,10 +57,18 @@ mock.module('@stellar/mpp/channel/server', {
 
 mock.module('mppx/server', {
   namedExports: {
-    // @stellar/mpp/charge/server re-exports these from mppx/server; they must
-    // exist for that module to load even though no charge-mode test uses them.
+    // @stellar/mpp re-exports these from mppx/server; every name the real
+    // module exports must be present here or the importing module fails to
+    // link with "does not provide an export named ...", even though no test
+    // in this file touches them.
     Expires: {},
     Store: {},
+    Request: {},
+    Response: {},
+    Transport: {},
+    NodeListener: {},
+    stripe: {},
+    tempo: {},
     Mppx: {
       create: () => ({
         // Fake channel verification: no Payment credential → 402 challenge,
