@@ -52,7 +52,7 @@ export async function withRetry<T>(
     try {
       return await fn()
     } catch (err) {
-      if (!(err instanceof RouteDockError)) {
+      if !(err instanceof RouteDockError)) {
         throw err
       }
       lastError = err
@@ -66,7 +66,13 @@ export async function withRetry<T>(
           ? err.retryAfterMs
           : backoffDelayMs(attempt, baseDelayMs, maxDelayMs)
 
-      onRetry?.(attempt, err, delay)
+      if (onRetry) {
+        try {
+          await onRetry(attempt, err, delay)
+        } catch (cbErr) {
+          console.error('[withRetry] onRetry callback threw:', cbErr)
+        }
+      }
 
       await sleep(delay)
     }
