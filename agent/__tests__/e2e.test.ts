@@ -22,9 +22,11 @@
  *   AGENT_DAILY_CAP_USDC Daily spending cap in USDC (default: 0.002)
  */
 
+import path from 'node:path'
+import os from 'node:os'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
-import { RouteDockClient, RouteDockPolicyRejectedError } from '@routedock/routedock'
+import { RouteDockClient, FileSpendStore, RouteDockPolicyRejectedError } from '@routedock/routedock'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -65,10 +67,16 @@ async function runTests(): Promise<void> {
   const agentAddress = keypair.publicKey()
   log('setup', `Agent address: ${agentAddress}`)
 
+  const spendStorePath =
+    process.env['AGENT_SPEND_STORE_PATH'] ??
+    process.env['ROUTEDOCK_SPEND_STORE_PATH'] ??
+    path.join(os.homedir(), '.routedock', 'spend.json')
+
   const client = new RouteDockClient({
     wallet: keypair,
     network: STELLAR_NETWORK,
     spendCap: { daily: AGENT_DAILY_CAP_USDC, asset: 'USDC' },
+    spendStore: new FileSpendStore(spendStorePath),
     commitmentSecret: COMMITMENT_SECRET || undefined,
   })
 
