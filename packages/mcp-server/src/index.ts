@@ -9,7 +9,7 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js'
-import { RouteDockClient } from '@routedock/routedock'
+import { RouteDockClient, FileSpendStore } from '@routedock/routedock'
 import type { SessionHandle } from '@routedock/routedock'
 import { createClient } from '@supabase/supabase-js'
 import {
@@ -58,25 +58,6 @@ if (!ROUTEDOCK_DAILY_CAP) {
   process.exit(1)
 }
 
-// Simple durable spend store for MCP server
-class FileSpendStore {
-  private filePath: string
-  constructor(filePath: string) {
-    this.filePath = filePath
-  }
-  async read(): Promise<any | null> {
-    try {
-      const data = await fs.readFile(this.filePath, 'utf-8')
-      return JSON.parse(data)
-    } catch (e: any) {
-      return null
-    }
-  }
-  async write(state: any): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    await fs.writeFile(this.filePath, JSON.stringify(state, null, 2), 'utf-8')
-  }
-}
 
 const spendStorePath = process.env.ROUTEDOCK_SPEND_STORE_PATH || path.join(os.homedir(), '.routedock', 'spend.json')
 

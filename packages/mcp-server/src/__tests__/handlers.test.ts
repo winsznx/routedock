@@ -12,6 +12,8 @@ import {
   type HandlerDeps,
   type ToolResult,
   type HorizonBalance,
+  type ProviderRow,
+  type SupabaseQueryBuilder,
 } from '../handlers.js'
 
 // ---------------------------------------------------------------------------
@@ -68,17 +70,14 @@ function makeClient(overrides: Partial<{
 
 /** Minimal fake Supabase client */
 function makeSupabase(rows: unknown[], error: { message: string } | null = null): HandlerDeps['supabase'] {
-  const terminal: any = { data: rows, error }
+  const terminal = Promise.resolve({ data: rows as ProviderRow[], error })
+  const builder: unknown = Object.assign(terminal, {
+    eq: () => builder,
+    overlaps: () => builder,
+  })
   return {
     from: (_table: string) => ({
-      select: (_cols: string) => ({
-        eq: (_f: string, _v: unknown) => ({
-          overlaps: (_f2: string, _v2: unknown) => Promise.resolve(terminal),
-          ...terminal,
-        }),
-        overlaps: (_f: string, _v: unknown) => Promise.resolve(terminal),
-        ...terminal,
-      }),
+      select: (_cols: string) => builder as SupabaseQueryBuilder,
     }),
   }
 }
