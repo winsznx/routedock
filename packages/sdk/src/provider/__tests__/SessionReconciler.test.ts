@@ -9,7 +9,7 @@ test('decimalToStroops converts decimal strings to stroops correctly', () => {
   assert.equal(decimalToStroops('0.0010000'), 10000n)
   assert.equal(decimalToStroops('0.001'), 10000n)
   assert.equal(decimalToStroops('1.5'), 15000000n)
-  assert.equal(decimalToStroops('10000'), 10000n)
+  assert.equal(decimalToStroops('10000'), 100000000000n)
   assert.equal(decimalToStroops('0.0000001'), 1n)
   assert.throws(() => decimalToStroops('0.00000001'), /exceeds 7 decimals/)
 })
