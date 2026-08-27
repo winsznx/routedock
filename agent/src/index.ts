@@ -17,9 +17,11 @@
  */
 
 import { writeFileSync } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Horizon } from '@stellar/stellar-sdk'
-import { RouteDockClient, RouteDockPolicyRejectError, RouteDockTrustlineError } from '@routedock/routedock'
+import { RouteDockClient, FileSpendStore, RouteDockPolicyRejectError, RouteDockTrustlineError } from '@routedock/routedock'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,10 @@ const PROVIDER_A_URL = (process.env['PROVIDER_A_URL'] ?? 'http://localhost:3001'
 const PROVIDER_B_URL = (process.env['PROVIDER_B_URL'] ?? 'http://localhost:3002').replace(/\/$/, '')
 const AGENT_DAILY_CAP_USDC = process.env['AGENT_DAILY_CAP_USDC'] ?? '0.002'
 const COMMITMENT_SECRET = process.env['COMMITMENT_SECRET'] ?? ''
+const AGENT_SPEND_STORE_PATH =
+  process.env['AGENT_SPEND_STORE_PATH'] ??
+  process.env['ROUTEDOCK_SPEND_STORE_PATH'] ??
+  path.join(os.homedir(), '.routedock', 'spend.json')
 
 const HORIZON_URL =
   STELLAR_NETWORK === 'testnet'
@@ -91,10 +97,13 @@ async function main(): Promise<void> {
   const keypair = Keypair.fromSecret(AGENT_SECRET)
   const agentAddress = keypair.publicKey()
 
+  const spendStore = new FileSpendStore(AGENT_SPEND_STORE_PATH)
+
   const client = new RouteDockClient({
     wallet: keypair,
     network: STELLAR_NETWORK,
     spendCap: { daily: AGENT_DAILY_CAP_USDC, asset: 'USDC' },
+    spendStore,
     commitmentSecret: COMMITMENT_SECRET || undefined,
   })
 
@@ -120,6 +129,7 @@ async function main(): Promise<void> {
 
   log('Init', `[RouteDock Agent] Started. Address: ${agentAddress} Balance: ${startingBalance} USDC`)
   log('Init', `Network: ${STELLAR_NETWORK}, DailyCap: ${AGENT_DAILY_CAP_USDC} USDC`)
+  log('Init', `SpendStore: FileSpendStore (${AGENT_SPEND_STORE_PATH})`)
   log('Init', `Provider A: ${PROVIDER_A_URL}`)
   log('Init', `Provider B: ${PROVIDER_B_URL}`)
 

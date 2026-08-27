@@ -64,3 +64,6 @@ export class InMemorySpendStore implements SpendStore {
     this.state = { ...state, endpoints: { ...state.endpoints } }
   }
 }
+
+export * from './FileSpendStore.js'
+
