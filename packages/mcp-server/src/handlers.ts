@@ -26,6 +26,31 @@ export type ToolResult = {
   isError?: true
 }
 
+/** Database row representation for a provider in Supabase registry. */
+export interface ProviderRow {
+  name: string
+  description: string
+  network: string
+  asset: string
+  modes: string[]
+  tags: string[]
+  base_url: string
+  [key: string]: unknown
+}
+
+export interface SupabaseQueryResult {
+  data: ProviderRow[] | null
+  error: { message: string } | null
+}
+
+/** Chainable query builder type for Supabase provider queries. */
+export interface SupabaseQueryBuilder {
+  eq?: (field: string, value: unknown) => SupabaseQueryBuilder
+  overlaps?: (field: string, values: string[]) => SupabaseQueryBuilder | Promise<SupabaseQueryResult>
+  then?: (onfulfilled: (res: SupabaseQueryResult) => unknown) => unknown
+  [key: string]: unknown
+}
+
 /** All external dependencies required by the handlers.  Inject fakes in tests. */
 export interface HandlerDeps {
   /** Initialised RouteDockClient for paying / opening sessions. */
@@ -35,14 +60,7 @@ export interface HandlerDeps {
   /** Supabase client for list_providers, or null when not configured. */
   supabase: {
     from: (table: string) => {
-      select: (cols: string) => {
-        eq: (field: string, value: unknown) => {
-          overlaps?: (field: string, values: string[]) => Promise<{ data: unknown[] | null; error: { message: string } | null }>
-          [key: string]: unknown
-        }
-        overlaps?: (field: string, values: string[]) => Promise<{ data: unknown[] | null; error: { message: string } | null }>
-        [key: string]: unknown
-      }
+      select: (cols: string) => SupabaseQueryBuilder
     }
   } | null
   /** Raw Stellar secret key — used by check_balance to derive the public key. */
@@ -391,11 +409,9 @@ export async function handleListProviders(
   }
 
   // Build query — start with the full select, apply filters progressively.
-  // We cast through `any` because the Supabase query builder's chainable type
-  // system doesn't model arbitrary .eq/.overlaps chains at compile time.
-  let query: any = supabase.from('providers').select('*')
+  let query: SupabaseQueryBuilder = supabase.from('providers').select('*')
 
-  if (network) {
+  if (network && query.eq) {
     query = query.eq('network', network)
   }
 
@@ -404,22 +420,24 @@ export async function handleListProviders(
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean)
-    if (tagList.length > 0) {
+    if (tagList.length > 0 && query.overlaps) {
       // tags column is TEXT[] — array overlap, not textSearch
-      query = query.overlaps('tags', tagList)
+      query = query.overlaps('tags', tagList) as unknown as SupabaseQueryBuilder
     }
   }
 
-  const { data, error } = await query
+  const { data, error } = await (query as unknown as PromiseLike<SupabaseQueryResult>)
 
   if (error) {
     return err(`Failed to fetch providers: ${error.message}`)
   }
 
+  const rows = data ?? []
+
   return ok({
     success: true,
-    count: data?.length ?? 0,
-    providers: (data ?? []).map((p: any) => ({
+    count: rows.length,
+    providers: rows.map((p: ProviderRow) => ({
       name: p.name,
       description: p.description,
       network: p.network,

@@ -10,7 +10,7 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js'
 import { RouteDockClient } from '@routedock/routedock'
-import type { SessionHandle } from '@routedock/routedock'
+import type { SessionHandle, DailySpend, SpendStore } from '@routedock/routedock'
 import { createClient } from '@supabase/supabase-js'
 import {
   handlePayForData,
@@ -59,20 +59,20 @@ if (!ROUTEDOCK_DAILY_CAP) {
 }
 
 // Simple durable spend store for MCP server
-class FileSpendStore {
+class FileSpendStore implements SpendStore {
   private filePath: string
   constructor(filePath: string) {
     this.filePath = filePath
   }
-  async read(): Promise<any | null> {
+  async read(): Promise<DailySpend | null> {
     try {
       const data = await fs.readFile(this.filePath, 'utf-8')
-      return JSON.parse(data)
-    } catch (e: any) {
+      return JSON.parse(data) as DailySpend
+    } catch {
       return null
     }
   }
-  async write(state: any): Promise<void> {
+  async write(state: DailySpend): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     await fs.writeFile(this.filePath, JSON.stringify(state, null, 2), 'utf-8')
   }
