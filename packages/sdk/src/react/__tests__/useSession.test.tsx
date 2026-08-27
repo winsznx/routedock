@@ -23,6 +23,9 @@ function mockSession(): SessionHandle {
     async settleWithLatestVoucher() { return 'settle-hash' },
     async getDisputeStatus() { return 'open' },
     on() { return () => {} },
+    stats() {
+      return { vouchersIssued: 0, currentCumulative: '0.0000000', channelId: 'C123', openTxHash: 'open-hash' }
+    },
   }
 }
 

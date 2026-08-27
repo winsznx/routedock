@@ -205,6 +205,29 @@ export interface SessionCloseResult {
   vouchersIssued: number
 }
 
+/**
+ * Live session statistics returned by {@link SessionHandle.stats}.
+ * Read at any point during the session — no need to close it first.
+ */
+export interface SessionStats {
+  /** Number of vouchers issued so far in this session */
+  vouchersIssued: number
+  /**
+   * Cumulative amount authorized across all signed vouchers so far, in
+   * payment-asset decimal units (e.g. "0.0001"). Matches the units of
+   * {@link SessionCloseResult.totalPaid}, so a per-session sub-cap can be
+   * enforced by comparing against it mid-stream.
+   */
+  currentCumulative: string
+  /** Stellar channel contract address (C...) */
+  channelId: string
+  /**
+   * Transaction hash of the on-chain channel-open call, or null for a
+   * pre-deployed channel (no open transaction was issued).
+   */
+  openTxHash: string | null
+}
+
 /** Default wall-clock lifetime of a session before it auto-closes (1h). */
 export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
 
@@ -261,6 +284,13 @@ export interface SessionHandle {
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
   stream(options?: StreamOptions): AsyncIterable<unknown>
+  /**
+   * Snapshot of live session statistics (vouchers issued, cumulative amount
+   * authorized, channel identity). Values are updated synchronously on every
+   * stream() yield, so callers can log spend or enforce a per-session sub-cap
+   * without terminating the session.
+   */
+  stats(): SessionStats
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */

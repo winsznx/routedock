@@ -13,6 +13,7 @@ import type {
   RouteDockManifest,
   SessionHandle,
   SessionCloseResult,
+  SessionStats,
   StreamOptions,
   DisputeStatus,
   SessionOptions,
@@ -121,6 +122,24 @@ export class MppSessionClient {
       // it. Report null rather than the contract address (a non-transaction
       // identifier that produces broken explorer links downstream).
       openTxHash: null,
+
+      /**
+       * Live session snapshot. Both counters are closure state written during
+       * stream(): vouchersIssued is incremented before each yield and
+       * currentCumulative is updated by the channel client's onProgress when a
+       * voucher is signed, so a stats() call immediately after a yield always
+       * reflects everything consumed so far.
+       */
+      stats() {
+        return {
+          vouchersIssued,
+          // Same conversion as SessionCloseResult.totalPaid so a per-session
+          // sub-cap can be compared against stats().currentCumulative directly.
+          currentCumulative: (Number(currentCumulative) / 1e7).toFixed(7),
+          channelId: channelFactory,
+          openTxHash: null,
+        }
+      },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
         const concurrency = Math.max(1, options?.concurrency ?? 1)
