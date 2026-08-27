@@ -18,7 +18,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --experimental-test-module-mocks --test $(find src -name '*.test.ts' | sort)",
+    "test": "tsx --experimental-test-module-mocks --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js"
   },
   "dependencies": {

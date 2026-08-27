@@ -16,10 +16,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient, usdcToMicros } from '../RouteDockClient.js'
-import { InMemorySpendStore } from '../../store/SpendStore.js'
+import { InMemorySpendStore, FileSpendStore } from '../../store/SpendStore.js'
 import { RouteDockPolicyRejectError } from '../../errors.js'
 import { signManifest } from '../../manifest/sign.js'
 import type { RouteDockManifest, PaymentResult } from '../../types.js'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -482,4 +485,37 @@ function fakeResult(mode: string, amount: string): PaymentResult {
   console.log('✓ Test 8: usdcToMicros handles precision correctly')
 }
 
+// ── Test 9: FileSpendStore durability ────────────────────────────────────────
+
+{
+  const tmpPath = join(tmpdir(), `routedock-test-spend-${Date.now()}.json`)
+  try {
+    const store = new FileSpendStore(tmpPath)
+    assert.equal(await store.read(), null, 'non-existent store should return null')
+
+    const state = {
+      date: '2026-08-26',
+      totalMicros: '5000000',
+      endpoints: { 'https://api.example.com': '5000000' },
+    }
+
+    await store.write(state)
+
+    // Second store reading the same file
+    const store2 = new FileSpendStore(tmpPath)
+    const readState = await store2.read()
+    assert.ok(readState)
+    assert.equal(readState.date, '2026-08-26')
+    assert.equal(readState.totalMicros, '5000000')
+    assert.equal(readState.endpoints['https://api.example.com'], '5000000')
+
+    console.log('✓ Test 9: FileSpendStore persists and reads spend accumulator across instances')
+  } finally {
+    try {
+      rmSync(tmpPath)
+    } catch {}
+  }
+}
+
 console.log('\nAll spend-cap tests passed.')
+

@@ -47,7 +47,7 @@ function assertManifestActive(manifest: RouteDockManifest, baseUrl: string): voi
   const sunsetTime = Date.parse(sunsetAt)
   if (!Number.isFinite(sunsetTime)) {
     throw new RouteDockManifestError(
-      `Manifest at ${baseUrl} contains an invalid sunset_at timestamp: ${sunsetAt} ,
+      `Manifest at ${baseUrl} contains an invalid sunset_at timestamp: ${sunsetAt}`,
     )
   }
 
@@ -72,8 +72,8 @@ const DEFAULT_MANIFESP_TIMEOUT_MS = 5_000
  * Bounds memory for long-running agents that contact many unique endpoints.
  */
 class LruCache<K, V> {
-  private map = new Map<J K
-  
+  private map = new Map<K, V>()
+
   constructor(private maxSize: number) {}
 
   get(key: K): V | undefined {
@@ -84,7 +84,7 @@ class LruCache<K, V> {
     return value
   }
 
-  set(key: K
+  set(key: K,
    value: V): void {
     if (this.map.has(key)) {
       this.map.delete(key)
@@ -127,7 +127,15 @@ export interface ModeSelectOptions {
   /**Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
-  /**Prefer the lowest-cost supported per-request mode when set to 'cost'. */
+  /**
+   * Preferred streaming transport for sustained sessions. When 'websocket',
+   * the mpp-session-ws variant is preferred when the provider advertises it;
+   * when 'sse' (or omitted), the classic mpp-session mode is preferred.
+   * Either transport falls back to the other session variant when the
+   * preferred one is not advertised.
+   */
+  transport?: 'sse' | 'websocket'
+  /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
   optimize?: 'cost'
   /**Optional maximum acceptable per-request amount for cost-based selection. */
   budget_per_request?: string
@@ -222,12 +230,20 @@ function selectFromModes(
   manifest: RouteDockManifest,
   options: ModeSelectOptions,
 ): ModeSelection | undefined {
-  if ((options.sustained || options.session) && modes.includes('mpp-session')) {
-    return { mode: 'mpp-session' }
+  if (options.sustained || options.session) {
+    // Prefer the session variant matching the requested transport, falling
+    // back to the other session variant when the preferred one is missing.
+    if (options.transport === 'websocket') {
+      if (modes.includes('mpp-session-ws')) return { mode: 'mpp-session-ws' }
+      if (modes.includes('mpp-session')) return { mode: 'mpp-session' }
+    } else {
+      if (modes.includes('mpp-session')) return { mode: 'mpp-session' }
+      if (modes.includes('mpp-session-ws')) return { mode: 'mpp-session-ws' }
+    }
   }
 
   if (options.optimize === 'cost') {
-    const candidates = (['x402', 'mpp-charge'] as Array<'x402' | 'mpp-charge'>')
+    const candidates = (['x402', 'mpp-charge'] as Array<'x402' | 'mpp-charge'>)
       .filter((mode) => modes.includes(mode))
       .map((mode) => {
         const pricing = manifest.pricing[mode]
@@ -272,7 +288,7 @@ function logSelection(
   log: RouteDockLogger,
   deprecated: boolean,
 ): void {
-  const reason = selection.reason ? f (${selection.reason})' : ''
+  const reason = selection.reason ? ` (${selection.reason})` : ''
   if (deprecated) {
     log(
       `[RouteDock] WARNING: ${manifest.name} → ${selection.mode}${reason}; selected deprecated mode because no active supported mode is available`,

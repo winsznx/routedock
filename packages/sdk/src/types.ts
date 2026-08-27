@@ -5,7 +5,7 @@
  * Section 5 of ROUTEDOCK_MASTER.md is the canonical specification.
  */
 
-export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
+export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
 
 /**
  * Agent custody mode — declared in routedock.json when provider accepts ZK vault payers.
@@ -116,6 +116,14 @@ export interface RouteDockManifest {
     x402?: PricingConfig
     'mpp-charge'?: PricingConfig
     'mpp-session'?: SessionPricingConfig
+    /**
+     * WebSocket transport variant of mpp-session. The channel is opened and the
+     * first voucher negotiated over HTTP exactly like mpp-session, then the
+     * connection upgrades to WebSocket for push-based streaming (OpenAI-style
+     * inference providers). Same SessionPricingConfig shape — only the
+     * streaming transport differs.
+     */
+    'mpp-session-ws'?: SessionPricingConfig
   }
   /** Service Level Agreement for the provider */
   sla?: SLAConfig
@@ -163,6 +171,8 @@ export interface RouteDockManifest {
    * before trusting any routing field (payee, endpoints, pricing).
    */
   signature?: string
+  /** Canonical manifest-signature format. Version 2 signs nested fields recursively. */
+  signature_version?: '2'
   /** Optional hierarchical categories from a published taxonomy (e.g. "data/price/crypto") */
   categories?: string[]
 }
@@ -203,11 +213,42 @@ export interface SessionCloseResult {
   vouchersIssued: number
 }
 
+/**
+ * Live session statistics returned by {@link SessionHandle.stats}.
+ * Read at any point during the session — no need to close it first.
+ */
+export interface SessionStats {
+  /** Number of vouchers issued so far in this session */
+  vouchersIssued: number
+  /**
+   * Cumulative amount authorized across all signed vouchers so far, in
+   * payment-asset decimal units (e.g. "0.0001"). Matches the units of
+   * {@link SessionCloseResult.totalPaid}, so a per-session sub-cap can be
+   * enforced by comparing against it mid-stream.
+   */
+  currentCumulative: string
+  /** Stellar channel contract address (C...) */
+  channelId: string
+  /**
+   * Transaction hash of the on-chain channel-open call, or null for a
+   * pre-deployed channel (no open transaction was issued).
+   */
+  openTxHash: string | null
+}
+
 /** Default wall-clock lifetime of a session before it auto-closes (1h). */
 export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
 
 /** Options accepted by client.openSession() */
 export interface SessionOptions {
+  /**
+   * Session payment mode. Defaults to 'mpp-session' (SSE-style one HTTP
+   * request per voucher). Set to 'mpp-session-ws' to negotiate the channel
+   * and first voucher over HTTP and then upgrade the connection to WebSocket
+   * for push-based streaming. Requires the provider's manifest to advertise
+   * the selected mode.
+   */
+  mode?: 'mpp-session' | 'mpp-session-ws'
   /**
    * Maximum wall-clock lifetime of the session in milliseconds. When the
    * timer fires, the session emits 'session:timeout' and auto-closes so an
@@ -252,13 +293,26 @@ export interface SessionHandle {
    */
   openTxHash: string | null
   /**
-   * Async generator of server-sent event data.
-   * Each iteration sends a voucher and yields the parsed response.
-   * With default concurrency (1) the next voucher is not issued until the
-   * provider returns HTTP 200 for the previous one.
+   * Async generator of streamed data.
+   *
+   * mpp-session: each iteration sends a voucher over HTTP and yields the
+   * parsed response body. With default concurrency (1) the next voucher is not
+   * issued until the provider returns HTTP 200 for the previous one.
+   *
+   * mpp-session-ws: opens the channel and negotiates the first voucher over
+   * HTTP, upgrades the connection to WebSocket, and yields each server frame
+   * (JSON frames parsed, raw strings yielded as-is). The stream ends when the
+   * server closes the socket with a normal close code.
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
   stream(options?: StreamOptions): AsyncIterable<unknown>
+  /**
+   * Snapshot of live session statistics (vouchers issued, cumulative amount
+   * authorized, channel identity). Values are updated synchronously on every
+   * stream() yield, so callers can log spend or enforce a per-session sub-cap
+   * without terminating the session.
+   */
+  stats(): SessionStats
   /** Close the channel on-chain with the highest signed voucher */
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */

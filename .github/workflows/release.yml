@@ -1,39 +1,20 @@
 name: Release
-
 on:
   push:
-    branches:
-      - main
-
-concurrency: ${{ github.workflow }}-${{ github.ref }}
-
+    branches: [ main ]
 permissions:
-  contents: write
-  pull-requests: write
-
+  issues: write
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9.15.9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Create release PR or publish packages
-        id: changesets
-        uses: changesets/action@v1
+      - run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - uses: changesets/action@v1
         with:
           publish: pnpm run release
           version: pnpm run version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - if: failure()
+        run: gh issue create --title "Release failed" --body "Release workflow failed"

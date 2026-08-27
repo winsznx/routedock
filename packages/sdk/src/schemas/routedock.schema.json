@@ -93,6 +93,10 @@
         },
         "mpp-session": {
           "$ref": "#/definitions/SessionPricingConfig"
+        },
+        "mpp-session-ws": {
+          "$ref": "#/definitions/SessionPricingConfig",
+          "description": "WebSocket transport variant of mpp-session: channel opened and first voucher negotiated over HTTP, then the connection upgrades to WebSocket for push-based streaming."
         }
       },
       "minProperties": 1
@@ -177,6 +181,11 @@
       "type": "string",
       "description": "Base64 Ed25519 signature (payee keypair) over the SHA-256 hash of this manifest with the signature field omitted. Clients must verify before trusting any routing field."
     },
+    "signature_version": {
+      "type": "string",
+      "const": "2",
+      "description": "Manifest signature format. Version 2 recursively includes every nested manifest field in the signed digest."
+    },
     "categories": {
       "type": "array",
       "items": {
@@ -196,7 +205,7 @@
     },
     "PaymentMode": {
       "type": "string",
-      "enum": ["x402", "mpp-charge", "mpp-session"],
+      "enum": ["x402", "mpp-charge", "mpp-session", "mpp-session-ws"],
       "description": "A supported RouteDock payment mode"
     },
     "PricingConfig": {
