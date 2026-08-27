@@ -33,11 +33,81 @@ import { withRetry, type RetryPolicy } from '../internal/retry.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 
+/** WebSocket-readyState values (mirrors the WHATWG WebSocket constants). */
+const WS_CONNECTING = 0
+const WS_OPEN = 1
+
+/** A WebSocket socket as consumed by the mpp-session-ws stream. */
+export interface WebSocketLike {
+  readyState: number
+  close(code?: number, reason?: string): void
+}
+
+/** Callbacks a WebSocket factory must wire to the underlying socket. */
+export interface WebSocketHandlers {
+  onOpen(): void
+  onMessage(data: string): void
+  onClose(code: number, reason: string): void
+  onError(): void
+}
+
+/**
+ * Creates a WebSocket connection with the given handshake headers.
+ * Injected for testability; defaults to the runtime WebSocket global
+ * (undici in Node ≥ 22 supports handshake headers via its options object).
+ */
+export type WebSocketFactory = (
+  url: string,
+  init: { headers: Record<string, string> },
+  handlers: WebSocketHandlers,
+) => WebSocketLike
+
+function defaultWebSocketFactory(
+  url: string,
+  init: { headers: Record<string, string> },
+  handlers: WebSocketHandlers,
+): WebSocketLike {
+  // Node ≥ 22 (undici) extends the WebSocket constructor with an options
+  // object that carries handshake headers — the DOM types only know the
+  // protocols argument, so cast through the constructor's parameter type.
+  const socket = new WebSocket(
+    url,
+    { headers: init.headers } as unknown as ConstructorParameters<typeof WebSocket>[1],
+  )
+  socket.onopen = () => handlers.onOpen()
+  socket.onmessage = (event) => {
+    const data = event.data
+    if (typeof data === 'string') {
+      handlers.onMessage(data)
+    } else if (data instanceof ArrayBuffer) {
+      handlers.onMessage(Buffer.from(data).toString('utf8'))
+    } else {
+      // Blob or other binary — best-effort decode.
+      void (data as Blob)
+        .arrayBuffer()
+        .then((buffer) => handlers.onMessage(Buffer.from(buffer).toString('utf8')))
+        .catch(() => {
+          /* undecodable frame — dropped */
+        })
+    }
+  }
+  socket.onclose = (event) => handlers.onClose(event.code, event.reason)
+  socket.onerror = () => handlers.onError()
+  return socket
+}
+
+/** The subset of the mppx client used by the WebSocket transport. */
+interface WsMppxLike {
+  rawFetch: typeof globalThis.fetch
+  createCredential: (response: Response) => Promise<string>
+}
+
 export class MppSessionClient {
   constructor(
     private readonly keypair: Keypair,
     private readonly network: 'testnet' | 'mainnet',
     private readonly retryPolicy?: RetryPolicy,
+    private readonly webSocketFactory: WebSocketFactory = defaultWebSocketFactory,
   ) {}
 
   async openSession(
@@ -47,9 +117,10 @@ export class MppSessionClient {
     options?: SessionOptions,
     onSpend?: (amount: string) => Promise<void>,
   ): Promise<SessionHandle> {
-    const pricing = manifest.pricing['mpp-session']
+    const mode = options?.mode ?? 'mpp-session'
+    const pricing = manifest.pricing[mode]
     if (!pricing) {
-      throw new RouteDockManifestError('manifest.pricing.mpp-session missing')
+      throw new RouteDockManifestError(`manifest.pricing.${mode} missing`)
     }
 
     const refundPeriod = pricing.refund_waiting_period_ledgers
@@ -66,6 +137,11 @@ export class MppSessionClient {
 
     let currentCumulative = 0n
     let vouchersIssued = 0
+
+    // Bound before the handle literal so the transport can be selected inside
+    // the SessionHandle (whose `this` is the handle, not this client).
+    const streamWs = (u: string, m: WsMppxLike): AsyncIterable<unknown> =>
+      this.streamWebSocket(u, m)
 
     const mppx = Mppx.create({
       polyfill: false,
@@ -142,6 +218,17 @@ export class MppSessionClient {
       },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        if (mode === 'mpp-session-ws') {
+          // WebSocket transport: one connection per stream() call, with one
+          // voucher negotiated over HTTP before the upgrade. Each connection
+          // counts as one voucher issued.
+          for await (const item of streamWs(url, mppx)) {
+            vouchersIssued++
+            yield item
+          }
+          return
+        }
+
         const concurrency = Math.max(1, options?.concurrency ?? 1)
 
         // Shared fetch-one helper — retries on transient errors.
@@ -488,5 +575,154 @@ export class MppSessionClient {
     }
 
     return handle
+  }
+
+  /**
+   * mpp-session-ws streaming transport.
+   *
+   * Mirrors the issue's three-step sequence:
+   *   1. open the channel — probe the provider URL over HTTP;
+   *   2. negotiate the voucher — sign the mppx 402 challenge into a credential;
+   *   3. upgrade the HTTP connection to WebSocket — hand the signed voucher to
+   *      the provider as the Authorization header of the WebSocket handshake.
+   *
+   * Each server frame is yielded (JSON frames parsed; raw strings yielded
+   * as-is). The stream ends when the server closes the socket with a normal
+   * close code (1000/1001); abnormal closes and connection failures surface as
+   * RouteDockChannelStateError.
+   */
+  private async *streamWebSocket(
+    url: string,
+    mppx: WsMppxLike,
+  ): AsyncIterable<unknown> {
+    // ── 1 + 2: channel establishment + voucher negotiation over HTTP ────────
+    const request: RequestInit = { method: 'GET' }
+    let probe: Response
+    try {
+      probe = await mppx.rawFetch(url, request)
+    } catch (err) {
+      throw wrapFetchError(err, 'Voucher request')
+    }
+    if (probe.status !== 402) {
+      if (probe.status >= 500 || probe.status === 429 || probe.status === 503) {
+        throw httpStatusToError(
+          `Voucher request failed: HTTP ${probe.status}`,
+          probe.status,
+          probe,
+        )
+      }
+      throw new RouteDockChannelStateError(
+        `Voucher request failed: expected HTTP 402 challenge, got HTTP ${probe.status}`,
+      )
+    }
+
+    let credential: string
+    try {
+      credential = await mppx.createCredential(probe)
+    } catch (err) {
+      throw wrapFetchError(err, 'Voucher credential')
+    }
+
+    // ── 3: upgrade the HTTP connection to WebSocket ─────────────────────────
+    const wsUrl = url.replace(/^http/, 'ws')
+
+    type WsEvent =
+      | { type: 'open' }
+      | { type: 'message'; data: string }
+      | { type: 'close'; code: number; reason: string }
+      | { type: 'error' }
+
+    const queue: WsEvent[] = []
+    const waiters: Array<(event: WsEvent) => void> = []
+
+    const drain = (): void => {
+      while (queue.length > 0 && waiters.length > 0) {
+        const waiter = waiters.shift()!
+        waiter(queue.shift()!)
+      }
+    }
+    const nextEvent = (): Promise<WsEvent> =>
+      queue.length > 0
+        ? Promise.resolve(queue.shift()!)
+        : new Promise((resolve) => {
+            waiters.push(resolve)
+          })
+
+    const socket = this.webSocketFactory(
+      wsUrl,
+      { headers: { authorization: credential } },
+      {
+        onOpen: () => {
+          queue.push({ type: 'open' })
+          drain()
+        },
+        onMessage: (data) => {
+          queue.push({ type: 'message', data })
+          drain()
+        },
+        onClose: (code, reason) => {
+          queue.push({ type: 'close', code, reason })
+          drain()
+        },
+        onError: () => {
+          queue.push({ type: 'error' })
+          drain()
+        },
+      },
+    )
+
+    try {
+      // Await the upgrade: 'open' means the provider accepted the signed
+      // voucher and switched protocols; error/close before open is a rejected
+      // handshake.
+      for (;;) {
+        const event = await nextEvent()
+        if (event.type === 'open') break
+        if (event.type === 'error') {
+          throw new RouteDockChannelStateError(
+            'WebSocket upgrade failed: connection error',
+          )
+        }
+        if (event.type === 'close') {
+          throw new RouteDockChannelStateError(
+            `WebSocket upgrade failed: server closed the connection before upgrading (code ${event.code})`,
+          )
+        }
+      }
+
+      // Stream frames until the provider closes the socket.
+      for (;;) {
+        const event = await nextEvent()
+        if (event.type === 'message') {
+          let parsed: unknown = event.data
+          try {
+            parsed = JSON.parse(event.data)
+          } catch {
+            // Non-JSON frame — yield the raw payload.
+          }
+          yield parsed
+          continue
+        }
+        if (event.type === 'error') {
+          throw new RouteDockChannelStateError('WebSocket connection error')
+        }
+        // A second 'open' cannot arrive after the upgrade; guard only to keep
+        // the union narrow for the close branch below.
+        if (event.type === 'open') continue
+        // close — normal codes end the stream; abnormal codes are errors.
+        if (event.code === 1000 || event.code === 1001) {
+          return
+        }
+        throw new RouteDockChannelStateError(
+          `WebSocket stream ended abnormally (code ${event.code}${event.reason ? `: ${event.reason}` : ''})`,
+        )
+      }
+    } finally {
+      // Consumer stopped iterating or the stream ended — tear down the socket
+      // so the provider sees a clean close and can flag/settle the channel.
+      if (socket.readyState === WS_CONNECTING || socket.readyState === WS_OPEN) {
+        socket.close(1000, 'stream ended')
+      }
+    }
   }
 }

@@ -47,7 +47,7 @@ const BASE_OPTS = {
 }
 
 function makeApp(overrides: Partial<typeof BASE_OPTS & {
-  modes: ('x402' | 'mpp-charge' | 'mpp-session')[]
+  modes: ('x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws')[]
   pricing: Record<string, unknown>
 }> = {}) {
   const app = new Hono()
@@ -141,6 +141,32 @@ describe('routedockHono — mpp-session flow', () => {
       modes: ['mpp-session'],
       pricing: {
         'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
+      },
+    })
+    const res = await app.request('/price', { method: 'DELETE' })
+    assert.equal(res.status, 200)
+    const body = await res.json() as { closeTxHash: null }
+    assert.equal(body.closeTxHash, null)
+  })
+})
+
+describe('routedockHono — mpp-session-ws flow', () => {
+  it('returns 402 challenge when no authorization header', async () => {
+    const app = makeApp({
+      modes: ['mpp-session-ws'],
+      pricing: {
+        'mpp-session-ws': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
+      },
+    })
+    const res = await app.request('/price', { method: 'GET' })
+    assert.equal(res.status, 402)
+  })
+
+  it('returns { closeTxHash: null } on DELETE with no prior vouchers', async () => {
+    const app = makeApp({
+      modes: ['mpp-session-ws'],
+      pricing: {
+        'mpp-session-ws': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
       },
     })
     const res = await app.request('/price', { method: 'DELETE' })

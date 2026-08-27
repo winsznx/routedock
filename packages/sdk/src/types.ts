@@ -5,7 +5,7 @@
  * Section 5 of ROUTEDOCK_MASTER.md is the canonical specification.
  */
 
-export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
+export type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
 
 /**
  * Agent custody mode — declared in routedock.json when provider accepts ZK vault payers.
@@ -116,6 +116,14 @@ export interface RouteDockManifest {
     x402?: PricingConfig
     'mpp-charge'?: PricingConfig
     'mpp-session'?: SessionPricingConfig
+    /**
+     * WebSocket transport variant of mpp-session. The channel is opened and the
+     * first voucher negotiated over HTTP exactly like mpp-session, then the
+     * connection upgrades to WebSocket for push-based streaming (OpenAI-style
+     * inference providers). Same SessionPricingConfig shape — only the
+     * streaming transport differs.
+     */
+    'mpp-session-ws'?: SessionPricingConfig
   }
   /** Service Level Agreement for the provider */
   sla?: SLAConfig
@@ -234,6 +242,14 @@ export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
 /** Options accepted by client.openSession() */
 export interface SessionOptions {
   /**
+   * Session payment mode. Defaults to 'mpp-session' (SSE-style one HTTP
+   * request per voucher). Set to 'mpp-session-ws' to negotiate the channel
+   * and first voucher over HTTP and then upgrade the connection to WebSocket
+   * for push-based streaming. Requires the provider's manifest to advertise
+   * the selected mode.
+   */
+  mode?: 'mpp-session' | 'mpp-session-ws'
+  /**
    * Maximum wall-clock lifetime of the session in milliseconds. When the
    * timer fires, the session emits 'session:timeout' and auto-closes so an
    * orphaned channel cannot keep collateral locked on-chain indefinitely.
@@ -277,10 +293,16 @@ export interface SessionHandle {
    */
   openTxHash: string | null
   /**
-   * Async generator of server-sent event data.
-   * Each iteration sends a voucher and yields the parsed response.
-   * With default concurrency (1) the next voucher is not issued until the
-   * provider returns HTTP 200 for the previous one.
+   * Async generator of streamed data.
+   *
+   * mpp-session: each iteration sends a voucher over HTTP and yields the
+   * parsed response body. With default concurrency (1) the next voucher is not
+   * issued until the provider returns HTTP 200 for the previous one.
+   *
+   * mpp-session-ws: opens the channel and negotiates the first voucher over
+   * HTTP, upgrades the connection to WebSocket, and yields each server frame
+   * (JSON frames parsed, raw strings yielded as-is). The stream ends when the
+   * server closes the socket with a normal close code.
    * UNAUDITED: uses stellar-experimental/one-way-channel contract.
    */
   stream(options?: StreamOptions): AsyncIterable<unknown>
