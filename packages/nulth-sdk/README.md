@@ -2,13 +2,13 @@
 
 **Status: STUB — not ready for production.**
 
-This package provides a **mock Groth16 prover** (`mockGroth16Proof`) that computes a
+This package provides an **insecure mock prover** (`insecureMockProof`) that computes a
 SHA-512 digest as a placeholder. No real zero-knowledge proof is generated.
 
 - The mock prover is only safe for **testnet** development.
-- **Mainnet use is blocked** — `prepareNulthSigner` throws `RouteDockManifestError`
-  when `network === 'mainnet'` and the prover is `'mock'` (the default).
-- To use on mainnet, an explicit `prover: 'wasm'` opt-in is required in
-  `NulthVaultConfig` / `NulthClientConfig`, paired with a real Groth16 WASM prover.
+- **Mainnet use is blocked at `NulthClient` construction**. This package does not
+  currently implement a production prover backend.
+- The `mock` backend is deliberately not a cryptographic proof and must never be
+  used for custody or policy enforcement.
 
 See [Issue #143](https://github.com/winsznx/routedock/issues/143) for context.

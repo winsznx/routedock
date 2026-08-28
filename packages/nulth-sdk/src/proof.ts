@@ -34,15 +34,16 @@ export function authDigestFromEntry(authEntryBase64: string): string {
   return sha256Hex(entryHash)
 }
 
-export type ProverBackend = 'mock' | 'wasm'
+export type ProverBackend = 'mock'
 
 export const DEFAULT_PROVER: ProverBackend = 'mock'
 
 /**
- * Deterministic mock Groth16 proof bytes for testnet/dev.
- * Production deployments swap this for a real prover WASM.
+ * Deterministic insecure proof bytes for testnet/dev only.
+ *
+ * @internal
  */
-export function mockGroth16Proof(preimage: string): string {
+export function insecureMockProof(preimage: string): string {
   return createHash('sha512').update(`nulth:${preimage}`).digest('base64')
 }
 

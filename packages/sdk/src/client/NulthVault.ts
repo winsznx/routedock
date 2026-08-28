@@ -54,7 +54,8 @@ export interface NulthAuthSignature {
 
 export interface NulthClientConfig {
   nulthAccount: string
-  prover?: 'mock' | 'wasm'
+  network: 'testnet' | 'mainnet'
+  prover?: 'mock'
   policy: NulthPolicyState
   verifierContract?: string
 }
@@ -99,7 +100,7 @@ function authDigestFromEntry(authEntryBase64: string): string {
   return sha256Hex(entryHash)
 }
 
-function mockGroth16Proof(preimage: string): string {
+function insecureMockProof(preimage: string): string {
   return createHash('sha512').update(`nulth:${preimage}`).digest('base64')
 }
 
@@ -120,11 +121,17 @@ function usdcToStroops(amount: string): bigint {
 
 class NulthClient {
   private policy: NulthPolicyState
-  private readonly prover: 'mock' | 'wasm'
+  private readonly prover: 'mock'
 
   constructor(private readonly config: NulthClientConfig) {
     this.policy = { ...config.policy }
-    this.prover = config.prover ?? "mock"
+    this.prover = config.prover ?? 'mock'
+    if (config.network === 'mainnet') {
+      throw new RouteDockManifestError(
+        'NulthClient cannot use the insecure mock prover on mainnet; a production prover is required',
+      )
+    }
+    console.warn('NulthClient is using the insecure mock prover; proofs are not cryptographically sound')
   }
 
   get proverBackend(): string { return this.prover }
@@ -156,7 +163,7 @@ class NulthClient {
 
     const proof: NulthProof = {
       version: 1,
-      proof: mockGroth16Proof(preimage),
+      proof: insecureMockProof(preimage),
       publicInputs: {
         authDigest,
         allowlistCommitment: this.policy.allowlistCommitment,
@@ -265,7 +272,7 @@ export function createPolicyState(input: {
 export interface NulthVaultConfig {
   mode: 'nulth'
   nulthAccount: string
-  prover?: 'mock' | 'wasm'
+  prover?: 'mock'
   witnessSecret: string
   allowedPayees: readonly string[]
   dailyCapUsdc: string
@@ -300,10 +307,10 @@ export async function prepareNulthSigner(
 ): Promise<{ signer: ClientStellarSigner; config: NulthSignerConfig }> {
   assertNulthVaultManifest(manifest, vault.nulthAccount)
 
-  const prover = vault.prover ?? "mock"
+  const prover = vault.prover ?? 'mock'
   if (network === "mainnet" && prover === "mock") {
     throw new RouteDockManifestError(
-      "nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet - set prover to 'wasm' for mainnet deployments"
+      'nulth vault uses the insecure mock prover and cannot be used on mainnet'
     )
   }
 
@@ -318,6 +325,7 @@ export async function prepareNulthSigner(
 
   const config: NulthSignerConfig = {
     nulthAccount: vault.nulthAccount,
+    network,
     prover,
     policy,
     ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),

@@ -42,7 +42,7 @@ const WITNESS = 'test-witness-secret'
     ledgerSequence: 50_000,
   })
 
-  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, policy })
+  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, network: 'testnet', policy })
   const proof = client.buildPaymentAuthProof({
     authEntry: Buffer.from('mock-auth-entry').toString('base64'),
     payee: PAYEE_A,
@@ -70,7 +70,7 @@ const WITNESS = 'test-witness-secret'
     allowedPayees: [PAYEE_A],
     witnessSecret: WITNESS,
   })
-  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, policy })
+  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, network: 'testnet', policy })
 
   assert.throws(
     () =>
@@ -103,6 +103,7 @@ const WITNESS = 'test-witness-secret'
 {
   const signerConfig = {
     nulthAccount: NULTH_ACCOUNT,
+    network: 'testnet' as const,
     policy: createPolicyState({
       dailyCapUsdc: '1.00',
       allowedPayees: [PAYEE_A],
@@ -132,9 +133,25 @@ const WITNESS = 'test-witness-secret'
 
 console.log('\nAll nulth-sdk tests passed.')
 
+assert.throws(
+  () =>
+    new NulthClient({
+      nulthAccount: NULTH_ACCOUNT,
+      network: 'mainnet',
+      policy: createPolicyState({
+        dailyCapUsdc: '1.00',
+        allowedPayees: [PAYEE_A],
+        witnessSecret: WITNESS,
+      }),
+    }),
+  /insecure mock prover on mainnet/,
+)
+console.log('✓ mainnet rejects the insecure mock prover at construction')
+
 {
   const client = new NulthClient({
     nulthAccount: NULTH_ACCOUNT,
+    network: 'testnet',
     prover: 'mock',
     policy: createPolicyState({
       dailyCapUsdc: '1.00',
