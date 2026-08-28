@@ -28,7 +28,23 @@ pnpm --filter @routedock/routedock build
 
 ## Verify before you push
 
-Run the same things CI runs, in the same order:
+One command runs the same things CI does, in the same order:
+
+```bash
+pnpm verify          # build + typecheck + tests + provider bundles
+pnpm verify --fast   # build + typecheck only
+```
+
+A **pre-push hook** runs `pnpm verify --fast` automatically. It is installed by
+`pnpm install` (via `prepare`, which sets `core.hooksPath`), so you get it
+without doing anything. Bypass with `git push --no-verify` when you need to.
+
+It runs on push rather than on every commit deliberately: the check has to build
+the SDK first, which is slow enough that a per-commit hook gets bypassed, and a
+bypassed hook catches nothing. Pushing is the point where the work becomes
+someone else's problem.
+
+If you would rather run the steps individually:
 
 ```bash
 # 1. Types across every package
