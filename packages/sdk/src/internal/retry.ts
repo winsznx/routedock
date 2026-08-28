@@ -8,7 +8,12 @@ export interface RetryPolicy {
   /** Maximum jittered backoff delay in ms. Default: 30000. */
   maxDelayMs?: number
   /** Called before each retry with the attempt number, error, and upcoming delay. */
-  onRetry?: (attempt: number, error: Error, nextDelayMs: number) => void
+  /**
+   * Observability hook fired before each retry. Awaited, so a returned promise
+   * is honoured; throwing or rejecting is caught and logged rather than
+   * aborting the retry loop.
+   */
+  onRetry?: (attempt: number, error: Error, nextDelayMs: number) => void | Promise<void>
 }
 
 export const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'onRetry'>> = {
@@ -52,7 +57,7 @@ export async function withRetry<T>(
     try {
       return await fn()
     } catch (err) {
-      if !(err instanceof RouteDockError)) {
+      if (!(err instanceof RouteDockError)) {
         throw err
       }
       lastError = err
