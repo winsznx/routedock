@@ -18,6 +18,8 @@ import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
+import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
+import type { Method } from 'mppx'
 import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
@@ -510,14 +512,14 @@ function createMppSessionHandlerState(
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
-      mppChannel({
+      withTypedChannelErrors(mppChannel({
         channel: sessionPricing.channelFactory,
         commitmentKey: opts.commitmentPublicKey!,
         network: networkId,
         store: wrappedStore,
         sourceAccount: payeeKeypair.publicKey(),
-        feePayer: { envelopeSigner: payeeKeypair },
-      }),
+        feePayer: channelAuthorizer(payeeKeypair),
+      }) as Method.AnyServer),
     ],
   })
 
@@ -555,7 +557,7 @@ function createMppSessionHandlerState(
           channel: sessionPricing.channelFactory,
           amount: closeAmount,
           signature: hexToBytes(closeSig),
-          feePayer: { envelopeSigner: payeeKeypair },
+          feePayer: channelAuthorizer(payeeKeypair),
           network: networkId,
         })
 
