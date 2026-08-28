@@ -60,7 +60,13 @@ interface OrderBookResponse {
  * that persists between requests.
  *
  * The SDK receives a store backed by this object's persistent storage, so mppx
- * channel state and provider-side voucher tracking survive isolate eviction.
+ * channel state survives isolate eviction.
+ *
+ * Not yet durable: routedockHono still tracks lastCumulativeAmount,
+ * voucherCount, lastSignatureHex and sessionPayerAddress in closure scope, and
+ * those are what the DELETE close path reads. If this object is evicted
+ * mid-session they reset, and close falls back to the client-supplied amount
+ * and signature. Moving them into the same store is the remaining half of #211.
  */
 export class ChannelSession extends DurableObject<Env> {
   private app: Hono | null = null
