@@ -161,7 +161,7 @@ importers:
         version: 3.8.1(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react-is@17.0.2)(react@19.2.4)(redux@5.0.1)
       shadcn:
         specifier: ^4.2.0
-        version: 4.2.0(@types/node@20.19.39)(typescript@5.9.3)
+        version: 4.2.0(@cfworker/json-schema@4.1.1)(@types/node@20.19.39)(typescript@5.9.3)
       shiki:
         specifier: ^4.0.2
         version: 4.0.2
@@ -210,7 +210,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
-        version: 1.29.0(zod@4.3.6)
+        version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       '@routedock/routedock':
         specifier: workspace:^
         version: link:../sdk
@@ -258,12 +258,15 @@ importers:
 
   packages/sdk:
     dependencies:
+      '@cfworker/json-schema':
+        specifier: ^4.0.0
+        version: 4.1.1
       '@routedock/nulth-sdk':
         specifier: workspace:*
         version: link:../nulth-sdk
       '@stellar/mpp':
         specifier: ^0.4.0
-        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
+        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -276,18 +279,12 @@ importers:
       '@x402/stellar':
         specifier: ^2.9.0
         version: 2.9.0
-      ajv:
-        specifier: ^8.17.1
-        version: 8.18.0
-      ajv-formats:
-        specifier: ^3.0.1
-        version: 3.0.1(ajv@8.18.0)
       express:
         specifier: ^4.18.0
         version: 4.22.1
       mppx:
         specifier: ^0.5.7
-        version: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+        version: 0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
     devDependencies:
       '@happy-dom/global-registrator':
         specifier: ^15.11.7
@@ -307,6 +304,12 @@ importers:
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
+      ajv:
+        specifier: ^8.17.1
+        version: 8.18.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.18.0)
       fastify:
         specifier: ^5.0.0
         version: 5.11.0
@@ -740,6 +743,9 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@cfworker/json-schema@4.1.1':
+    resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -7025,6 +7031,8 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.14
 
+  '@cfworker/json-schema@4.1.1': {}
+
   '@changesets/apply-release-plan@7.1.1':
     dependencies:
       '@changesets/config': 3.1.4
@@ -7960,7 +7968,7 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.13(hono@4.12.25)
       ajv: 8.18.0
@@ -7979,10 +7987,12 @@ snapshots:
       raw-body: 3.0.2
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
+    optionalDependencies:
+      '@cfworker/json-schema': 4.1.1
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 1.19.13(hono@4.12.25)
       ajv: 8.18.0
@@ -8001,6 +8011,8 @@ snapshots:
       raw-body: 3.0.2
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
+    optionalDependencies:
+      '@cfworker/json-schema': 4.1.1
     transitivePeerDependencies:
       - supports-color
 
@@ -8534,10 +8546,10 @@ snapshots:
 
   '@stellar/js-xdr@3.1.2': {}
 
-  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
+  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)))':
     dependencies:
       '@stellar/stellar-sdk': 14.6.1
-      mppx: 0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
+      mppx: 0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6))
       zod: 4.3.6
 
   '@stellar/stellar-base@14.1.0':
@@ -10606,9 +10618,9 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
-  incur@0.3.20(openapi-types@12.1.3):
+  incur@0.3.20(@cfworker/json-schema@4.1.1)(openapi-types@12.1.3):
     dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       '@readme/openapi-parser': 6.0.1(openapi-types@12.1.3)
       '@toon-format/toon': 2.1.0
       tokenx: 1.3.0
@@ -11074,16 +11086,16 @@ snapshots:
 
   motion-utils@12.36.0: {}
 
-  mppx@0.5.7(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
+  mppx@0.5.7(@cfworker/json-schema@4.1.1)(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@4.22.1)(hono@4.12.25)(openapi-types@12.1.3)(typescript@5.9.3)(viem@2.52.2(typescript@5.9.3)(zod@4.3.6)):
     dependencies:
       '@remix-run/fetch-proxy': 0.7.1
       '@remix-run/node-fetch-server': 0.13.0
-      incur: 0.3.20(openapi-types@12.1.3)
+      incur: 0.3.20(@cfworker/json-schema@4.1.1)(openapi-types@12.1.3)
       ox: 0.14.7(typescript@5.9.3)(zod@4.3.6)
       viem: 2.52.2(typescript@5.9.3)(zod@4.3.6)
       zod: 4.3.6
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       express: 4.22.1
       hono: 4.12.25
     transitivePeerDependencies:
@@ -11915,14 +11927,14 @@ snapshots:
       safe-buffer: 5.2.1
       to-buffer: 1.2.2
 
-  shadcn@4.2.0(@types/node@20.19.39)(typescript@5.9.3):
+  shadcn@4.2.0(@cfworker/json-schema@4.1.1)(@types/node@20.19.39)(typescript@5.9.3):
     dependencies:
       '@babel/core': 7.29.0
       '@babel/parser': 7.29.2
       '@babel/plugin-transform-typescript': 7.28.6(@babel/core@7.29.0)
       '@babel/preset-typescript': 7.28.5(@babel/core@7.29.0)
       '@dotenvx/dotenvx': 1.60.1
-      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       '@types/validate-npm-package-name': 4.0.2
       browserslist: 4.28.2
       commander: 14.0.3

@@ -1,4 +1,4 @@
-import { Validator } from '@cfworker/json-schema'
+import { Validator, type Schema } from '@cfworker/json-schema'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import {
   RouteDockError,
@@ -16,7 +16,7 @@ import schema from '../schemas/routedock.schema.json' assert { type: 'json' }
 import pkg from '../../package.json' assert { type: 'json' }
 import { verifyManifestSignature } from '../manifest/sign.js'
 
-const validator = new Validator(schema, 'draft-07')
+const validator = new Validator(schema as unknown as Schema, '7')
 
 const SDK_VERSION = pkg.version as string
 
@@ -35,7 +35,7 @@ function assertClientVersionSupported(manifest: RouteDockManifest, baseUrl: stri
   const minVersion = manifest.min_client_version
   if (minVersion && isVersionBelow(SDK_VERSION, minVersion)) {
     throw new RouteDockClientVersionError(
-      `SDK version ${SDK_VERSION} is below the minimum required version ${minVersion} for provider at ${baseUrl}. Please upgrade the SCD.`,
+      `SDK version ${SDK_VERSION} is below the minimum required version ${minVersion} for provider at ${baseUrl}. Please upgrade the SDK.`,
     )
   }
 }
@@ -64,8 +64,8 @@ interface CacheEntry {
 }
 
 const CACHE_TTL_MS = 60_000
-const DEFAULT_MANIFESP_CACHE_MAX_SIZE = 512
-const DEFAULT_MANIFESP_TIMEOUT_MS = 5_000
+const DEFAULT_MANIFEST_CACHE_MAX_SIZE = 512
+const DEFAULT_MANIFEST_TIMEOUT_MS = 5_000
 
 /**
  * Simple LRU cache backed by Map's insertion-order guarantee.
@@ -84,8 +84,7 @@ class LruCache<K, V> {
     return value
   }
 
-  set(key: K,
-   value: V): void {
+  set(key: K, value: V): void {
     if (this.map.has(key)) {
       this.map.delete(key)
     } else if (this.map.size >= this.maxSize) {
@@ -108,7 +107,7 @@ class LruCache<K, V> {
 }
 
 /** In-memory manifest cache keyed by base URL, bounded to avoid unbounded heap growth. */
-const manifestCache = new LruCache<string, CacheEntry>(DEFAULT_MANIFESP_CACHE_MAX_SIZE)
+const manifestCache = new LruCache<string, CacheEntry>(DEFAULT_MANIFEST_CACHE_MAX_SIZE)
 
 /**
  * Override the manifest cache's max size (default 512). Affects the shared,
@@ -124,7 +123,7 @@ export function configureManifestCache(maxSize: number): void {
 export type RouteDockLogger = (message: string) => void
 
 export interface ModeSelectOptions {
-  /**Force mpp-session if the provider supports it */
+  /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
   /**
@@ -137,14 +136,14 @@ export interface ModeSelectOptions {
   transport?: 'sse' | 'websocket'
   /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
   optimize?: 'cost'
-  /**Optional maximum acceptable per-request amount for cost-based selection. */
+  /** Optional maximum acceptable per-request amount for cost-based selection. */
   budget_per_request?: string
   /**
    * Override mode selection and use this specific mode.
    * Throws RouteDockNoSupportedModeError if the provider does not support it.
    */
   forceMode?: PaymentMode
-  /**Structured logger for mode selection events. Defaults to no-op. */
+  /** Structured logger for mode selection events. Defaults to no-op. */
   logger?: RouteDockLogger
 }
 
@@ -153,7 +152,7 @@ export interface ModeSelectOptions {
  *
  * `expectedPayee`, when provided, is the out-of-band trust anchor for the
  * manifest (e.g. the account this provider registered on-chain): the fetched
- * manifest's `payee`+must equal it or `RouteDockSignatureError` is thrown.
+ * manifest's `payee` must equal it or `RouteDockSignatureError` is thrown.
  * Callers that obtained a payee from a registry/pinned allowlist MUST pass it;
  * without it the self-signed signature alone proves nothing about who served
  * the manifest.
@@ -161,7 +160,7 @@ export interface ModeSelectOptions {
 export async function fetchManifest(
   baseUrl: string,
   retryPolicy?: RetryPolicy,
-  manifestTimeoutMs = DEFAULT_MANIFESP_TIMEOUT_MS,
+  manifestTimeoutMs = DEFAULT_MANIFEST_TIMEOUT_MS,
   expectedPayee?: string,
 ): Promise<RouteDockManifest> {
   const cached = manifestCache.get(baseUrl)
@@ -207,7 +206,7 @@ export async function fetchManifest(
 
     const result = validator.validate(raw)
     if (!result.valid) {
-      const msgs = result.errors.map(err => err.message).join('; ')
+      const msgs = result.errors.map(err => err.error).join('; ')
       throw new RouteDockManifestError(`Invalid manifest at ${url}: ${msgs}`)
     }
 
@@ -269,7 +268,7 @@ function selectFromModes(
         return { mode: cheapestCandidate.mode, reason: 'cost-optimized' }
       }
 
-      // All candidates exceed the caller's budget ceiling - error instead of
+      // All candidates exceed the caller's budget ceiling — error instead of
       // silently falling through to an over-budget mode.
       if (options.budget_per_request !== undefined) {
         throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
