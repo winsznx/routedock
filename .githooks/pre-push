@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Gate on the failures that have actually reached CI in this repo: code that
+# never compiled, and a package.json edited without regenerating the lockfile.
+#
+# This runs on push rather than commit deliberately. The check needs the SDK
+# built first, which takes long enough that a per-commit hook gets bypassed —
+# and a bypassed hook catches nothing. Pushing is the moment the work becomes
+# someone else's problem, so that is where the gate belongs.
+#
+# Skip with:  git push --no-verify
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+
+printf '\033[36m▸ pre-push: verifying (skip with --no-verify)\033[0m\n'
+
+if ! bash "$root/scripts/verify.sh" --fast; then
+  cat >&2 <<'EOF'
+
+Push aborted — see the failure above.
+
+  pnpm verify --fast    build + typecheck, what this hook runs
+  pnpm verify           the whole local mirror of CI, including tests
+
+If the failure looks wrong, the usual cause is a stale build:
+
+  rm -rf packages/*/dist && pnpm verify --fast
+
+EOF
+  exit 1
+fi

@@ -6,7 +6,7 @@ import {
   routedockHono,
   mppSessionWsVerified,
 } from '@routedock/routedock/provider/hono'
-import { usdcToUnits } from '@routedock/routedock'
+import { Store } from '@stellar/mpp/channel/server'
 import {
   buildManifest,
   HORIZON_URLS,
@@ -58,11 +58,14 @@ interface OrderBookResponse {
  * against: one instance per channel contract, serialized execution, and memory
  * that persists between requests.
  *
- * Residual limitation: `routedockHono` exposes no option to inject the channel
- * store, so mppx state still lives in DO memory rather than DO storage. If the
- * object is evicted mid-session, tracking resets. Sessions are short-lived so
- * this is a narrow window, but closing it properly needs a `sessionStore`
- * option upstream in the SDK.
+ * The SDK receives a store backed by this object's persistent storage, so mppx
+ * channel state survives isolate eviction.
+ *
+ * Not yet durable: routedockHono still tracks lastCumulativeAmount,
+ * voucherCount, lastSignatureHex and sessionPayerAddress in closure scope, and
+ * those are what the DELETE close path reads. If this object is evicted
+ * mid-session they reset, and close falls back to the client-supplied amount
+ * and signature. Moving them into the same store is the remaining half of #211.
  */
 export class ChannelSession extends DurableObject<Env> {
   private app: Hono | null = null
@@ -94,6 +97,14 @@ export class ChannelSession extends DurableObject<Env> {
 
     const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
 
+    const sessionStore = this.ctx?.storage
+      ? Store.from({
+          get: (key: string) => this.ctx.storage.get(key),
+          put: (key: string, value: unknown) => this.ctx.storage.put(key, value),
+          delete: async (key: string) => { await this.ctx.storage.delete(key) },
+        })
+      : Store.memory()
+
     const app = new Hono()
 
     app.use(
@@ -110,6 +121,7 @@ export class ChannelSession extends DurableObject<Env> {
         network,
         payeeSecretKey: env.STELLAR_PAYEE_SECRET,
         commitmentPublicKey,
+        sessionStore,
         manifest,
         onSessionOpen: async (channelId, payer) => {
           if (!supabase) return
@@ -130,7 +142,7 @@ export class ChannelSession extends DurableObject<Env> {
           const { error } = await supabase
             .from('sessions')
             .update({
-              cumulative_amount: usdcToUnits(cumulativeAmount).toString(),
+              cumulative_amount: cumulativeAmount,
               voucher_count: voucherIndex,
               last_signature: signature,
             })
@@ -143,7 +155,7 @@ export class ChannelSession extends DurableObject<Env> {
             .from('sessions')
             .update({
               status: 'closing',
-              cumulative_amount: usdcToUnits(info.cumulativeAmount).toString(),
+              cumulative_amount: info.cumulativeAmount,
               last_signature: info.lastSignature || null,
               voucher_count: info.voucherCount,
             })

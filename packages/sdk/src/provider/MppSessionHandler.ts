@@ -6,6 +6,8 @@ import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
 import { resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
 import { extractPayerAddress } from './payer.js'
+import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
+import type { Method } from 'mppx'
 
 /** Store shape extended with optional atomic update operation. */
 export type ChannelStore = MppxStore.Store & {
@@ -181,14 +183,14 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
-      stellar.channel({
+      withTypedChannelErrors(stellar.channel({
         channel: opts.channelFactory,
         commitmentKey: opts.commitmentPublicKey,
         network: networkId,
         store: wrappedStore,
         sourceAccount: payeeKeypair.publicKey(),
-        feePayer: { envelopeSigner: payeeKeypair },
-      }),
+        feePayer: channelAuthorizer(payeeKeypair),
+      }) as Method.AnyServer),
     ],
   })
 
@@ -212,7 +214,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
             channel: opts.channelFactory,
             amount: closeAmount,
             signature: Buffer.from(closeSig, 'hex'),
-            feePayer: { envelopeSigner: payeeKeypair },
+            feePayer: channelAuthorizer(payeeKeypair),
             network: networkId,
           })
 
@@ -354,4 +356,3 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     }
   }
 }
-

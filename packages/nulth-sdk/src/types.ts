@@ -59,10 +59,11 @@ export interface NulthClientConfig {
   /** Nulth smart account contract address (C...) — the payer */
   nulthAccount: string
   /**
-   * Prover backend: 'mock' (SHA-512 stub, testnet only) or 'wasm' (real Groth16 WASM prover).
-   * Default: 'mock'. Must be explicitly set to 'wasm' for mainnet use.
+   * Network the client will authorize payments on.
    */
-  prover?: 'mock' | 'wasm'
+  network: 'testnet' | 'mainnet'
+  /** Test-only SHA-512 proof stub. */
+  prover?: 'mock'
   /** Off-chain policy state */
   policy: NulthPolicyState
   /** Optional verifier contract deployed alongside the Nulth account */

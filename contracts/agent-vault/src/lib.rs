@@ -5,7 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
+    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -57,6 +57,7 @@ pub enum Error {
     ContractFrozen = 9,
     InvalidAmount = 10,
     UnauthorizedFunction = 11,
+    MalformedAuthContext = 12,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -401,9 +402,33 @@ impl CustomAccountInterface for AgentVault {
             match context {
                 Context::Contract(ctx) if ctx.fn_name == Symbol::new(&env, "transfer") => {
                     // SAC transfer(from: Address, to: Address, amount: i128)
-                    let from: Address = ctx.args.get(0).unwrap().into_val(&env);
-                    let to: Address = ctx.args.get(1).unwrap().into_val(&env);
-                    let amount: i128 = ctx.args.get(2).unwrap().into_val(&env);
+                    if ctx.args.len() != 3 {
+                        return Err(Error::MalformedAuthContext);
+                    }
+                    let from: Address = ctx
+                        .args
+                        .get(0)
+                        .ok_or(Error::MalformedAuthContext)
+                        .and_then(|value| {
+                            Address::try_from_val(&env, &value)
+                                .map_err(|_| Error::MalformedAuthContext)
+                        })?;
+                    let to: Address = ctx
+                        .args
+                        .get(1)
+                        .ok_or(Error::MalformedAuthContext)
+                        .and_then(|value| {
+                            Address::try_from_val(&env, &value)
+                                .map_err(|_| Error::MalformedAuthContext)
+                        })?;
+                    let amount: i128 = ctx
+                        .args
+                        .get(2)
+                        .ok_or(Error::MalformedAuthContext)
+                        .and_then(|value| {
+                            i128::try_from_val(&env, &value)
+                                .map_err(|_| Error::MalformedAuthContext)
+                        })?;
                     let asset: Address = ctx.contract.clone();
 
                     // Reject non-positive amounts: a negative amount would
@@ -540,6 +565,15 @@ mod tests {
         })
     }
 
+    fn malformed_transfer_context(env: &Env, args: soroban_sdk::Vec<soroban_sdk::Val>) -> Context {
+        let token = Address::generate(env);
+        Context::Contract(ContractContext {
+            contract: token,
+            fn_name: symbol_short!("transfer"),
+            args,
+        })
+    }
+
     /// Read (day_spend, per_payee_spend, lifetime_spend) directly from storage.
     fn read_spend_counters(env: &Env, vault_id: &Address, to: &Address) -> (i128, i128, i128) {
         let day_bucket: u32 = env.ledger().sequence() / 17_280;
@@ -582,6 +616,54 @@ mod tests {
             &contexts,
         );
         assert!(result.is_ok(), "valid payment should pass: {result:?}");
+    }
+
+    #[test]
+    fn test_transfer_context_with_wrong_arity_returns_typed_error() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, _) = setup(&env);
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+
+        for args in [
+            Vec::new(&env),
+            Vec::from_array(&env, [Address::generate(&env).into_val(&env)]),
+            Vec::from_array(
+                &env,
+                [Address::generate(&env).into_val(&env), Address::generate(&env).into_val(&env)],
+            ),
+        ] {
+            let contexts = Vec::from_array(&env, [malformed_transfer_context(&env, args)]);
+            let result = env.try_invoke_contract_check_auth::<Error>(
+                &vault_id,
+                &payload,
+                sig.clone().into_val(&env),
+                &contexts,
+            );
+            assert_eq!(result.unwrap_err().unwrap(), Error::MalformedAuthContext);
+        }
+    }
+
+    #[test]
+    fn test_transfer_context_with_wrong_amount_type_returns_typed_error() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, _) = setup(&env);
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let args = (
+            Address::generate(&env),
+            Address::generate(&env),
+            symbol_short!("bad_amt"),
+        )
+            .into_val(&env);
+        let contexts = Vec::from_array(&env, [malformed_transfer_context(&env, args)]);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), Error::MalformedAuthContext);
     }
 
     /// Test 2: payment exceeding daily cap is rejected
@@ -2466,4 +2548,3 @@ mod prop_tests {
         }
     }
 }
-

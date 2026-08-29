@@ -5,15 +5,37 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
 
 jobs:
+  secret-check:
+    name: Check E2E credentials
+    runs-on: ubuntu-latest
+    outputs:
+      has_secret: ${{ steps.check.outputs.has_secret }}
+    steps:
+      - id: check
+        env:
+          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
+        run: |
+          if [ -n "$AGENT_SECRET" ]; then
+            echo "has_secret=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secret=false" >> "$GITHUB_OUTPUT"
+          fi
+
   e2e:
     name: Run Stellar Testnet Payments
+    needs: secret-check
+    if: ${{ needs.secret-check.outputs.has_secret == 'true' }}
     runs-on: ubuntu-latest
-    # The `secrets` context is not allowed in `if:` expressions, so expose the
-    # secret through env and gate the steps on `env` instead.
     env:
       AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
+      COMMITMENT_SECRET: ${{ secrets.AGENT_SECRET }}
+      PROVIDER_A_URL: http://localhost:8801
+      PROVIDER_B_URL: http://localhost:8802
 
     steps:
       - name: Checkout Repository
@@ -37,17 +59,54 @@ jobs:
       - name: Build SDK
         run: pnpm --filter @routedock/routedock build
 
-      - name: Run E2E Test Suite
-        if: ${{ env.AGENT_SECRET != '' }}
+      - name: Start Providers
         env:
           NODE_ENV: test
-          PROVIDER_SECRET: ${{ env.AGENT_SECRET }}
         run: |
-          pnpm --filter provider-a dev &
-          pnpm --filter provider-b dev &
-          sleep 5
+          set -euo pipefail
+          STELLAR_PAYEE_ADDRESS=$(pnpm --filter @routedock/routedock exec node --input-type=module -e \
+            "import { Keypair } from '@stellar/stellar-sdk'; console.log(Keypair.fromSecret(process.env.AGENT_SECRET).publicKey())")
+          COMMITMENT_PUBLIC_KEY=$(COMMITMENT_SECRET="$COMMITMENT_SECRET" pnpm --filter @routedock/routedock exec node --input-type=module -e \
+            "import { Keypair } from '@stellar/stellar-sdk'; console.log(Keypair.fromSecret(process.env.COMMITMENT_SECRET).publicKey())")
+          export STELLAR_PAYEE_SECRET="$AGENT_SECRET"
+          export STELLAR_PAYEE_ADDRESS
+          export COMMITMENT_PUBLIC_KEY
+          export CHANNEL_CONTRACT_ID=CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH
+
+          pnpm --filter provider-a dev -- --port 8801 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" >"$RUNNER_TEMP/provider-a.log" 2>&1 &
+          PROVIDER_A_PID=$!
+          pnpm --filter provider-b dev -- --port 8802 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" --var "COMMITMENT_PUBLIC_KEY:$COMMITMENT_PUBLIC_KEY" --var "CHANNEL_CONTRACT_ID:$CHANNEL_CONTRACT_ID" >"$RUNNER_TEMP/provider-b.log" 2>&1 &
+          PROVIDER_B_PID=$!
+          trap 'kill "$PROVIDER_A_PID" "$PROVIDER_B_PID" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 60); do
+            a_ready=false
+            b_ready=false
+            curl --fail --silent http://localhost:8801/health >/dev/null && a_ready=true || true
+            curl --fail --silent http://localhost:8802/health >/dev/null && b_ready=true || true
+            if [[ "$a_ready" == true && "$b_ready" == true ]]; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              cat "$RUNNER_TEMP/provider-a.log" "$RUNNER_TEMP/provider-b.log"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl --fail --silent http://localhost:8801/.well-known/routedock.json \
+            | jq -e '.signature | type == "string" and length > 0' >/dev/null
+          curl --fail --silent http://localhost:8802/.well-known/routedock.json \
+            | jq -e '.signature | type == "string" and length > 0' >/dev/null
           pnpm --filter agent test:e2e
 
-      - name: Skip E2E — no AGENT_SECRET
-        if: ${{ env.AGENT_SECRET == '' }}
-        run: echo "AGENT_SECRET not set — skipping e2e tests"
+  e2e-skipped:
+    name: E2E not run — AGENT_SECRET unavailable
+    needs: secret-check
+    if: ${{ needs.secret-check.outputs.has_secret == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain skipped payment verification
+        run: |
+          echo 'AGENT_SECRET is not configured; no Stellar payment was executed.'
+          echo 'Configure the repository secret or use the scheduled/manual workflow to run E2E.'

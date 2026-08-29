@@ -18,6 +18,8 @@ import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
+import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
+import type { Method } from 'mppx'
 import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
@@ -68,6 +70,12 @@ export interface RouteDockHonoOptions {
    * retries the same payment. Defaults to a per-handler in-memory store.
    */
   seenTxStore?: SeenTxStore
+  /**
+   * Persistent store backing mpp-session channel state and handler state.
+   * Defaults to an in-memory store per handler; supply a durable store (e.g.
+   * Durable Object storage) so voucher tracking survives isolate eviction.
+   */
+  sessionStore?: Store.Store
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -414,7 +422,7 @@ function createMppSessionHandlerState(
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
 
-  const innerStore = Store.memory()
+  const innerStore = opts.sessionStore ?? Store.memory()
   let lastCumulativeAmount = 0n
   let voucherCount = 0
   let sessionOpened = false
@@ -510,14 +518,14 @@ function createMppSessionHandlerState(
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
-      mppChannel({
+      withTypedChannelErrors(mppChannel({
         channel: sessionPricing.channelFactory,
         commitmentKey: opts.commitmentPublicKey!,
         network: networkId,
         store: wrappedStore,
         sourceAccount: payeeKeypair.publicKey(),
-        feePayer: { envelopeSigner: payeeKeypair },
-      }),
+        feePayer: channelAuthorizer(payeeKeypair),
+      }) as Method.AnyServer),
     ],
   })
 
@@ -555,7 +563,7 @@ function createMppSessionHandlerState(
           channel: sessionPricing.channelFactory,
           amount: closeAmount,
           signature: hexToBytes(closeSig),
-          feePayer: { envelopeSigner: payeeKeypair },
+          feePayer: channelAuthorizer(payeeKeypair),
           network: networkId,
         })
 
