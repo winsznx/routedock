@@ -1,0 +1,6 @@
+# Payment and contract changes require maintainer review.
+* @winsznx
+/contracts/ @winsznx
+/packages/sdk/src/manifest/ @winsznx
+/packages/sdk/src/provider/ @winsznx
+/.github/workflows/ @winsznx
