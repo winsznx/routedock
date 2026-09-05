@@ -13,6 +13,9 @@
       "custom_domain": true
     }
   ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
   "durable_objects": {
     "bindings": [
       {

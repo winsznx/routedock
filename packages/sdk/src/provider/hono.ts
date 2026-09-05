@@ -794,4 +794,9 @@ export {
   type SeenTxStore,
   type SettlementRecord,
 } from './SeenTxStore.js'
-
+export {
+  reconcileAbandonedSessions,
+  runStartupReconciliation,
+  type SessionReconcilerOptions,
+  type ReconciliationStats,
+} from './SessionReconciler.js'
