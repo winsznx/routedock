@@ -1,5 +1,7 @@
+import type { ChannelSession } from './ChannelSession.js'
+
 export interface Env {
-  CHANNEL_SESSION: DurableObjectNamespace
+  CHANNEL_SESSION: DurableObjectNamespace<ChannelSession>
   STELLAR_NETWORK?: string
   STELLAR_PAYEE_SECRET: string
   STELLAR_PAYEE_ADDRESS: string

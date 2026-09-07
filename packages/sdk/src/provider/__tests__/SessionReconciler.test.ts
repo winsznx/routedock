@@ -92,3 +92,63 @@ test('reconcileAbandonedSessions records structured close failures readably', as
 
   assert.equal(stats.errors[0]?.reason, '{"code":"scecInvalidAction","status":"FAILED"}')
 })
+
+test('reconcileAbandonedSessions recovers closing session to closed with settlement hash', async () => {
+  const payeeKeypair = Keypair.random()
+  let updatedPayload: any = null
+  let updatedChannelId: string | null = null
+  let onRecoveredCalled = false
+
+  const mockSupabase = {
+    from: (_table: string) => ({
+      select: (_cols: string) => ({
+        eq: (_field: string, _val: string) => ({
+          is: (_field2: string, _val2: any) => ({
+            limit: async (_limit: number) => ({
+              data: [
+                {
+                  channel_id: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+                  channel_contract: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+                  cumulative_amount: '0.0050000',
+                  last_signature: '00'.repeat(64),
+                  settlement_tx_hash: null,
+                },
+              ],
+              error: null,
+            }),
+          }),
+        }),
+      }),
+      update: (data: any) => ({
+        eq: (_field: string, val: string) => {
+          updatedPayload = data
+          updatedChannelId = val
+          return Promise.resolve({ error: null })
+        },
+      }),
+    }),
+  } as unknown as SupabaseClient
+
+  const stats = await reconcileAbandonedSessions({
+    supabase: mockSupabase,
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async () => 'test_settlement_tx_hash_123',
+    onRecovered: async (channelId, txHash, totalPaid) => {
+      onRecoveredCalled = true
+      assert.equal(channelId, 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH')
+      assert.equal(txHash, 'test_settlement_tx_hash_123')
+      assert.equal(totalPaid, '0.0050000')
+    },
+  })
+
+  assert.equal(stats.orphanedCount, 1)
+  assert.equal(stats.recoveredCount, 1)
+  assert.equal(stats.failedCount, 0)
+  assert.equal(stats.skippedCount, 0)
+  assert.equal(updatedChannelId, 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH')
+  assert.equal(updatedPayload?.status, 'closed')
+  assert.equal(updatedPayload?.settlement_tx_hash, 'test_settlement_tx_hash_123')
+  assert.equal(onRecoveredCalled, true)
+})
+

@@ -120,4 +120,52 @@ describe('provider-b worker payment path & Durable Object routes', () => {
     const body2 = (await res2.json()) as { payee?: string }
     assert.equal(body2.payee, mockEnv.STELLAR_PAYEE_ADDRESS)
   })
+
+  it('scheduled() cron handler forwards trigger to ChannelSession Durable Object', async () => {
+    let reconcileInvoked = false
+    const mockDOBinding = {
+      idFromName(name: string) {
+        return { name }
+      },
+      get(_id: unknown) {
+        return {
+          reconcileSessions: async () => {
+            reconcileInvoked = true
+            return {
+              orphanedCount: 1,
+              recoveredCount: 1,
+              skippedCount: 0,
+              failedCount: 0,
+              errors: [],
+            }
+          },
+          fetch: async () => new Response('ok'),
+        }
+      },
+    }
+
+    const envWithDO: Env = {
+      ...mockEnv,
+      CHANNEL_SESSION: mockDOBinding as unknown as Env['CHANNEL_SESSION'],
+    }
+
+    await worker.scheduled({}, envWithDO)
+    assert.equal(reconcileInvoked, true, 'scheduled() must trigger reconciliation on DO')
+  })
+
+  it('does not expose /__reconcile as an unauthenticated HTTP endpoint', async () => {
+    const session = createTestChannelSession(mockEnv)
+    const req = new Request('http://localhost/__reconcile', { method: 'POST' })
+    const res = await session.fetch(req)
+    // Falls through to payment middleware, which rejects unauthenticated requests with 402
+    assert.equal(res.status, 402)
+  })
+
+  it('ChannelSession exposes direct reconcileSessions method for DO RPC', async () => {
+    const session = createTestChannelSession(mockEnv)
+    // mockEnv has no SUPABASE_URL / SUPABASE_SERVICE_KEY, so it returns null gracefully
+    const stats = await session.reconcileSessions()
+    assert.equal(stats, null)
+  })
 })
+

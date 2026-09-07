@@ -32,4 +32,21 @@ export default {
     const id = env.CHANNEL_SESSION.idFromName(env.CHANNEL_CONTRACT_ID)
     return env.CHANNEL_SESSION.get(id).fetch(request)
   },
+
+  /**
+   * Cron trigger entry point (runs every 15 minutes).
+   * Forwards reconciliation to the ChannelSession Durable Object so settlement
+   * serializes against live voucher traffic instead of racing it.
+   */
+  async scheduled(
+    _controller: unknown,
+    env: Env,
+    _ctx?: unknown,
+  ): Promise<void> {
+    if (!env.CHANNEL_CONTRACT_ID || !env.CHANNEL_SESSION) return
+    const id = env.CHANNEL_SESSION.idFromName(env.CHANNEL_CONTRACT_ID)
+    const stub = env.CHANNEL_SESSION.get(id)
+    await stub.reconcileSessions()
+  },
 }
+

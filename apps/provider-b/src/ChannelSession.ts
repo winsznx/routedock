@@ -7,6 +7,8 @@ import {
   mppSessionWsVerified,
   registerProvider,
   signManifest,
+  reconcileAbandonedSessions,
+  type ReconciliationStats,
 } from '@routedock/routedock/provider/hono'
 import { Store } from '@stellar/mpp/channel/server'
 import {
@@ -285,6 +287,38 @@ export class ChannelSession extends DurableObject<Env> {
     })
 
     return app
+  }
+
+  async reconcileSessions(): Promise<ReconciliationStats | null> {
+    const env = this.env
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY || !env.STELLAR_PAYEE_SECRET) {
+      return null
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY)
+    const network: Network = env.STELLAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
+    const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
+
+    return reconcileAbandonedSessions({
+      supabase,
+      network,
+      payeeSecretKey: env.STELLAR_PAYEE_SECRET,
+      onRecovered: async (channelId: string, txHash: string, totalPaid: string) => {
+        console.log(`[reconcile] Recovered channel ${channelId} with tx ${txHash} for ${totalPaid} USDC`)
+        const { error } = await supabase.from('tx_log').insert({
+          tx_type: 'channel_close',
+          tx_hash: txHash,
+          amount: parseFloat(totalPaid),
+          mode: 'mpp-session',
+          network,
+          provider_url: providerUrl,
+          metadata: { settled_at: new Date().toISOString(), recovered: true },
+        })
+        if (error) {
+          console.error('[supabase] tx_log insert on reconcile failed:', error.message)
+        }
+      },
+    })
   }
 
   override async fetch(request: Request): Promise<Response> {
