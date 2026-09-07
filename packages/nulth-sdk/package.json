@@ -1,6 +1,6 @@
 {
   "name": "@routedock/nulth-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Off-chain ZK proof builder for Nulth smart accounts on Stellar",
   "license": "MIT",
   "type": "module",
