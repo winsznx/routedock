@@ -4,6 +4,7 @@ import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
+import { resolveHorizonUrl } from './endpoints.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
@@ -37,6 +38,10 @@ export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
   wallet: Keypair | string
   network: 'testnet' | 'mainnet'
+  /** Override the Soroban RPC endpoint. Defaults to the public Stellar RPC for `network`. */
+  sorobanRpcUrl?: string
+  /** Override the Horizon endpoint. Defaults to the public Stellar Horizon for `network`. */
+  horizonUrl?: string
   /** Optional local daily spend cap — checked before every payment (local-key vault only) */
   spendCap?: SpendCap
   /**
@@ -118,6 +123,8 @@ export class RouteDockClient {
 
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
+  private readonly sorobanRpcUrl: string | undefined
+  private readonly horizonUrl: string | undefined
   private readonly spendCap: SpendCap | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
@@ -153,6 +160,8 @@ export class RouteDockClient {
     this.keypair =
       typeof config.wallet === 'string' ? Keypair.fromSecret(config.wallet) : config.wallet
     this.network = config.network
+    this.sorobanRpcUrl = config.sorobanRpcUrl
+    this.horizonUrl = config.horizonUrl
     this.spendCap = config.spendCap
     this.retryPolicy = config.retryPolicy
     // Only warn about non-durability when a spend cap is actually configured.
@@ -173,7 +182,13 @@ export class RouteDockClient {
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
     this.charge = new MppChargeClient(this.keypair, this.network, this.retryPolicy)
-    this.session = new MppSessionClient(this.keypair, this.network, this.retryPolicy)
+    this.session = new MppSessionClient(
+      this.keypair,
+      this.network,
+      this.retryPolicy,
+      undefined,
+      this.sorobanRpcUrl,
+    )
   }
 
   /** Fetch manifest and select mode — shared by pay() and estimateCost(). */
@@ -232,10 +247,7 @@ export class RouteDockClient {
     const cached = RouteDockClient._trustlineCache.get(cacheKey)
     if (cached && Date.now() < cached.expiresAt) return
 
-    const horizonUrl =
-      this.network === 'testnet'
-        ? 'https://horizon-testnet.stellar.org'
-        : 'https://horizon.stellar.org'
+    const horizonUrl = resolveHorizonUrl(this.network, this.horizonUrl)
 
     const server = new Horizon.Server(horizonUrl)
     try {
@@ -342,7 +354,14 @@ export class RouteDockClient {
     }
 
     try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
+      const { signer } = await prepareNulthSigner(
+        this.vault!,
+        manifest,
+        mode,
+        this.network,
+        undefined,
+        this.sorobanRpcUrl,
+      )
       const x402 = this.x402.withSigner(signer)
       const result = await x402.pay(url, manifest)
       return result

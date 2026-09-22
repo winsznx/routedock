@@ -11,6 +11,7 @@ import type { ClientStellarSigner } from '@x402/stellar'
 import type { SignAuthEntry } from '@stellar/stellar-sdk/contract'
 import type { RouteDockManifest, PaymentMode, VaultMode } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
+import { resolveSorobanRpcUrl } from './endpoints.js'
 
 // ---------------------------------------------------------------------------
 // Inlined types (from @routedock/nulth-sdk/types)
@@ -289,10 +290,11 @@ export function assertNulthVaultManifest(manifest: RouteDockManifest, nulthAccou
   }
 }
 
-export async function fetchLedgerSequence(network: 'testnet' | 'mainnet'): Promise<number> {
-  const rpcUrl = network === 'testnet'
-    ? 'https://soroban-testnet.stellar.org'
-    : 'https://soroban.stellar.org'
+export async function fetchLedgerSequence(
+  network: 'testnet' | 'mainnet',
+  sorobanRpcUrl?: string,
+): Promise<number> {
+  const rpcUrl = resolveSorobanRpcUrl(network, sorobanRpcUrl)
   const server = new rpc.Server(rpcUrl)
   const latest = await server.getLatestLedger()
   return latest.sequence
@@ -304,6 +306,7 @@ export async function prepareNulthSigner(
   mode: PaymentMode,
   network: 'testnet' | 'mainnet',
   ledgerSequenceOverride?: number,
+  sorobanRpcUrl?: string,
 ): Promise<{ signer: ClientStellarSigner; config: NulthSignerConfig }> {
   assertNulthVaultManifest(manifest, vault.nulthAccount)
 
@@ -314,7 +317,7 @@ export async function prepareNulthSigner(
     )
   }
 
-  const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network))
+  const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network, sorobanRpcUrl))
   const policy = createPolicyState({
     dailyCapUsdc: vault.dailyCapUsdc,
     allowedPayees: vault.allowedPayees,
