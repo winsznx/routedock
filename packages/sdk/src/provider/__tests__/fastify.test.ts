@@ -164,13 +164,11 @@ describe('routedockFastify — mpp-session flow', () => {
     }
   })
 
-  it('returns { closeTxHash: null } on DELETE with no prior vouchers', async () => {
+  it('rejects unauthenticated DELETE with no prior vouchers', async () => {
     const { url, close } = await makeServer({ modes: ['mpp-session'], pricing: { 'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT } } })
     try {
       const res = await fetch(`${url}/price`, { method: 'DELETE' })
-      assert.equal(res.status, 200)
-      const body = await res.json() as { closeTxHash: null }
-      assert.equal(body.closeTxHash, null)
+      assert.equal(res.status, 402)
     } finally {
       await close()
     }

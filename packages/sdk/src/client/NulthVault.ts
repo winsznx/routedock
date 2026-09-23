@@ -289,11 +289,11 @@ export function assertNulthVaultManifest(manifest: RouteDockManifest, nulthAccou
   }
 }
 
-export async function fetchLedgerSequence(network: 'testnet' | 'mainnet'): Promise<number> {
-  const rpcUrl = network === 'testnet'
+export async function fetchLedgerSequence(network: 'testnet' | 'mainnet', rpcUrl?: string): Promise<number> {
+  const endpoint = rpcUrl ?? (network === 'testnet'
     ? 'https://soroban-testnet.stellar.org'
-    : 'https://soroban.stellar.org'
-  const server = new rpc.Server(rpcUrl)
+    : 'https://soroban.stellar.org')
+  const server = new rpc.Server(endpoint)
   const latest = await server.getLatestLedger()
   return latest.sequence
 }
@@ -304,6 +304,7 @@ export async function prepareNulthSigner(
   mode: PaymentMode,
   network: 'testnet' | 'mainnet',
   ledgerSequenceOverride?: number,
+  rpcUrl?: string,
 ): Promise<{ signer: ClientStellarSigner; config: NulthSignerConfig }> {
   assertNulthVaultManifest(manifest, vault.nulthAccount)
 
@@ -314,7 +315,7 @@ export async function prepareNulthSigner(
     )
   }
 
-  const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network))
+  const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network, rpcUrl))
   const policy = createPolicyState({
     dailyCapUsdc: vault.dailyCapUsdc,
     allowedPayees: vault.allowedPayees,
