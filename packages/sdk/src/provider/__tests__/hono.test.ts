@@ -4,6 +4,9 @@ import { Hono } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
 import { routedockHono } from '../hono.js'
 import type { RouteDockManifest } from '../../types.js'
+import { ExactStellarScheme as ExactStellarFacilitatorScheme } from '@x402/stellar/exact/facilitator'
+import { x402ResourceServer } from '@x402/core/server'
+import { encodePaymentSignatureHeader } from '@x402/core/http'
 
 // Generate fresh keypairs — avoids hardcoding secrets while keeping tests self-contained
 const payeeKeypair = Keypair.random()
@@ -190,5 +193,153 @@ describe('routedockHono — constructor validation', () => {
         }),
       /commitmentPublicKey/,
     )
+  })
+})
+
+// ── #392 — a failed settle must not serve paid content ────────────────────────
+//
+// @x402/stellar's settle() returns { success:false, transaction, errorReason }
+// instead of throwing when submission or on-chain execution fails. The handler
+// used to treat any truthy result as settled, serving the resource for free and
+// writing a poisoned idempotency record. These stub settle to fail.
+
+// A payment header the handler's decodePaymentSignatureHeader will round-trip.
+const FAKE_PAYMENT_HEADER = encodePaymentSignatureHeader({
+  x402Version: 2,
+  scheme: 'exact',
+  network: 'stellar:testnet',
+  payload: { authorization: { credentials: [] } },
+} as unknown as Parameters<typeof encodePaymentSignatureHeader>[0])
+
+function makeSpyStore() {
+  const setCalls: Array<[string, unknown]> = []
+  const store = {
+    get: async () => undefined,
+    set: async (k: string, v: unknown) => {
+      setCalls.push([k, v])
+    },
+  }
+  return { store, setCalls }
+}
+
+describe('routedockHono — #392 settle failure guard (local facilitator)', () => {
+  function makeApp(settleResult: unknown) {
+    const { store, setCalls } = makeSpyStore()
+    let onSettledCalls = 0
+    const app = new Hono()
+    app.use(
+      '*',
+      routedockHono({
+        ...BASE_OPTS,
+        modes: ['x402'],
+        pricing: { x402: '0.001' },
+        seenTxStore: store,
+        onSettled: async () => {
+          onSettledCalls++
+        },
+      } as unknown as Parameters<typeof routedockHono>[0]),
+    )
+    app.get('/price', (c) => c.json({ price: '42' }))
+
+    const origVerify = ExactStellarFacilitatorScheme.prototype.verify
+    const origSettle = ExactStellarFacilitatorScheme.prototype.settle
+    ;(ExactStellarFacilitatorScheme.prototype as { verify: unknown }).verify = async () => ({
+      isValid: true,
+    })
+    ;(ExactStellarFacilitatorScheme.prototype as { settle: unknown }).settle = async () => settleResult
+    const restore = () => {
+      ExactStellarFacilitatorScheme.prototype.verify = origVerify
+      ExactStellarFacilitatorScheme.prototype.settle = origSettle
+    }
+    return { app, setCalls, getOnSettledCalls: () => onSettledCalls, restore }
+  }
+
+  it('returns 402 and does not serve the resource when settle reports success:false', async () => {
+    const { app, setCalls, getOnSettledCalls, restore } = makeApp({
+      success: false,
+      transaction: '',
+      errorReason: 'settle_exact_stellar_transaction_submission_failed',
+    })
+    try {
+      const res = await app.request('/price', { headers: { 'x-payment': FAKE_PAYMENT_HEADER } })
+      assert.equal(res.status, 402)
+      assert.equal(res.headers.get('x-payment-response'), null, 'no X-Payment-Response on failure')
+      const body = (await res.json()) as { error: string; price?: string }
+      assert.equal(body.error, 'Payment settlement failed')
+      assert.equal(body.price, undefined, 'the protected /price handler must not run')
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(setCalls.length, 0, 'no idempotency record on a failed settle')
+      assert.equal(getOnSettledCalls(), 0, 'onSettled is not called on a failed settle')
+    } finally {
+      restore()
+    }
+  })
+
+  it('rejects a settle result with success:true but an empty transaction', async () => {
+    const { app, setCalls, restore } = makeApp({ success: true, transaction: '' })
+    try {
+      const res = await app.request('/price', { headers: { 'x-payment': FAKE_PAYMENT_HEADER } })
+      assert.equal(res.status, 402)
+      assert.equal(res.headers.get('x-payment-response'), null)
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(setCalls.length, 0)
+    } finally {
+      restore()
+    }
+  })
+})
+
+describe('routedockHono — #392 settle failure guard (OZ facilitator)', () => {
+  it('returns 402 when ozServer.settlePayment reports success:false', async () => {
+    const { store, setCalls } = makeSpyStore()
+    const app = new Hono()
+    app.use(
+      '*',
+      routedockHono({
+        ...BASE_OPTS,
+        network: 'mainnet',
+        facilitatorApiKey: 'test-key',
+        modes: ['x402'],
+        pricing: { x402: '0.001' },
+        seenTxStore: store,
+      } as unknown as Parameters<typeof routedockHono>[0]),
+    )
+    app.get('/price', (c) => c.json({ price: '42' }))
+
+    const proto = x402ResourceServer.prototype as {
+      settlePayment: unknown
+      createPaymentRequiredResponse: unknown
+    }
+    const origSettle = proto.settlePayment
+    const origReq = proto.createPaymentRequiredResponse
+    proto.settlePayment = async () => ({ success: false, transaction: '', errorReason: 'oz_fail' })
+    proto.createPaymentRequiredResponse = async () => ({
+      x402Version: 2,
+      resource: { url: 'https://provider.test/price', description: 'x' },
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'stellar:pubnet',
+          asset: ASSET_CONTRACT,
+          amount: '1000',
+          payTo: payeeKeypair.publicKey(),
+          maxTimeoutSeconds: 60,
+          extra: { areFeesSponsored: true },
+        },
+      ],
+    })
+    try {
+      const res = await app.request('/price', { headers: { 'x-payment': FAKE_PAYMENT_HEADER } })
+      assert.equal(res.status, 402)
+      assert.equal(res.headers.get('x-payment-response'), null)
+      const body = (await res.json()) as { error: string; price?: string }
+      assert.equal(body.error, 'Payment settlement failed')
+      assert.equal(body.price, undefined)
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(setCalls.length, 0)
+    } finally {
+      proto.settlePayment = origSettle
+      proto.createPaymentRequiredResponse = origReq
+    }
   })
 })

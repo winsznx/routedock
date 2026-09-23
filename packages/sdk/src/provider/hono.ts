@@ -28,6 +28,23 @@ import {
   type SeenTxStore,
 } from './SeenTxStore.js'
 
+/**
+ * A facilitator `settle` result counts as settled only when it explicitly
+ * reports success with a non-empty transaction hash. `@x402/stellar`'s
+ * `settle` returns `{ success: false, transaction: '' | hash, errorReason }`
+ * (rather than throwing) on submission/execution failure, so this guards the
+ * x402 handler against serving paid content for a payment that never landed
+ * (#392).
+ */
+function isSettled(result: unknown): boolean {
+  return (
+    !!result &&
+    (result as { success?: unknown }).success === true &&
+    typeof (result as { transaction?: unknown }).transaction === 'string' &&
+    (result as { transaction: string }).transaction.length > 0
+  )
+}
+
 type Network = 'testnet' | 'mainnet'
 
 const CAIP2: Record<Network, X402Network> = {
@@ -180,15 +197,9 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
         // non-fatal
       }
 
+      let settleResult: unknown
       if (ozServer) {
-        const settleResult = await ozServer.settlePayment(payload, requirements)
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          paymentResponseHeader = encodePaymentResponseHeader(
-            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-          )
-          c.header('X-Payment-Response', paymentResponseHeader)
-        }
+        settleResult = await ozServer.settlePayment(payload, requirements)
       } else {
         const verifyResult = await localFacilitator.verify(
           payload as Parameters<typeof localFacilitator.verify>[0],
@@ -203,18 +214,44 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
             401,
           )
         }
-        const settleResult = await localFacilitator.settle(
+        settleResult = await localFacilitator.settle(
           payload as Parameters<typeof localFacilitator.settle>[0],
           requirements,
         )
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          paymentResponseHeader = encodePaymentResponseHeader(
-            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-          )
-          c.header('X-Payment-Response', paymentResponseHeader)
-        }
       }
+
+      // `settle` (both the OZ and local facilitator) returns
+      // { success, transaction, errorReason } instead of throwing when fee-bump
+      // signing fails, when sendTransaction is not PENDING, or when the confirm
+      // poll finds the tx failed. Serve the resource only on a real settlement,
+      // so a failed settle can't hand out paid content for free or poison the
+      // idempotency store with a failed/empty tx hash (#392).
+      if (!isSettled(settleResult)) {
+        const reason = (settleResult as { errorReason?: string } | undefined)?.errorReason
+        // Re-advertise the payment requirements (same header as an unpaid
+        // request) and stop: no X-Payment-Response, no idempotency record,
+        // no onSettled, no next().
+        const requirementsHeader = ozServer
+          ? encodePaymentRequiredHeader(
+              (await ozServer.createPaymentRequiredResponse([requirements], {
+                url: c.req.url,
+                description: opts.manifest.name,
+              })) as Parameters<typeof encodePaymentRequiredHeader>[0],
+            )
+          : encodePaymentRequiredHeader({
+              x402Version: 2,
+              resource: { url: c.req.url, description: opts.manifest.name },
+              accepts: [requirements],
+            } as Parameters<typeof encodePaymentRequiredHeader>[0])
+        c.header('X-Payment-Requirements', requirementsHeader)
+        return c.json({ error: 'Payment settlement failed', reason: reason ?? null }, 402)
+      }
+
+      txHash = (settleResult as { transaction?: string }).transaction ?? null
+      paymentResponseHeader = encodePaymentResponseHeader(
+        settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+      )
+      c.header('X-Payment-Response', paymentResponseHeader)
 
       // Record the settlement so a retry of this exact payment is deduped.
       if (idempotencyKey) {

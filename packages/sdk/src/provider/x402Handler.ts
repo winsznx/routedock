@@ -45,6 +45,21 @@ export interface X402HandlerOptions {
   seenTxStore?: SeenTxStore
 }
 
+/**
+ * A facilitator `settle` result counts as settled only when it explicitly
+ * reports success with a non-empty transaction hash (#392). `@x402/stellar`'s
+ * `settle` returns `{ success: false, transaction, errorReason }` instead of
+ * throwing when submission or on-chain execution fails.
+ */
+function isSettled(result: unknown): boolean {
+  return (
+    !!result &&
+    (result as { success?: unknown }).success === true &&
+    typeof (result as { transaction?: unknown }).transaction === 'string' &&
+    (result as { transaction: string }).transaction.length > 0
+  )
+}
+
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
   const caip2 = CAIP2[opts.network]
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
@@ -166,17 +181,9 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         // non-fatal
       }
 
+      let settleResult: unknown
       if (ozServer) {
-        const settleResult = await ozServer.settlePayment(payload, requirements)
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
-          )
-        }
+        settleResult = await ozServer.settlePayment(payload, requirements)
       } else {
         const verifyResult = await localFacilitator.verify(
           payload as Parameters<typeof localFacilitator.verify>[0],
@@ -189,20 +196,44 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           })
           return
         }
-        const settleResult = await localFacilitator.settle(
+        settleResult = await localFacilitator.settle(
           payload as Parameters<typeof localFacilitator.settle>[0],
           requirements,
         )
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
-          )
-        }
       }
+
+      // Serve the resource only on a real settlement. `settle` returns
+      // { success, transaction, errorReason } instead of throwing on a
+      // submission/execution failure, so a failed settle must not hand out
+      // paid content or write a poisoned idempotency record (#392).
+      if (!isSettled(settleResult)) {
+        const reason = (settleResult as { errorReason?: string } | undefined)?.errorReason
+        const resourceUrl = `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`
+        const requirementsHeader = ozServer
+          ? encodePaymentRequiredHeader(
+              (await ozServer.createPaymentRequiredResponse([requirements], {
+                url: resourceUrl,
+                description: opts.manifest.name,
+              })) as Parameters<typeof encodePaymentRequiredHeader>[0],
+            )
+          : encodePaymentRequiredHeader({
+              x402Version: 2,
+              resource: { url: resourceUrl, description: opts.manifest.name },
+              accepts: [requirements],
+            } as Parameters<typeof encodePaymentRequiredHeader>[0])
+        res
+          .status(402)
+          .setHeader('Content-Type', 'application/json')
+          .setHeader('X-Payment-Requirements', requirementsHeader)
+          .json({ error: 'Payment settlement failed', reason: reason ?? null })
+        return
+      }
+
+      txHash = (settleResult as { transaction?: string }).transaction ?? null
+      res.setHeader(
+        'X-Payment-Response',
+        encodePaymentResponseHeader(settleResult as Parameters<typeof encodePaymentResponseHeader>[0]),
+      )
 
       // Record the settlement so a retry of this exact payment is deduped.
       if (idempotencyKey) {
