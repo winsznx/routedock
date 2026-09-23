@@ -33,6 +33,45 @@ import { withRetry, type RetryPolicy } from '../internal/retry.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 
+/** How the dispute helpers poll for on-chain confirmation (#395). */
+const CONFIRM_POLL_MS = 1_000
+const CONFIRM_TIMEOUT_MS = 30_000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Poll `getTransaction(hash)` until the Soroban RPC reports a final result.
+ * `sendTransaction` only says the node accepted the tx for submission; the
+ * execution result (SUCCESS / FAILED) is only available later via
+ * `getTransaction`. Resolves on SUCCESS, throws on FAILED or on timeout (the
+ * message carries the hash so the caller can check it on-chain later). See #395.
+ */
+async function confirmTransaction(
+  server: { getTransaction: (hash: string) => Promise<unknown> },
+  hash: string,
+  label: string,
+  pollMs: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const status = ((await server.getTransaction(hash)) as { status?: string }).status
+    if (status === 'SUCCESS') return
+    if (status === 'FAILED') {
+      throw new RouteDockDisputeError(`${label} transaction ${hash} failed on-chain`)
+    }
+    // NOT_FOUND (still pending) — keep polling until the deadline.
+    if (Date.now() >= deadline) {
+      throw new RouteDockDisputeError(
+        `${label} transaction ${hash} was not confirmed within ${timeoutMs}ms; check ${hash} on-chain before retrying`,
+      )
+    }
+    await sleep(pollMs)
+  }
+}
+
 /** WebSocket-readyState values (mirrors the WHATWG WebSocket constants). */
 const WS_CONNECTING = 0
 const WS_OPEN = 1
@@ -108,6 +147,10 @@ export class MppSessionClient {
     private readonly network: 'testnet' | 'mainnet',
     private readonly retryPolicy?: RetryPolicy,
     private readonly webSocketFactory: WebSocketFactory = defaultWebSocketFactory,
+    private readonly confirmTiming: { pollMs: number; timeoutMs: number } = {
+      pollMs: CONFIRM_POLL_MS,
+      timeoutMs: CONFIRM_TIMEOUT_MS,
+    },
   ) {}
 
   async openSession(
@@ -190,6 +233,7 @@ export class MppSessionClient {
     }
 
     const network = this.network
+    const confirmTiming = this.confirmTiming
 
     const handle: SessionHandle = {
       channelId: channelFactory,
@@ -436,10 +480,16 @@ export class MppSessionClient {
             const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Refund request transaction failed: ${errDetail}`)
           }
+          if (result.status === 'TRY_AGAIN_LATER') {
+            throw new RouteDockDisputeError('Refund request transaction was not queued (TRY_AGAIN_LATER)')
+          }
           if (!result.hash) {
             throw new RouteDockDisputeError('Refund request transaction not sent')
           }
 
+          // sendTransaction only confirms acceptance; wait for the on-chain
+          // execution result before reporting success (#395).
+          await confirmTransaction(server, result.hash, 'Refund request', confirmTiming.pollMs, confirmTiming.timeoutMs)
           return result.hash
         } catch (err) {
           if (err instanceof RouteDockDisputeError) throw err
@@ -490,10 +540,15 @@ export class MppSessionClient {
             const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Settlement transaction failed: ${errDetail}`)
           }
+          if (settleResult.status === 'TRY_AGAIN_LATER') {
+            throw new RouteDockDisputeError('Settlement transaction was not queued (TRY_AGAIN_LATER)')
+          }
           if (!settleResult.hash) {
             throw new RouteDockDisputeError('Settlement transaction not sent')
           }
 
+          // Confirm the on-chain execution result before returning the hash (#395).
+          await confirmTransaction(server, settleResult.hash, 'Settlement', confirmTiming.pollMs, confirmTiming.timeoutMs)
           return settleResult.hash
         } catch (err) {
           if (err instanceof RouteDockDisputeError) throw err

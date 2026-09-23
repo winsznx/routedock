@@ -63,6 +63,7 @@ interface RpcScript {
   simulateTransaction?: (tx: unknown) => unknown
   prepareTransaction?: (tx: unknown) => unknown
   sendTransaction?: (tx: unknown) => unknown
+  getTransaction?: (hash: string) => unknown
   isSimulationError?: (result: unknown) => boolean
 }
 
@@ -88,6 +89,9 @@ function buildFakeSdk() {
     }
     async sendTransaction(tx: unknown) {
       return (rpc.sendTransaction ?? (() => ({ hash: 'DEFAULT_HASH' })))(tx)
+    }
+    async getTransaction(hash: string) {
+      return (rpc.getTransaction ?? (() => ({ status: 'SUCCESS' })))(hash)
     }
   }
 
@@ -126,11 +130,11 @@ function buildFakeSdk() {
   }
 }
 
-function openHandle() {
+function openHandle(confirmTiming?: { pollMs: number; timeoutMs: number }) {
   // MppSessionClient (and its @stellar/mpp graph) is imported statically above,
   // binding to the real SDK before the mock is registered. Only the dispute
   // methods' call-time dynamic stellar-sdk import resolves to the mock.
-  const client = new MppSessionClient(agentKeypair, 'testnet')
+  const client = new MppSessionClient(agentKeypair, 'testnet', undefined, undefined, confirmTiming)
   return client.openSession(SESSION_URL, buildManifest(), commitmentKeypair.secret())
 }
 
@@ -284,4 +288,62 @@ describe('dispute error types', () => {
   it('dispute errors are instances of Error', () => {
     assert.ok(new RouteDockDisputeError('x') instanceof Error)
   })
+})
+
+// ── #395 — dispute txs are confirmed on-chain before returning ─────────────────
+// sendTransaction only reports acceptance; requestRefund()/settleWithLatestVoucher()
+// must poll getTransaction() and return the hash only on SUCCESS.
+
+describe('#395 — on-chain confirmation of dispute transactions', () => {
+  async function run(
+    method: 'requestRefund' | 'settleWithLatestVoucher',
+    confirmTiming?: { pollMs: number; timeoutMs: number },
+  ): Promise<string> {
+    if (method === 'settleWithLatestVoucher') {
+      rpc.simulateTransaction = () => ({
+        result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+      })
+    }
+    const handle = await openHandle(confirmTiming)
+    return (handle as unknown as Record<typeof method, () => Promise<string>>)[method]()
+  }
+
+  for (const method of ['requestRefund', 'settleWithLatestVoucher'] as const) {
+    it(`${method}: rejects when getTransaction reports FAILED`, async () => {
+      rpc.sendTransaction = () => ({ hash: 'H_FAIL', status: 'PENDING' })
+      rpc.getTransaction = () => ({ status: 'FAILED' })
+      await assert.rejects(
+        () => run(method),
+        (err: unknown) => err instanceof RouteDockDisputeError,
+      )
+    })
+
+    it(`${method}: resolves with the hash after NOT_FOUND then SUCCESS`, async () => {
+      rpc.sendTransaction = () => ({ hash: 'H_OK', status: 'PENDING' })
+      let polls = 0
+      rpc.getTransaction = () => ({ status: polls++ < 2 ? 'NOT_FOUND' : 'SUCCESS' })
+      const hash = await run(method, { pollMs: 2, timeoutMs: 1_000 })
+      assert.equal(hash, 'H_OK')
+      assert.ok(polls >= 3, 'polled past NOT_FOUND until SUCCESS')
+    })
+
+    it(`${method}: rejects on timeout, message carries the hash`, async () => {
+      rpc.sendTransaction = () => ({ hash: 'H_TIMEOUT', status: 'PENDING' })
+      rpc.getTransaction = () => ({ status: 'NOT_FOUND' })
+      await assert.rejects(
+        () => run(method, { pollMs: 2, timeoutMs: 15 }),
+        (err: unknown) =>
+          err instanceof RouteDockDisputeError && /H_TIMEOUT/.test((err as Error).message),
+      )
+    })
+
+    it(`${method}: rejects when sendTransaction returns TRY_AGAIN_LATER`, async () => {
+      rpc.sendTransaction = () => ({ hash: 'H_TAL', status: 'TRY_AGAIN_LATER' })
+      rpc.getTransaction = () => ({ status: 'SUCCESS' })
+      await assert.rejects(
+        () => run(method),
+        (err: unknown) => err instanceof RouteDockDisputeError,
+      )
+    })
+  }
 })
