@@ -201,8 +201,17 @@ export class RouteDockClient {
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
+  }
+
+  private _assertNetwork(manifest: RouteDockManifest, baseUrl: string): void {
+    if (manifest.network !== this.network) {
+      throw new RouteDockManifestError(
+        `Manifest network mismatch at ${baseUrl}: client is configured for ${this.network}, provider declares ${manifest.network}`,
+      )
+    }
   }
 
   /**
@@ -290,6 +299,7 @@ export class RouteDockClient {
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     await this._checkTrustline(manifest)
@@ -415,6 +425,7 @@ export class RouteDockClient {
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
 
     const mode = options?.mode ?? 'mpp-session'
     if (!manifest.modes.includes(mode)) {

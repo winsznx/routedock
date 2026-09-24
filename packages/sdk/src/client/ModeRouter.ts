@@ -349,6 +349,21 @@ function selectFromModes(
     }
   }
 
+  // A budget is an upper bound even when cost optimization was not requested.
+  // Preserve the normal preference order, but never silently select a mode
+  // whose advertised charge exceeds the caller's limit.
+  if (options.budget_per_request !== undefined) {
+    const budget = Number.parseFloat(options.budget_per_request)
+    const preferred = modes.includes('mpp-charge') ? 'mpp-charge' : modes.includes('x402') ? 'x402' : undefined
+    if (preferred) {
+      const amount = manifest.pricing[preferred]?.amount
+      if (Number.isFinite(budget) && amount !== undefined && Number.parseFloat(amount) <= budget) {
+        return { mode: preferred }
+      }
+      throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
+    }
+  }
+
   if (modes.includes('mpp-charge')) return { mode: 'mpp-charge' }
   if (modes.includes('x402')) return { mode: 'x402' }
   return undefined

@@ -21,7 +21,7 @@ import { extractPayerAddress } from './payer.js'
 import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
 import type { Method } from 'mppx'
 import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
-import { base64ToUtf8, hexToBytes } from './encoding.js'
+import { base64ToUtf8, hexToBytes, parsePaymentCredential } from './encoding.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -406,9 +406,10 @@ interface MppSessionHandlerState {
   /** mppx server instance (channel method) used for voucher verification. */
   mppx: unknown
   /** Handle a DELETE channel-close request; returns the HTTP response. */
-  handleDelete(c: DeleteContext): Promise<Response>
+  handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response>
   /** Extract payer + latest signature from a Payment authorization header. */
-  extractPayer(c: AuthContext): void
+  extractPayer(c: AuthContext): { payer: string | null; signature: string | null }
+  recordVerifiedCredential(credential: { payer: string | null; signature: string | null }): void
   /** Arm the connection-closed orphan guard (idempotent). */
   armAbortGuard(c: SignalContext): void
 }
@@ -416,7 +417,6 @@ interface MppSessionHandlerState {
 function createMppSessionHandlerState(
   opts: RouteDockHonoOptions,
   sessionPricing: { rate: string; channelFactory: string },
-  reportMode: 'mpp-session' | 'mpp-session-ws',
 ): MppSessionHandlerState {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
@@ -532,7 +532,7 @@ function createMppSessionHandlerState(
   return {
     mppx,
 
-    async handleDelete(c: DeleteContext): Promise<Response> {
+    async handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response> {
       let body: { amount?: string; signature?: string } | undefined
       try {
         body = await c.req.json() as { amount?: string; signature?: string }
@@ -600,33 +600,19 @@ function createMppSessionHandlerState(
       return c.json({ closeTxHash: null, message: 'no vouchers received' })
     },
 
-    extractPayer(c: AuthContext): void {
+    extractPayer(c: AuthContext): { payer: string | null; signature: string | null } {
       const authHeader = c.req.header('authorization')
-      if (!authHeader?.startsWith('Payment ')) return
-      try {
-        const credB64 = authHeader
-          .replace(/^Payment\s+/, '')
-          .split(',')
-          .find((p) => p.trim().startsWith('credential='))
-        if (credB64) {
-          const credJson = base64ToUtf8(
-            credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
-          )
-          const cred = JSON.parse(credJson) as {
-            sender?: string
-            payload?: { signature?: string; sender?: string; from?: string }
-          }
-          if (cred.payload?.signature) {
-            lastSignatureHex = cred.payload.signature
-          }
-          if (!sessionPayerAddress) {
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            sessionPayerAddress = extractPayerAddress(key)
-          }
-        }
-      } catch {
-        // non-fatal
+      const cred = authHeader ? parsePaymentCredential(authHeader) : null
+      const payload = cred?.payload
+      return {
+        payer: extractPayerAddress(cred?.source ?? payload?.sender ?? payload?.from),
+        signature: typeof payload?.signature === 'string' ? payload.signature : null,
       }
+    },
+
+    recordVerifiedCredential(credential): void {
+      if (credential.signature) lastSignatureHex = credential.signature
+      if (credential.payer && !sessionPayerAddress) sessionPayerAddress = credential.payer
     },
 
     armAbortGuard(c: SignalContext): void {
@@ -675,10 +661,10 @@ function createMppSessionHonoHandler(
             headers: { 'content-type': 'application/json' },
           })
         }
-        return state.handleDelete(c as unknown as DeleteContext)
+        return state.handleDelete(c as unknown as DeleteContext, config.mode)
       }
 
-      state.extractPayer(c as unknown as AuthContext)
+      const credential = state.extractPayer(c as unknown as AuthContext)
 
       const result = await (
         state.mppx as unknown as {
@@ -701,6 +687,9 @@ function createMppSessionHonoHandler(
         challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
         return new Response(await challenge.text(), { status: 402, headers })
       }
+
+      // Only attribute the payer after mppx has verified the credential.
+      state.recordVerifiedCredential(credential)
 
       state.armAbortGuard(c as unknown as SignalContext)
 
@@ -752,6 +741,7 @@ function isWebSocketUpgradeRequest(c: {
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  const sessionHandlers = new Map<'mpp-session' | 'mpp-session-ws', MiddlewareHandler>()
   const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
@@ -774,11 +764,16 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
       throw new Error('routedockHono: mpp-session/mpp-session-ws mode requires commitmentPublicKey')
     }
     const sessionPricing = opts.pricing[primarySessionMode]!
-    const sharedState = createMppSessionHandlerState(opts, sessionPricing, primarySessionMode)
     for (const mode of sessionModes) {
-      handlers.push(
-        createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState),
-      )
+      if (opts.pricing[mode]!.channelFactory !== sessionPricing.channelFactory) {
+        throw new Error('routedockHono: mpp-session and mpp-session-ws must use the same channelFactory')
+      }
+    }
+    const sharedState = createMppSessionHandlerState(opts, sessionPricing)
+    for (const mode of sessionModes) {
+      const handler = createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState)
+      sessionHandlers.set(mode, handler)
+      handlers.push(handler)
     }
   }
 
@@ -797,8 +792,11 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     )
     const prefersX402 = c.req.header('x-preferred-mode') === 'x402'
 
-    const handler =
-      hasX402Header || prefersX402 ? handlers[0] : handlers[handlers.length - 1]
+    const isUpgrade = isWebSocketUpgradeRequest(c)
+    const sessionHandler = sessionHandlers.get(isUpgrade ? 'mpp-session-ws' : 'mpp-session')
+    const handler = hasX402Header || prefersX402
+      ? handlers[0]
+      : sessionHandler ?? handlers[handlers.length - 1]
 
     if (!handler) {
       await next()
