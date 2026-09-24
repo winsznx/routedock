@@ -21,7 +21,7 @@ import { extractPayerAddress } from './payer.js'
 import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
 import type { Method } from 'mppx'
 import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
-import { base64ToUtf8, hexToBytes } from './encoding.js'
+import { base64ToUtf8, hexToBytes, parsePaymentCredential } from './encoding.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -263,20 +263,9 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       try {
         const authHeader = c.req.header('authorization')
         if (authHeader?.startsWith('Payment ')) {
-          const credPart = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credPart) {
-            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = base64ToUtf8(b64)
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { sender?: string; from?: string }
-            }
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            payerAddress = extractPayerAddress(key)
-          }
+          const cred = parsePaymentCredential(authHeader)
+          const key = cred?.source ?? cred?.payload?.sender ?? cred?.payload?.from
+          payerAddress = extractPayerAddress(key)
         }
       } catch {
         // non-fatal
@@ -540,6 +529,12 @@ function createMppSessionHandlerState(
         // empty or non-JSON body
       }
 
+      if (body?.amount !== undefined && (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount))) {
+        return new Response(JSON.stringify({ error: 'amount must be a non-negative integer string' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
       let closeAmount: bigint
       let closeSig: string
@@ -598,26 +593,10 @@ function createMppSessionHandlerState(
       const authHeader = c.req.header('authorization')
       if (!authHeader?.startsWith('Payment ')) return
       try {
-        const credB64 = authHeader
-          .replace(/^Payment\s+/, '')
-          .split(',')
-          .find((p) => p.trim().startsWith('credential='))
-        if (credB64) {
-          const credJson = base64ToUtf8(
-            credB64.split('=').slice(1).join('=').replace(/^"|"$/g, ''),
-          )
-          const cred = JSON.parse(credJson) as {
-            sender?: string
-            payload?: { signature?: string; sender?: string; from?: string }
-          }
-          if (cred.payload?.signature) {
-            lastSignatureHex = cred.payload.signature
-          }
-          if (!sessionPayerAddress) {
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            sessionPayerAddress = extractPayerAddress(key)
-          }
-        }
+        const cred = parsePaymentCredential(authHeader)
+        const payload = cred?.payload
+        if (payload?.signature && typeof payload.signature === 'string') lastSignatureHex = payload.signature
+        if (!sessionPayerAddress) sessionPayerAddress = extractPayerAddress(cred?.source ?? payload?.sender ?? payload?.from)
       } catch {
         // non-fatal
       }
@@ -650,6 +629,25 @@ function createMppSessionHonoHandler(
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
+        const verified = await (
+          state.mppx as unknown as {
+            channel: (o: { amount: string; description?: string }) => (
+              r: globalThis.Request,
+            ) => Promise<{ status: number; challenge?: globalThis.Response }>
+          }
+        ).channel({ amount: sessionPricing.rate, description: opts.manifest.name })(c.req.raw.clone())
+        if (verified.status === 402) {
+          const challenge = verified.challenge!
+          const headers: Record<string, string> = {}
+          challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
+          return new Response(await challenge.text(), { status: 402, headers })
+        }
+        if (verified.status >= 400) {
+          return new Response(JSON.stringify({ error: 'Payment verification failed' }), {
+            status: verified.status,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
         return state.handleDelete(c as unknown as DeleteContext)
       }
 

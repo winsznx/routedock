@@ -4,6 +4,7 @@ import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
 import { extractPayerAddress } from './payer.js'
+import { parsePaymentCredential } from './encoding.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import {
   InMemorySeenTxStore,
@@ -61,20 +62,9 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       try {
         const authHeader = req.headers['authorization']
         if (typeof authHeader === 'string' && authHeader.startsWith('Payment ')) {
-          const credPart = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credPart) {
-            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = Buffer.from(b64, 'base64').toString('utf8')
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { sender?: string; from?: string }
-            }
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            payerAddress = extractPayerAddress(key)
-          }
+          const cred = parsePaymentCredential(authHeader)
+          const key = cred?.source ?? cred?.payload?.sender ?? cred?.payload?.from
+          payerAddress = extractPayerAddress(key)
         }
       } catch {
         // non-fatal — payer extraction is best-effort
