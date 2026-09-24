@@ -19,6 +19,7 @@ import {
   type Network,
 } from './manifest.js'
 import type { Env } from './env.js'
+import { flagStaleOpenSessions, staleAfterMinutes } from './staleSessions.js'
 
 /**
  * Mirrors the SDK's OrphanedSessionInfo. Declared locally because the type is
@@ -298,6 +299,17 @@ export class ChannelSession extends DurableObject<Env> {
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY)
     const network: Network = env.STELLAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
     const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
+
+    try {
+      const flagged = await flagStaleOpenSessions({
+        supabase,
+        payee: env.STELLAR_PAYEE_ADDRESS,
+        staleAfterMs: staleAfterMinutes(env.SESSION_STALE_AFTER_MINUTES) * 60_000,
+      })
+      if (flagged.length > 0) console.log(`[reconcile] Flagged ${flagged.length} stale open session(s)`)
+    } catch (err) {
+      console.error('[reconcile] stale-session sweep failed; continuing recovery:', err)
+    }
 
     return reconcileAbandonedSessions({
       supabase,

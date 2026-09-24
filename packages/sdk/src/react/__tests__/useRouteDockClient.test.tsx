@@ -36,4 +36,42 @@ describe('useRouteDockClient', () => {
 
     assert.notEqual(result.current, first)
   })
+
+  it('does not dispose the mounted client during StrictMode effect replay', () => {
+    const secret = Keypair.random().secret()
+    const originalDispose = RouteDockClient.prototype.dispose
+    const disposed: RouteDockClient[] = []
+    RouteDockClient.prototype.dispose = function () { disposed.push(this) }
+    try {
+      const { result } = renderHook(
+        () => useRouteDockClient({ wallet: secret, network: 'testnet', commitmentSecret: secret }),
+        { reactStrictMode: true },
+      )
+      assert.equal(disposed.length, 0)
+      assert.ok(result.current instanceof RouteDockClient)
+    } finally {
+      RouteDockClient.prototype.dispose = originalDispose
+    }
+  })
+
+  it('disposes the previous client once when configuration changes', () => {
+    const a = Keypair.random().secret()
+    const b = Keypair.random().secret()
+    const originalDispose = RouteDockClient.prototype.dispose
+    const disposed: RouteDockClient[] = []
+    RouteDockClient.prototype.dispose = function () { disposed.push(this) }
+    try {
+      const { result, rerender } = renderHook(
+        ({ secret }: { secret: string }) =>
+          useRouteDockClient({ wallet: secret, network: 'testnet', commitmentSecret: secret }),
+        { initialProps: { secret: a }, reactStrictMode: true },
+      )
+      const first = result.current
+      rerender({ secret: b })
+      assert.deepEqual(disposed, [first])
+      assert.notEqual(result.current, first)
+    } finally {
+      RouteDockClient.prototype.dispose = originalDispose
+    }
+  })
 })

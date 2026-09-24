@@ -540,6 +540,12 @@ function createMppSessionHandlerState(
         // empty or non-JSON body
       }
 
+      if (body?.amount !== undefined && (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount))) {
+        return new Response(JSON.stringify({ error: 'amount must be a non-negative integer string' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
       let closeAmount: bigint
       let closeSig: string
@@ -650,6 +656,25 @@ function createMppSessionHonoHandler(
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
+        const verified = await (
+          state.mppx as unknown as {
+            channel: (o: { amount: string; description?: string }) => (
+              r: globalThis.Request,
+            ) => Promise<{ status: number; challenge?: globalThis.Response }>
+          }
+        ).channel({ amount: sessionPricing.rate, description: opts.manifest.name })(c.req.raw.clone())
+        if (verified.status === 402) {
+          const challenge = verified.challenge!
+          const headers: Record<string, string> = {}
+          challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
+          return new Response(await challenge.text(), { status: 402, headers })
+        }
+        if (verified.status >= 400) {
+          return new Response(JSON.stringify({ error: 'Payment verification failed' }), {
+            status: verified.status,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
         return state.handleDelete(c as unknown as DeleteContext)
       }
 
