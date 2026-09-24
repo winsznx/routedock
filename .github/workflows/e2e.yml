@@ -107,6 +107,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Explain skipped payment verification
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo 'AGENT_SECRET is not configured; no Stellar payment was executed.'
-          echo 'Configure the repository secret or use the scheduled/manual workflow to run E2E.'
+          case "$EVENT_NAME" in
+            schedule|workflow_dispatch)
+              echo "::error title=E2E did not run::$EVENT_NAME runs exist to execute testnet payments, but the AGENT_SECRET repository secret is not set. See docs/AGENT_RUN_CHECKLIST.md to create a funded testnet account."
+              exit 1
+              ;;
+            *)
+              echo 'The weekly scheduled run and manual dispatch execute payments once AGENT_SECRET is set.'
+              ;;
+          esac
