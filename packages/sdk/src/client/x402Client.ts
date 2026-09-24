@@ -87,7 +87,14 @@ export class X402Client {
         throw new RouteDockManifestError('402 response missing X-Payment-Requirements header')
       }
 
-      const paymentRequired = decodePaymentRequiredHeader(reqHeader)
+      let paymentRequired
+      try {
+        paymentRequired = decodePaymentRequiredHeader(reqHeader)
+      } catch (err) {
+        throw new RouteDockManifestError('402 X-Payment-Requirements header is malformed', {
+          cause: err,
+        })
+      }
 
       let paymentPayload
       try {

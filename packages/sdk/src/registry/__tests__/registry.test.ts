@@ -158,16 +158,33 @@ describe('OnChainRegistry.listProviders — multi-account', () => {
 
 function makeSupabaseMock(rows: object[] | null, error: object | null = null) {
   return {
-    from: () => ({
-      // Mirrors the real query: .select('*').eq('verified', true).limit(100)
-      select: () => {
-        const query = {
-          eq: () => query,
-          limit: () => Promise.resolve({ data: rows, error }),
-        }
-        return query
-      },
-    }),
+    from: () => {
+      const filters: Record<string, unknown> = {}
+      return {
+        // Mirrors the real query: .select('*').eq('verified', true).eq('network', ...).limit(100)
+        select: () => {
+          const query = {
+            eq: (column: string, value: unknown) => {
+              filters[column] = value
+              return query
+            },
+            limit: () => {
+              const data = error
+                ? null
+                : rows
+                  ? rows.filter((r) =>
+                      Object.entries(filters).every(
+                        ([column, value]) => (r as Record<string, unknown>)[column] === value,
+                      ),
+                    )
+                  : rows
+              return Promise.resolve({ data, error })
+            },
+          }
+          return query
+        },
+      }
+    },
   } as unknown as ConstructorParameters<typeof ProviderRegistry>[0]['supabase']
 }
 
@@ -175,10 +192,15 @@ class TestProviderRegistry extends ProviderRegistry {
   constructor(
     supabase: ReturnType<typeof makeSupabaseMock> | undefined,
     mockHorizon: ReturnType<typeof makeHorizonMock>,
+    network?: 'testnet' | 'mainnet',
   ) {
     super({
       ...(supabase ? { supabase: supabase as any } : {}),
-      onChain: { horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts: ['ACCT9'] },
+      onChain: {
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['ACCT9'],
+        ...(network ? { network } : {}),
+      },
     })
     // @ts-expect-error — override private field for testing
     this.onChain = new TestOnChainRegistry(mockHorizon, ['ACCT9'])
@@ -243,5 +265,66 @@ describe('ProviderRegistry.listProviders — on-chain fallback', () => {
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
     assert.equal(providers[0]!.source, 'onchain')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Network filtering
+// ---------------------------------------------------------------------------
+
+function makeRow(network: 'testnet' | 'mainnet', name: string): object {
+  return {
+    id: `${name}-id`,
+    name,
+    description: `${name} description`,
+    base_url: `https://${name.toLowerCase()}.example.com`,
+    modes: ['x402'],
+    tags: [network],
+    network,
+    payee: `GPAYEE-${network}`,
+    manifest: {},
+    verified: true,
+    registered_at: new Date().toISOString(),
+  }
+}
+
+describe('ProviderRegistry.listProviders — network filtering', () => {
+  it('returns only rows matching the configured network when both networks are present', async () => {
+    const mainnetRow = makeRow('mainnet', 'Mainnet Provider')
+    const testnetRow = makeRow('testnet', 'Testnet Provider')
+    const rows = [mainnetRow, testnetRow]
+
+    const mainnetRegistry = new TestProviderRegistry(
+      makeSupabaseMock(rows),
+      emptyOnChain,
+      'mainnet',
+    )
+    const mainnetProviders = await mainnetRegistry.listProviders()
+    assert.equal(mainnetProviders.length, 1)
+    assert.equal(mainnetProviders[0]!.network, 'mainnet')
+    assert.equal(mainnetProviders[0]!.name, 'Mainnet Provider')
+
+    const testnetRegistry = new TestProviderRegistry(
+      makeSupabaseMock(rows),
+      emptyOnChain,
+      'testnet',
+    )
+    const testnetProviders = await testnetRegistry.listProviders()
+    assert.equal(testnetProviders.length, 1)
+    assert.equal(testnetProviders[0]!.network, 'testnet')
+    assert.equal(testnetProviders[0]!.name, 'Testnet Provider')
+  })
+
+  it('falls through to on-chain when Supabase only holds rows for the other network', async () => {
+    const testnetRow = makeRow('testnet', 'Testnet Provider')
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock([testnetRow]),
+      oneOnChain,
+      'mainnet',
+    )
+    const providers = await registry.listProviders()
+    assert.equal(providers.length, 1)
+    assert.equal(providers[0]!.source, 'onchain')
+    assert.equal(providers[0]!.network, 'mainnet')
   })
 })

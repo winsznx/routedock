@@ -80,6 +80,7 @@ export class ProviderRegistry {
         .from('providers')
         .select('*')
         .eq('verified', true)
+        .eq('network', this.network)
         .limit(100)
 
       if (error) return []

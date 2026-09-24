@@ -247,9 +247,10 @@ export async function fetchManifest(
 
   return withRetry(async () => {
     let raw: unknown
+    let resp: Response
     let expiresAt = 0
     try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(manifestTimeoutMs) })
+      resp = await fetch(url, { signal: AbortSignal.timeout(manifestTimeoutMs) })
       if (!resp.ok) {
         if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
           throw httpStatusToError(
@@ -262,9 +263,6 @@ export async function fetchManifest(
           `Manifest fetch failed: HTTP ${resp.status} from ${url}`,
         )
       }
-      const now = Date.now()
-      expiresAt = now + ttlFromHeaders(resp.headers, now)
-      raw = await resp.json()
     } catch (err) {
       if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
         throw new RouteDockManifestTimeoutError(
@@ -274,6 +272,15 @@ export async function fetchManifest(
       }
       if (err instanceof RouteDockError) throw err
       throw wrapFetchError(err, `Manifest fetch error from ${url}`)
+    }
+
+    const now = Date.now()
+    expiresAt = now + ttlFromHeaders(resp.headers, now)
+
+    try {
+      raw = await resp.json()
+    } catch (err) {
+      throw new RouteDockManifestError(`Manifest at ${url} is not valid JSON`, { cause: err })
     }
 
     const result = validator.validate(raw)

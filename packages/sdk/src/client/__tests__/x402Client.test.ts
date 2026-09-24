@@ -3,7 +3,7 @@ import test from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import { X402Client } from '../x402Client.js'
 import type { RouteDockManifest } from '../../types.js'
-import { RouteDockFacilitatorError } from '../../errors.js'
+import { RouteDockFacilitatorError, RouteDockManifestError } from '../../errors.js'
 
 const keypair = Keypair.random()
 const manifest: RouteDockManifest = {
@@ -67,6 +67,88 @@ test('X402Client - non-402 500 error throws httpStatusToError without crashing o
       (err: any) => {
         assert.ok(err instanceof RouteDockFacilitatorError)
         assert.equal(err.status, 500)
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - malformed X-Payment-Requirements (not base64) rejects with RouteDockManifestError', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet')
+  const originalFetch = globalThis.fetch
+
+  globalThis.fetch = (async () => {
+    return new Response('payment required', {
+      status: 402,
+      headers: { 'X-Payment-Requirements': 'not base64!!' },
+    })
+  }) as typeof fetch
+
+  try {
+    await assert.rejects(
+      async () => {
+        await client.pay('https://api.test/malformed-header-1', manifest)
+      },
+      (err: any) => {
+        assert.ok(err instanceof RouteDockManifestError, 'should be RouteDockManifestError')
+        assert.equal(err.code, 'MANIFEST')
+        assert.equal(err.retryable, false)
+        assert.ok(err.cause instanceof Error, 'cause should be the original decode error')
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - malformed X-Payment-Requirements (base64 of non-JSON) rejects with RouteDockManifestError', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet')
+  const originalFetch = globalThis.fetch
+
+  globalThis.fetch = (async () => {
+    return new Response('payment required', {
+      status: 402,
+      headers: { 'X-Payment-Requirements': Buffer.from('hello').toString('base64') },
+    })
+  }) as typeof fetch
+
+  try {
+    await assert.rejects(
+      async () => {
+        await client.pay('https://api.test/malformed-header-2', manifest)
+      },
+      (err: any) => {
+        assert.ok(err instanceof RouteDockManifestError, 'should be RouteDockManifestError')
+        assert.equal(err.code, 'MANIFEST')
+        assert.equal(err.retryable, false)
+        assert.ok(err.cause instanceof Error, 'cause should be the original SyntaxError')
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - missing X-Payment-Requirements header still rejects with RouteDockManifestError', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet')
+  const originalFetch = globalThis.fetch
+
+  globalThis.fetch = (async () => {
+    return new Response('payment required', { status: 402 })
+  }) as typeof fetch
+
+  try {
+    await assert.rejects(
+      async () => {
+        await client.pay('https://api.test/missing-header', manifest)
+      },
+      (err: any) => {
+        assert.ok(err instanceof RouteDockManifestError, 'should be RouteDockManifestError')
+        assert.ok(err.message.includes('missing'), 'message should describe the missing header')
         return true
       },
     )
