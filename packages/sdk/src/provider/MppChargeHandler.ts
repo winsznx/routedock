@@ -4,6 +4,7 @@ import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
 import { extractPayerAddress } from './payer.js'
+import { parsePaymentCredential } from './encoding.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import {
   InMemorySeenTxStore,
@@ -58,23 +59,14 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       // the mppx library consumes it. The Payment bearer credential JSON contains
       // a `sender` field with the payer's Stellar G... public key.
       let payerAddress: string | null = null
+      let verifiedPayer: string | null = null
       try {
         const authHeader = req.headers['authorization']
-        if (typeof authHeader === 'string' && authHeader.startsWith('Payment ')) {
-          const credPart = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credPart) {
-            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = Buffer.from(b64, 'base64').toString('utf8')
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { sender?: string; from?: string }
-            }
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            payerAddress = extractPayerAddress(key)
-          }
+        if (typeof authHeader === 'string') {
+          const cred = parsePaymentCredential(authHeader)
+          const payload = cred?.payload
+          const key = cred?.source ?? payload?.sender ?? payload?.from
+          verifiedPayer = extractPayerAddress(key)
         }
       } catch {
         // non-fatal — payer extraction is best-effort
@@ -124,6 +116,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       }
 
       // status 200 — payment verified
+      payerAddress = verifiedPayer
       const receipt = result.withReceipt!(new Response(''))
       const receiptHeaders: Record<string, string> = {}
       receipt.headers.forEach((v: string, k: string) => {

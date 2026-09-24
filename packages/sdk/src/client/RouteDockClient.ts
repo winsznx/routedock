@@ -37,6 +37,10 @@ export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
   wallet: Keypair | string
   network: 'testnet' | 'mainnet'
+  /** Soroban RPC endpoint. Defaults to the public network endpoint. */
+  rpcUrl?: string
+  /** Horizon endpoint. Defaults to the public network endpoint. */
+  horizonUrl?: string
   /** Optional local daily spend cap — checked before every payment (local-key vault only) */
   spendCap?: SpendCap
   /**
@@ -118,6 +122,8 @@ export class RouteDockClient {
 
   private readonly keypair: Keypair
   private readonly network: 'testnet' | 'mainnet'
+  private readonly rpcUrl: string
+  private readonly horizonUrl: string
   private readonly spendCap: SpendCap | undefined
   private readonly retryPolicy: RetryPolicy | undefined
   private readonly logger: RouteDockLogger | undefined
@@ -153,6 +159,12 @@ export class RouteDockClient {
     this.keypair =
       typeof config.wallet === 'string' ? Keypair.fromSecret(config.wallet) : config.wallet
     this.network = config.network
+    this.rpcUrl = config.rpcUrl ?? (this.network === 'testnet'
+      ? 'https://soroban-testnet.stellar.org'
+      : 'https://soroban.stellar.org')
+    this.horizonUrl = config.horizonUrl ?? (this.network === 'testnet'
+      ? 'https://horizon-testnet.stellar.org'
+      : 'https://horizon.stellar.org')
     this.spendCap = config.spendCap
     this.retryPolicy = config.retryPolicy
     // Only warn about non-durability when a spend cap is actually configured.
@@ -173,7 +185,13 @@ export class RouteDockClient {
     const secretKey = this.keypair.secret()
     this.x402 = new X402Client(secretKey, this.network, this.retryPolicy)
     this.charge = new MppChargeClient(this.keypair, this.network, this.retryPolicy)
-    this.session = new MppSessionClient(this.keypair, this.network, this.retryPolicy)
+    this.session = new MppSessionClient(
+      this.keypair,
+      this.network,
+      this.retryPolicy,
+      undefined,
+      this.rpcUrl,
+    )
   }
 
   /** Fetch manifest and select mode — shared by pay() and estimateCost(). */
@@ -183,8 +201,17 @@ export class RouteDockClient {
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
+  }
+
+  private _assertNetwork(manifest: RouteDockManifest, baseUrl: string): void {
+    if (manifest.network !== this.network) {
+      throw new RouteDockManifestError(
+        `Manifest network mismatch at ${baseUrl}: client is configured for ${this.network}, provider declares ${manifest.network}`,
+      )
+    }
   }
 
   /**
@@ -232,12 +259,7 @@ export class RouteDockClient {
     const cached = RouteDockClient._trustlineCache.get(cacheKey)
     if (cached && Date.now() < cached.expiresAt) return
 
-    const horizonUrl =
-      this.network === 'testnet'
-        ? 'https://horizon-testnet.stellar.org'
-        : 'https://horizon.stellar.org'
-
-    const server = new Horizon.Server(horizonUrl)
+    const server = new Horizon.Server(this.horizonUrl)
     try {
       const account = await server.loadAccount(this.keypair.publicKey())
       const balances = account.balances as unknown[]
@@ -277,6 +299,7 @@ export class RouteDockClient {
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     await this._checkTrustline(manifest)
@@ -342,7 +365,7 @@ export class RouteDockClient {
     }
 
     try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
+      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network, undefined, this.rpcUrl)
       const x402 = this.x402.withSigner(signer)
       const result = await x402.pay(url, manifest)
       return result
@@ -402,6 +425,7 @@ export class RouteDockClient {
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
 
     const mode = options?.mode ?? 'mpp-session'
     if (!manifest.modes.includes(mode)) {

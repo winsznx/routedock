@@ -55,6 +55,32 @@ mock.module('@stellar/mpp/channel/server', {
   },
 })
 
+mock.module('mppx/server', {
+  namedExports: {
+    Expires: {},
+    Store: {},
+    Request: {},
+    Response: {},
+    Transport: {},
+    NodeListener: {},
+    stripe: {},
+    tempo: {},
+    Mppx: {
+      create: () => ({
+        channel: () => async (request: Request) => {
+          if (!request.headers.has('authorization')) {
+            return {
+              status: 402,
+              challenge: new Response('Payment Required', { status: 402 }),
+            }
+          }
+          return { status: 200 }
+        },
+      }),
+    },
+  },
+})
+
 const { routedockHono } = await import('../hono.js')
 
 const manifest: RouteDockManifest = {
@@ -116,11 +142,22 @@ describe('routedockHono — orphan recovery on failed channel close', () => {
     assert.ok(capturedStore, 'stellar mock should have captured the wrapped store')
     await capturedStore!.put(`stellar:channel:cumulative:${CHANNEL_CONTRACT}`, { amount: '1' })
 
-    // DELETE with a mocked close broadcast that always fails → 500, and the
-    // orphan state must remain armed (settledCleanly must NOT be set).
-    const res = await app.request('/price', {
+    // An unauthenticated DELETE must not reach channel close.
+    const unauthenticated = await app.request('/price', {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: '1', signature: 'deadbeef' }),
+    })
+    assert.equal(unauthenticated.status, 402)
+
+    // An authenticated DELETE with a mocked close broadcast that always fails
+    // returns 500, and the orphan state must remain armed.
+    const res = await app.request('/price', {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Payment test-credential',
+      },
       body: JSON.stringify({ amount: '1', signature: 'deadbeef' }),
     })
     assert.equal(res.status, 500)
