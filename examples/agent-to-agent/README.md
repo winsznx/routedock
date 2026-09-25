@@ -46,6 +46,7 @@ An **orchestrator agent** breaks a document into chunks, then pays a **specialis
    ```env
    ORCHESTRATOR_SECRET=S...
    SPECIALIST_SECRET=S...
+   SPECIALIST_URL=http://localhost:3200
    START_MOCK_SPECIALIST=true
    STELLAR_NETWORK=testnet
    ```

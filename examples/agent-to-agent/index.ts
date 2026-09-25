@@ -122,7 +122,9 @@ function requireSecret(name: string, value: string): void {
 
 async function main(): Promise<void> {
     requireSecret('ORCHESTRATOR_SECRET', ORCHESTRATOR_SECRET)
-    requireSecret('SPECIALIST_SECRET', SPECIALIST_SECRET)
+    if (START_SPECIALIST) {
+        requireSecret('SPECIALIST_SECRET', SPECIALIST_SECRET)
+    }
 
     let server: ReturnType<typeof serve> | null = null
 
