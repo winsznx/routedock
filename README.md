@@ -62,6 +62,7 @@ graph LR
 | Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
 | Contract | endpoint allowlist policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
 | Contract | session key expiry | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | 17,280-ledger Wasm upgrade notice period | `contracts/agent-vault/src/lib.rs:propose_upgrade` / `execute_upgrade` |
 | Contract | one-way-channel signature verification | [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH) |
 
 ### Security Notice
@@ -72,6 +73,8 @@ The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) ha
 - Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
 - SCF Audit Bank application: Submitted
 
+The vault's single admin can still rotate agent keys and change caps, allowlists, and expiry. The upgrade timelock guarantees advance notice before the contract enforcement code itself is replaced; it does not make the admin trustless. Operators and governed payers should monitor `upgrade_proposed` and `upgrade_cancelled`, review every target Wasm hash, and use `pending_upgrade` to display the exact earliest execution ledger.
+
 ## Soroban Events
 
 The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
@@ -80,6 +83,9 @@ The `agent-vault` contract emits structured events that indexers and Stellar Exp
 |---|---|---|---|
 | `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
 | `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
+| `upgrade_proposed` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin schedules a Wasm change and starts the notice period |
+| `upgrade_cancelled` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin cancels a scheduled Wasm change |
+| `upgraded` | `(Symbol)` | `(new_wasm_hash: BytesN<32>)` | A ready Wasm proposal executes successfully |
 
 ```bash
 stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
@@ -141,13 +147,21 @@ Redeploying `provider-a`/`provider-b`: read [`docs/PROVIDER_REDEPLOY_ORDERING.md
 
 | Example | What it shows |
 |---|---|
-| [`examples/streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session to Provider B's `/stream/orderbook`, consumes 100 voucher-backed orderbook updates, prints best bid/ask, spread, and mid price, then closes the session and logs the settlement tx hash. |
+| [`price-oracle-agent`](examples/price-oracle-agent) | Fetches paid price quotes with one-shot x402 settlements. |
+| [`inference-agent`](examples/inference-agent) | Runs a mock inference provider and pays each response with MPP charge. |
+| [`agent-to-agent`](examples/agent-to-agent) | Has an orchestrator agent pay a specialist agent for each summary. |
+| [`streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session, consumes 100 voucher-backed orderbook updates, and settles the channel on close. |
 
-Run it with:
+From a fresh clone, build the SDKs before starting any example:
 
 ```bash
-cd examples/streaming-orderbook-agent
 pnpm install
+pnpm --filter @routedock/nulth-sdk build
+pnpm --filter @routedock/routedock build
+
+cd examples/<name>
+cp .env.example .env
+# fill in .env
 pnpm start
 ```
 
