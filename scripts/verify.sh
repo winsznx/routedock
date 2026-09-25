@@ -61,4 +61,7 @@ pnpm --filter provider-a build >/dev/null || fail "provider-a does not bundle fo
 pnpm --filter provider-b build >/dev/null || fail "provider-b does not bundle for Workers"
 echo "  ok"
 
+step "package pack hygiene"
+bash "$root/scripts/check-pack.sh" || fail "package pack check failed"
+
 printf '\n\033[32m✔ verify passed\033[0m\n'
