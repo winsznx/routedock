@@ -30,13 +30,9 @@ import type { RouteDockManifest } from '@routedock/routedock'
 const INFERENCE_PROVIDER_URL = (process.env['INFERENCE_PROVIDER_URL'] ?? 'http://localhost:3100').replace(/\/$/, '')
 const STELLAR_NETWORK = process.env['STELLAR_NETWORK'] === 'mainnet' ? 'mainnet' : 'testnet'
 const AGENT_SECRET = process.env['AGENT_SECRET'] ?? ''
+const PROVIDER_SECRET = process.env['PROVIDER_SECRET'] ?? ''
 const START_MOCK = process.env['START_MOCK_PROVIDER'] !== 'false'
 const MOCK_PORT = 3100
-
-// Mock provider keypair — generated fresh each run, no secret hardcoded.
-// Provider and client share this keypair within the same process.
-const MOCK_PROVIDER_KEYPAIR = Keypair.random()
-const MOCK_PROVIDER_SECRET = MOCK_PROVIDER_KEYPAIR.secret()
 
 // USDC on Stellar testnet (Circle's Soroban SAC)
 const USDC_CONTRACT: string =
@@ -50,26 +46,6 @@ if (!USDC_CONTRACT) {
     process.exit(1)
 }
 
-// ---------------------------------------------------------------------------
-// Mock inference provider (Hono)
-// ---------------------------------------------------------------------------
-
-const MANIFEST: RouteDockManifest = {
-    routedock: '1.0',
-    name: 'Mock Inference Provider',
-    description: 'Simulated LLM inference endpoint — returns canned responses',
-    modes: ['mpp-charge'],
-    network: STELLAR_NETWORK as 'testnet' | 'mainnet',
-    asset: 'USDC',
-    asset_contract: USDC_CONTRACT,
-    payee: MOCK_PROVIDER_KEYPAIR.publicKey(),
-    pricing: {
-        'mpp-charge': { amount: '0.0005', per: 'request' },
-    },
-    endpoints: { infer: { method: 'POST', path: '/infer' } },
-    tags: ['inference', 'llm', 'ai'],
-}
-
 // Canned responses so the mock needs no real LLM.
 const CANNED_RESPONSES: Record<string, string> = {
     default: "I'm a mock inference endpoint. Payment received — here's your canned response.",
@@ -77,27 +53,48 @@ const CANNED_RESPONSES: Record<string, string> = {
     explain: 'MPP (Metered Payment Protocol) charge enables per-request micropayments without a channel.',
 }
 
-function buildMockServer(): Hono {
+// ---------------------------------------------------------------------------
+// Mock inference provider (Hono)
+// ---------------------------------------------------------------------------
+
+function buildMockServer(providerSecret: string): Hono {
+    const providerKp = Keypair.fromSecret(providerSecret)
+
+    const manifest: RouteDockManifest = {
+        routedock: '1.0',
+        name: 'Mock Inference Provider',
+        description: 'Simulated LLM inference endpoint — returns canned responses',
+        modes: ['mpp-charge'],
+        network: STELLAR_NETWORK as 'testnet' | 'mainnet',
+        asset: 'USDC',
+        asset_contract: USDC_CONTRACT,
+        payee: providerKp.publicKey(),
+        pricing: {
+            'mpp-charge': { amount: '0.0005', per: 'request' },
+        },
+        endpoints: { infer: { method: 'GET', path: '/infer' } },
+        tags: ['inference', 'llm', 'ai'],
+    }
+
     const app = new Hono()
 
     app.use(routedockHono({
             modes: ['mpp-charge'],
-            pricing: { 'mpp-charge': MANIFEST.pricing['mpp-charge']!.amount },
-            asset: MANIFEST.asset,
-            assetContract: MANIFEST.asset_contract,
-            payee: MANIFEST.payee,
-            network: MANIFEST.network,
-            payeeSecretKey: MOCK_PROVIDER_SECRET,
-            manifest: MANIFEST,
+            pricing: { 'mpp-charge': manifest.pricing['mpp-charge']!.amount },
+            asset: manifest.asset,
+            assetContract: manifest.asset_contract,
+            payee: manifest.payee,
+            network: manifest.network,
+            payeeSecretKey: providerSecret,
+            manifest,
             onSettled: async (txHash, amount, mode) => {
                 console.log(`  [provider] settled  txHash=${txHash}  amount=${amount} USDC  mode=${mode}`)
             },
         }),
     )
 
-    app.post('/infer', async (c) => {
-        const body = (await c.req.json<{ prompt?: string }>().catch(() => ({}))) as { prompt?: string }
-        const prompt = (body.prompt ?? '').toLowerCase()
+    app.get('/infer', async (c) => {
+        const prompt = (c.req.query('prompt') ?? '').toLowerCase()
         const key = Object.keys(CANNED_RESPONSES).find((k) => k !== 'default' && prompt.includes(k))
         return c.json({ response: CANNED_RESPONSES[key ?? 'default'], model: 'mock-v1' })
     })
@@ -127,7 +124,8 @@ async function main(): Promise<void> {
     let server: ReturnType<typeof serve> | null = null
 
     if (START_MOCK) {
-        const app = buildMockServer()
+        requireSecret('PROVIDER_SECRET', PROVIDER_SECRET)
+        const app = buildMockServer(PROVIDER_SECRET)
         server = serve({ fetch: app.fetch, port: MOCK_PORT })
         console.log(`[mock-provider] listening on http://localhost:${MOCK_PORT}`)
         // Give the server a tick to bind before the client connects.
@@ -151,8 +149,10 @@ async function main(): Promise<void> {
         process.stdout.write(`#${String(i + 1).padStart(2, '0')} prompt="${prompt}"\n`)
 
         // client.pay() handles the full 402 → sign → retry cycle.
-        // mpp-charge is the preferred mode for the mock manifest, so no forceMode needed.
-        const result = await client.pay(inferUrl, { forceMode: 'mpp-charge' })
+        // client.pay() sends GET with no body, so pass the prompt as a query parameter.
+        const url = new URL('/infer', INFERENCE_PROVIDER_URL)
+        url.searchParams.set('prompt', prompt)
+        const result = await client.pay(url.toString(), { forceMode: 'mpp-charge' })
         const data = result.data as { response?: string; model?: string }
 
         console.log(`     response="${data.response}"`)
