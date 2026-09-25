@@ -114,7 +114,8 @@ Add to `claude_desktop_config.json`:
         "STELLAR_NETWORK": "testnet",
         "COMMITMENT_SECRET": "S...",
         "SUPABASE_URL": "https://...",
-        "SUPABASE_KEY": "..."
+        "SUPABASE_KEY": "...",
+        "ROUTEDOCK_DAILY_CAP": "1.00"
       }
     }
   }
@@ -154,8 +155,11 @@ All tools return structured error responses:
 - `STELLAR_SECRET`: Required - Wallet secret key
 - `STELLAR_NETWORK`: Required - "testnet" or "mainnet"
 - `COMMITMENT_SECRET`: Optional - For session mode
+- `ROUTEDOCK_DAILY_CAP`: Required - Maximum aggregate daily USDC spend
+- `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Path for the local spend ledger
+- `ROUTEDOCK_ENV_FILE`: Optional - Load secrets from an external env file
 - `SUPABASE_URL`: Optional - For provider registry
-- `SUPABASE_KEY`: Optional - For provider registry
+- `SUPABASE_KEY`: Optional - Supabase anon key for provider registry (not service-role)
 
 ### Security
 
@@ -174,7 +178,7 @@ The MCP server works with the live RouteDock testnet providers:
   - Use case: Single price requests
 
 - **Provider B**: https://api-b.routedock.xyz
-  - Modes: mpp-session
+  - Modes: mpp-session, mpp-session-ws
   - Endpoint: /stream/orderbook
   - Use case: Streaming orderbook data
 
@@ -200,7 +204,7 @@ const client = new RouteDockClient({
   commitmentSecret: commitmentKey
 })
 
-const result = await client.pay(url, { preferredMode: 'x402' })
+const result = await client.pay(url, { forceMode: 'x402' })
 // Handle errors, parse results, manage state...
 ```
 

@@ -7,7 +7,7 @@ A complete Model Context Protocol (MCP) server for RouteDock that exposes Stella
 ## Package: @routedock/mcp-server
 
 ### Location
-`/home/lynndabel/wokedi/routedock/packages/mcp-server/`
+`packages/mcp-server/`
 
 ### Files Created
 
@@ -71,8 +71,11 @@ The MCP server wraps the existing RouteDock SDK, providing a standardized interf
 - `STELLAR_SECRET` - Required: Wallet secret key
 - `STELLAR_NETWORK` - Required: "testnet" or "mainnet"
 - `COMMITMENT_SECRET` - Optional: For session mode
+- `ROUTEDOCK_DAILY_CAP` - Required: Maximum aggregate daily USDC spend
+- `ROUTEDOCK_SPEND_STORE_PATH` - Optional: Durable local spend ledger path
+- `ROUTEDOCK_ENV_FILE` - Optional: External environment file for secrets
 - `SUPABASE_URL` - Optional: For provider registry
-- `SUPABASE_KEY` - Optional: For provider registry
+- `SUPABASE_KEY` - Optional: Supabase anon key for provider registry
 
 ## Documentation Created
 
