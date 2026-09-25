@@ -26,6 +26,14 @@ const PAYEE_SPEND_PREFIX: Symbol = symbol_short!("pds");
 // Lifetime spend cap and monotonic counter (instance storage — never resets)
 const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
 const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
+// Pending timelocked wasm upgrade: (new_wasm_hash, ready_at_ledger).
+const PENDING_UPGRADE_KEY: Symbol = symbol_short!("p_upg");
+
+// Timelock enforced between scheduling and applying a wasm upgrade, in ledgers.
+// 17_280 ledgers is the same "one day" window the daily-cap accounting uses; it
+// gives payers governed by this vault a notice period to exit before the
+// enforcement code can be replaced.
+const UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
 
 // ── Event names ──────────────────────────────────────────────────────────────
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
@@ -40,6 +48,8 @@ const EVT_ADMIN_TRANSFER_REQUESTED: &str = "admin_transfer_requested";
 const EVT_ADMIN_CHANGED: &str = "admin_changed";
 const EVT_VAULT_FROZEN: &str = "vault_frozen";
 const EVT_VAULT_UNFROZEN: &str = "vault_unfrozen";
+const EVT_UPGRADE_SCHEDULED: &str = "upgrade_scheduled";
+const EVT_UPGRADE_CANCELLED: &str = "upgrade_cancelled";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -58,6 +68,8 @@ pub enum Error {
     InvalidAmount = 10,
     UnauthorizedFunction = 11,
     MalformedAuthContext = 12,
+    NoPendingUpgrade = 13,
+    UpgradeNotReady = 14,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -283,19 +295,70 @@ impl AgentVault {
         env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
     }
 
-    /// Upgrade the vault's wasm to `new_wasm_hash`. Admin only.
-    /// The new wasm must already be uploaded on-chain (e.g. via `upload_contract_wasm`)
-    /// before this is called — this only swaps which code the deployed instance runs.
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+    /// Schedule a wasm upgrade to `new_wasm_hash`, to take effect only after a
+    /// fixed timelock. Admin only. Unlike an immediate swap, this announces the
+    /// pending change via the `upgrade_scheduled` event and does not apply it for
+    /// `UPGRADE_TIMELOCK_LEDGERS` ledgers, giving payers governed by this vault's
+    /// caps and allowlist a window to observe the change and exit before the
+    /// enforcement code is replaced. The new wasm must already be uploaded
+    /// on-chain before `apply_upgrade` is called.
+    pub fn schedule_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         let storage = env.storage().instance();
         let admin: Address = storage
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        let ready_at = env
+            .ledger()
+            .sequence()
+            .saturating_add(UPGRADE_TIMELOCK_LEDGERS);
+        storage.set(&PENDING_UPGRADE_KEY, &(new_wasm_hash.clone(), ready_at));
+        env.events().publish(
+            (Symbol::new(&env, EVT_UPGRADE_SCHEDULED),),
+            (new_wasm_hash, ready_at),
+        );
+    }
+
+    /// Apply a previously scheduled upgrade, once its timelock has elapsed. Admin
+    /// only. Reverts with `NoPendingUpgrade` if nothing is scheduled, or
+    /// `UpgradeNotReady` if the timelock has not yet passed.
+    pub fn apply_upgrade(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let (new_wasm_hash, ready_at): (BytesN<32>, u32) = storage
+            .get(&PENDING_UPGRADE_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingUpgrade));
+        if env.ledger().sequence() < ready_at {
+            panic_with_error!(&env, Error::UpgradeNotReady);
+        }
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+        storage.remove(&PENDING_UPGRADE_KEY);
         env.events()
             .publish((Symbol::new(&env, EVT_UPGRADED),), new_wasm_hash);
+    }
+
+    /// Cancel a scheduled upgrade before it is applied. Admin only.
+    pub fn cancel_upgrade(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let (new_wasm_hash, _ready_at): (BytesN<32>, u32) = storage
+            .get(&PENDING_UPGRADE_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingUpgrade));
+        storage.remove(&PENDING_UPGRADE_KEY);
+        env.events()
+            .publish((Symbol::new(&env, EVT_UPGRADE_CANCELLED),), new_wasm_hash);
+    }
+
+    /// View: the pending upgrade as `(wasm_hash, ready_at_ledger)`, if any.
+    pub fn pending_upgrade(env: Env) -> Option<(BytesN<32>, u32)> {
+        env.storage().instance().get(&PENDING_UPGRADE_KEY)
     }
 
     /// Return the global daily spend cap (view-only).
@@ -1552,6 +1615,67 @@ mod tests {
             "rejected auth must not advance lifetime spend"
         );
     }
+/// Upgrade timelock: schedule records a pending upgrade whose ready-at ledger is
+    /// exactly one timelock ahead, so it cannot take effect immediately.
+    #[test]
+    fn test_schedule_upgrade_records_pending() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+
+        env.ledger().set_sequence_number(1_000);
+        let hash = BytesN::from_array(&env, &[7u8; 32]);
+        client.schedule_upgrade(&hash);
+
+        assert_eq!(
+            client.pending_upgrade(),
+            Some((hash, 1_000 + UPGRADE_TIMELOCK_LEDGERS))
+        );
+    }
+
+    /// Applying before the timelock elapses is rejected with UpgradeNotReady (#14).
+    #[test]
+    #[should_panic(expected = "Error(Contract, #14)")]
+    fn test_apply_upgrade_before_timelock_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+
+        env.ledger().set_sequence_number(1_000);
+        let hash = BytesN::from_array(&env, &[7u8; 32]);
+        client.schedule_upgrade(&hash);
+
+        env.ledger()
+            .set_sequence_number(1_000 + UPGRADE_TIMELOCK_LEDGERS - 1);
+        client.apply_upgrade();
+    }
+
+    /// Applying with nothing scheduled is rejected with NoPendingUpgrade (#13).
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")]
+    fn test_apply_upgrade_no_pending_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+        client.apply_upgrade();
+    }
+
+    /// Cancelling clears the pending upgrade so it can never be applied.
+    #[test]
+    fn test_cancel_upgrade_clears_pending() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+
+        env.ledger().set_sequence_number(1_000);
+        let hash = BytesN::from_array(&env, &[9u8; 32]);
+        client.schedule_upgrade(&hash);
+        assert!(client.pending_upgrade().is_some());
+
+        client.cancel_upgrade();
+        assert_eq!(client.pending_upgrade(), None);
+    }
+
 /// Test 19: transfer_admin and accept_admin happy path
     #[test]
     fn test_transfer_and_accept_admin_succeeds() {
@@ -2004,7 +2128,7 @@ mod tests {
     /// Test 39: upgrade() rejects a caller that isn't the admin
     #[test]
     #[should_panic]
-    fn test_upgrade_requires_admin_auth() {
+    fn test_schedule_upgrade_requires_admin_auth() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(&env, &vault_id);
@@ -2020,12 +2144,12 @@ mod tests {
             address: &non_admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &vault_id,
-                fn_name: "upgrade",
+                fn_name: "schedule_upgrade",
                 args: (&new_wasm_hash,).into_val(&env),
                 sub_invokes: &[],
             },
         }]);
-        client.upgrade(&new_wasm_hash);
+        client.schedule_upgrade(&new_wasm_hash);
     }
 
     /// Test: admin extends expiry after it lapsed — payments succeed again.
