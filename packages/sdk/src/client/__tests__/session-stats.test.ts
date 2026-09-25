@@ -41,6 +41,16 @@ mock.module('@stellar/mpp/channel/client', {
   },
 })
 
+// openSession reads the refund waiting period from the deployed channel
+// contract before it opens. Report the manifest's declared value so these cases
+// exercise the stats contract rather than the config read — that read, and its
+// mismatch handling, has its own suite (channel-config-verification.test.ts).
+mock.module('@stellar/mpp/channel/server', {
+  namedExports: {
+    getChannelState: async () => ({ refundWaitingPeriod: 17280 }),
+  },
+})
+
 mock.module('mppx/client', {
   namedExports: {
     Mppx: {

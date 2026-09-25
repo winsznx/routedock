@@ -7,7 +7,7 @@
  * both deterministic; the real close() is only left in place for the
  * timer-cancellation test, where the guard must not fire at all.
  */
-import { test } from 'node:test'
+import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import { MppSessionClient } from '../MppSessionClient.js'
@@ -25,6 +25,15 @@ const EVENT_WAIT_MS = 1000
 
 /** Let the timer elapse and its close() settle before asserting a negative. */
 const SETTLE_MS = 80
+
+// openSession now reads the deployed channel contract's refund window before
+// opening, over its own dynamic import. Answer with the manifest's declared
+// value so these timer cases stay offline; the read is covered separately.
+mock.module('@stellar/mpp/channel/server', {
+  namedExports: {
+    getChannelState: async () => ({ refundWaitingPeriod: 17_280 }),
+  },
+})
 
 function manifest(): RouteDockManifest {
   return {

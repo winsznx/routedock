@@ -40,6 +40,128 @@ const MIN_REFUND_WAITING_PERIOD = 17_280
  * signature narrows this per event through SessionEventPayloadMap. */
 type SessionListener = (payload: SessionEventPayloadMap[SessionEvent]) => void
 
+/** Average Stellar ledger close time in seconds. */
+const LEDGER_CLOSE_TIME_SECONDS = 5
+
+/**
+ * Network ids as the channel method names them. Kept as literals so the state
+ * getter can be imported dynamically (see readChannelRefundWaitingPeriod)
+ * without also pinning the root package at module load.
+ */
+const CHANNEL_NETWORK_ID = {
+  testnet: 'stellar:testnet',
+  mainnet: 'stellar:pubnet',
+} as const
+
+/**
+ * Upper bound on a refund waiting period the SDK will accept: 30 days at
+ * 5 s/ledger.
+ *
+ * The minimum stops a provider from *shortening* the window; this stops one
+ * from stretching it until the agent's funds are effectively locked. Without
+ * an upper bound a contract declaring a multi-year window satisfies every
+ * check the SDK performs, and the agent has handed over collateral it cannot
+ * realistically recover.
+ */
+const MAX_REFUND_WAITING_PERIOD =
+  (30 * 24 * 60 * 60) / LEDGER_CLOSE_TIME_SECONDS
+
+/**
+ * Bounds the refund waiting period a manifest may declare.
+ *
+ * Split out from the on-chain comparison below so that a manifest which cannot
+ * be sane is rejected without spending an RPC round-trip on it.
+ *
+ * @param declared `manifest.pricing[mode].refund_waiting_period_ledgers`.
+ * @throws {RouteDockManifestError} When the period is outside
+ *   [{@link MIN_REFUND_WAITING_PERIOD}, {@link MAX_REFUND_WAITING_PERIOD}].
+ */
+export function assertRefundWaitingPeriodInBounds(declared: number): void {
+  if (declared < MIN_REFUND_WAITING_PERIOD) {
+    throw new RouteDockManifestError(
+      `refund_waiting_period_ledgers ${declared} < minimum ${MIN_REFUND_WAITING_PERIOD}`,
+    )
+  }
+  if (declared > MAX_REFUND_WAITING_PERIOD) {
+    throw new RouteDockManifestError(
+      `refund_waiting_period_ledgers ${declared} > maximum ${MAX_REFUND_WAITING_PERIOD} (~30 days)`,
+    )
+  }
+}
+
+/**
+ * Requires the deployed channel contract to agree with the manifest.
+ *
+ * A manifest is published by the provider and is not authoritative for what is
+ * actually deployed, so the declared window cannot be treated as evidence of
+ * the deployed one. Callers must have already run
+ * {@link assertRefundWaitingPeriodInBounds} on `declared`.
+ *
+ * @param declared `manifest.pricing[mode].refund_waiting_period_ledgers`.
+ * @param onChain  `refundWaitingPeriod` read from the channel contract.
+ * @param context  Where the values came from, for the error message.
+ * @throws {RouteDockManifestError} When the two disagree.
+ */
+export function assertRefundWaitingPeriodAgrees(
+  declared: number,
+  onChain: number,
+  context: { mode: string; channel: string },
+): void {
+  if (onChain !== declared) {
+    throw new RouteDockManifestError(
+      `manifest.pricing.${context.mode}.refund_waiting_period_ledgers ${declared} does not match the deployed channel ${context.channel} (${onChain})`,
+    )
+  }
+}
+
+/**
+ * Reads the refund waiting period actually configured on the channel contract.
+ *
+ * Uses the channel method's own state getter, which calls the contract's
+ * public getters through simulation — the same fee-free path `getDisputeStatus`
+ * uses — so this costs no transaction and needs no signature.
+ *
+ * @param channel       Contract address from `pricing.channel_factory`.
+ * @param sourceAccount A funded account used as the simulation source.
+ * @returns The configured `refund_waiting_period_ledgers`.
+ * @throws {RouteDockChannelStateError} When the state cannot be read, or is
+ *   missing a usable waiting period. An unreadable window is never treated as
+ *   agreement — that is the failure this check exists to catch.
+ */
+export async function readChannelRefundWaitingPeriod(
+  channel: string,
+  sourceAccount: string,
+  network: 'testnet' | 'mainnet',
+  retryPolicy?: RetryPolicy,
+): Promise<number> {
+  // Imported here rather than at module load so a test that replaces the
+  // module gets the replacement — the same reason this file imports
+  // @stellar/stellar-sdk inside its RPC methods instead of at the top.
+  const { getChannelState } = await import('@stellar/mpp/channel/server')
+
+  const state = await withRetry(async () => {
+    try {
+      return await getChannelState({
+        channel,
+        sourceAccount,
+        network: CHANNEL_NETWORK_ID[network],
+      })
+    } catch (err) {
+      throw new RouteDockChannelStateError(
+        `Failed to read channel config for ${channel}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }, retryPolicy)
+
+  const onChain = state?.refundWaitingPeriod
+  if (typeof onChain !== 'number' || !Number.isFinite(onChain)) {
+    throw new RouteDockChannelStateError(
+      `Channel ${channel} did not report a refund waiting period`,
+    )
+  }
+  return onChain
+}
+
 /** WebSocket-readyState values (mirrors the WHATWG WebSocket constants). */
 const WS_CONNECTING = 0
 const WS_OPEN = 1
@@ -162,11 +284,23 @@ export class MppSessionClient {
     }
 
     const refundPeriod = pricing.refund_waiting_period_ledgers
-    if (refundPeriod < MIN_REFUND_WAITING_PERIOD) {
-      throw new RouteDockManifestError(
-        `refund_waiting_period_ledgers ${refundPeriod} < minimum ${MIN_REFUND_WAITING_PERIOD}`,
-      )
-    }
+    const channelContract = pricing.channel_factory
+
+    assertRefundWaitingPeriodInBounds(refundPeriod)
+
+    // The manifest is provider-published and not authoritative for what is
+    // deployed, so the window the agent will actually be bound by has to be
+    // read from the channel contract and matched.
+    const onChainRefundPeriod = await readChannelRefundWaitingPeriod(
+      channelContract,
+      this.keypair.publicKey(),
+      this.network,
+      this.retryPolicy,
+    )
+    assertRefundWaitingPeriodAgrees(refundPeriod, onChainRefundPeriod, {
+      mode,
+      channel: channelContract,
+    })
 
     const commitmentKey = Keypair.fromSecret(commitmentSecret)
     const channelFactory = pricing.channel_factory
