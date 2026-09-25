@@ -26,6 +26,7 @@ Do **not** deploy until every item below is explicitly marked done by the operat
     ```
 - [ ] **Monitoring and alerting live**
   - Stellar Expert webhook configured for vault + channel contracts.
+  - Alerts configured for `upgrade_proposed`, `upgrade_cancelled`, and `upgraded` events.
   - Supabase alerting configured for `policy_reject` spikes.
   - Command:
     ```bash
@@ -142,6 +143,19 @@ AGENT_VAULT_CONTRACT_ID=<C...>
 ALLOWED_PAYEES=<G...>,<G...>
 SESSION_EXPIRY_LEDGERS=450
 ```
+
+### Timelocked Wasm upgrade runbook
+
+New deployments enforce a fixed 17,280-ledger delay (approximately one day) from the first proposal. Upgrades on a contract still running the previous Wasm require one unavoidable bootstrap invocation through its old immediate `upgrade` entry point; the old deployed code cannot enforce a rule it does not contain. After that transition, use the new flow exclusively:
+
+1. Build and independently review the target Wasm, then upload it and record its exact 32-byte hash.
+2. Call `propose_upgrade(new_wasm_hash)` with the vault admin. Record the `upgrade_proposed` event and verify `pending_upgrade` returns the expected hash and `ready_at_ledger`.
+3. Notify vault operators and governed payers, link the reviewed build, and allow the full ledger delay. Rescheduling replaces the target and restarts the delay.
+4. If the proposal is no longer approved, call `cancel_upgrade` before execution and verify `upgrade_cancelled` plus an empty `pending_upgrade`.
+5. At or after `ready_at_ledger`, call `execute_upgrade()` with the vault admin. Verify the system executable update and custom `upgraded` event contain the approved hash.
+6. Re-check `daily_cap`, `allowlist`, `agent_pubkey`, and `expiry_ledger`, then run a capped authorization smoke test before restoring traffic.
+
+The timelock provides notice for code replacement only. The same admin can still rotate keys and change policy settings; use hardware-backed custody, alerts, and tested operator procedures.
 
 ---
 
@@ -291,6 +305,8 @@ curl -s https://api-b.routedock.xyz/health
 
 Configure alerts for:
 - agent vault contract invocations
+- `upgrade_proposed` and `upgrade_cancelled` events (page the upgrade owner immediately)
+- `upgraded` events (verify the executable hash and retained policy storage)
 - channel open/close transactions
 - failed transactions involving payee accounts
 

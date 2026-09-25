@@ -26,6 +26,13 @@ const PAYEE_SPEND_PREFIX: Symbol = symbol_short!("pds");
 // Lifetime spend cap and monotonic counter (instance storage — never resets)
 const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
 const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
+// Pending timelocked Wasm proposal: (new_wasm_hash, ready_at_ledger).
+const PENDING_UPGRADE_KEY: Symbol = symbol_short!("p_upg");
+
+// 17,280 ledgers is the contract's existing approximation of one day. A proposal
+// cannot execute before this many ledgers have elapsed, giving governed payers
+// time to observe the proposal and exit before the enforcement code changes.
+const UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
 
 // ── Event names ──────────────────────────────────────────────────────────────
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
@@ -40,6 +47,8 @@ const EVT_ADMIN_TRANSFER_REQUESTED: &str = "admin_transfer_requested";
 const EVT_ADMIN_CHANGED: &str = "admin_changed";
 const EVT_VAULT_FROZEN: &str = "vault_frozen";
 const EVT_VAULT_UNFROZEN: &str = "vault_unfrozen";
+const EVT_UPGRADE_PROPOSED: &str = "upgrade_proposed";
+const EVT_UPGRADE_CANCELLED: &str = "upgrade_cancelled";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -58,6 +67,15 @@ pub enum Error {
     InvalidAmount = 10,
     UnauthorizedFunction = 11,
     MalformedAuthContext = 12,
+    NoPendingUpgrade = 13,
+    UpgradeNotReady = 14,
+    UpgradeTimelockOverflow = 15,
+}
+
+fn calculate_upgrade_ready_at(sequence: u32) -> Result<u32, Error> {
+    sequence
+        .checked_add(UPGRADE_TIMELOCK_LEDGERS)
+        .ok_or(Error::UpgradeTimelockOverflow)
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -283,19 +301,79 @@ impl AgentVault {
         env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
     }
 
-    /// Upgrade the vault's wasm to `new_wasm_hash`. Admin only.
-    /// The new wasm must already be uploaded on-chain (e.g. via `upload_contract_wasm`)
-    /// before this is called — this only swaps which code the deployed instance runs.
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+    /// Propose a Wasm upgrade to `new_wasm_hash`. Admin only.
+    ///
+    /// The proposal is announced immediately but cannot execute until
+    /// `UPGRADE_TIMELOCK_LEDGERS` have elapsed. A later proposal replaces the
+    /// current target and restarts the full delay. The target Wasm must be
+    /// uploaded on-chain before `execute_upgrade` is called.
+    pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         let storage = env.storage().instance();
         let admin: Address = storage
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+
+        let ready_at_ledger = calculate_upgrade_ready_at(env.ledger().sequence())
+            .unwrap_or_else(|error| panic_with_error!(&env, error));
+        storage.set(
+            &PENDING_UPGRADE_KEY,
+            &(new_wasm_hash.clone(), ready_at_ledger),
+        );
+        storage.extend_ttl(UPGRADE_TIMELOCK_LEDGERS, 2_000_000);
+        env.events().publish(
+            (Symbol::new(&env, EVT_UPGRADE_PROPOSED),),
+            (new_wasm_hash, ready_at_ledger),
+        );
+    }
+
+    /// Execute the current Wasm proposal once its ledger delay has elapsed. Admin only.
+    /// Execution is allowed at exactly `ready_at_ledger`.
+    pub fn execute_upgrade(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let (new_wasm_hash, ready_at_ledger): (BytesN<32>, u32) = storage
+            .get(&PENDING_UPGRADE_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingUpgrade));
+        if env.ledger().sequence() < ready_at_ledger {
+            panic_with_error!(&env, Error::UpgradeNotReady);
+        }
+
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+        storage.remove(&PENDING_UPGRADE_KEY);
         env.events()
             .publish((Symbol::new(&env, EVT_UPGRADED),), new_wasm_hash);
+    }
+
+    /// Cancel the current Wasm proposal, including after it becomes executable. Admin only.
+    pub fn cancel_upgrade(env: Env) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let (new_wasm_hash, ready_at_ledger): (BytesN<32>, u32) = storage
+            .get(&PENDING_UPGRADE_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingUpgrade));
+        storage.remove(&PENDING_UPGRADE_KEY);
+        env.events().publish(
+            (Symbol::new(&env, EVT_UPGRADE_CANCELLED),),
+            (new_wasm_hash, ready_at_ledger),
+        );
+    }
+
+    /// Return the pending Wasm hash and earliest executable ledger, if any.
+    pub fn pending_upgrade(env: Env) -> Option<(BytesN<32>, u32)> {
+        env.storage().instance().get(&PENDING_UPGRADE_KEY)
+    }
+
+    /// Return the mandatory proposal delay in ledgers (view-only).
+    pub fn upgrade_timelock_ledgers(_env: Env) -> u32 {
+        UPGRADE_TIMELOCK_LEDGERS
     }
 
     /// Return the global daily spend cap (view-only).
@@ -2001,31 +2079,313 @@ mod tests {
         );
     }
 
-    /// Test 39: upgrade() rejects a caller that isn't the admin
+    /// Upgrade timelock: a proposal records its hash and earliest executable ledger.
+    #[test]
+    fn test_propose_upgrade_records_pending_and_emits_notice() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+
+        assert_eq!(client.pending_upgrade(), None);
+        assert_eq!(client.upgrade_timelock_ledgers(), UPGRADE_TIMELOCK_LEDGERS);
+
+        let new_wasm_hash = BytesN::<32>::random(&env);
+        client.propose_upgrade(&new_wasm_hash);
+
+        let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, EVT_UPGRADE_PROPOSED),
+        );
+        assert_eq!(
+            <(BytesN<32>, u32)>::from_val(&env, &data),
+            (new_wasm_hash.clone(), ready_at_ledger),
+        );
+        assert_eq!(
+            client.pending_upgrade(),
+            Some((new_wasm_hash, ready_at_ledger)),
+        );
+    }
+
+    /// A replacement proposal supersedes the old target and restarts the full delay.
+    #[test]
+    fn test_rescheduling_upgrade_replaces_target_and_restarts_delay() {
+        let env = Env::default();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+
+        let old_hash = BytesN::<32>::random(&env);
+        client.propose_upgrade(&old_hash);
+        env.ledger().set_sequence_number(2_000);
+
+        let new_hash = BytesN::<32>::random(&env);
+        client.propose_upgrade(&new_hash);
+
+        assert_eq!(
+            client.pending_upgrade(),
+            Some((new_hash, 2_000 + UPGRADE_TIMELOCK_LEDGERS)),
+        );
+    }
+
+    /// Execution one ledger early is rejected and leaves the proposal intact.
+    #[test]
+    fn test_execute_upgrade_before_ready_fails() {
+        let env = Env::default();
+        let (client, _agent_sk, vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+        let new_wasm_hash = BytesN::<32>::random(&env);
+        client.propose_upgrade(&new_wasm_hash);
+
+        let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
+        env.ledger().set_sequence_number(ready_at_ledger - 1);
+        let result = env.try_invoke_contract::<(), Error>(
+            &vault_id,
+            &Symbol::new(&env, "execute_upgrade"),
+            Vec::new(&env),
+        );
+
+        assert_eq!(result.unwrap_err().unwrap(), Error::UpgradeNotReady);
+        assert_eq!(client.pending_upgrade(), Some((new_wasm_hash, ready_at_ledger)));
+    }
+
+    /// Execution with no proposal returns a typed error.
+    #[test]
+    fn test_execute_upgrade_without_proposal_fails() {
+        let env = Env::default();
+        let (_client, _agent_sk, vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+
+        let result = env.try_invoke_contract::<(), Error>(
+            &vault_id,
+            &Symbol::new(&env, "execute_upgrade"),
+            Vec::new(&env),
+        );
+
+        assert_eq!(result.unwrap_err().unwrap(), Error::NoPendingUpgrade);
+    }
+
+    /// Execution succeeds at the exact readiness boundary and clears the proposal.
+    #[test]
+    fn test_execute_upgrade_at_ready_updates_wasm_and_clears_proposal() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let (client, _agent_sk, vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        env.ledger().set_sequence_number(1_000);
+        client.propose_upgrade(&new_wasm_hash);
+
+        env.ledger()
+            .set_sequence_number(1_000 + UPGRADE_TIMELOCK_LEDGERS);
+        client.execute_upgrade();
+
+        let upgraded_events: std::vec::Vec<_> = env
+            .events()
+            .all()
+            .iter()
+            .filter(|(address, topics, _)| {
+                *address == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |topic| {
+                            Symbol::from_val(&env, &topic) == Symbol::new(&env, EVT_UPGRADED)
+                        })
+            })
+            .collect();
+        assert_eq!(upgraded_events.len(), 1);
+        assert_eq!(
+            BytesN::<32>::from_val(&env, &upgraded_events[0].2),
+            new_wasm_hash,
+        );
+        let pending: Option<(BytesN<32>, u32)> = env.as_contract(&vault_id, || {
+            env.storage().instance().get(&PENDING_UPGRADE_KEY)
+        });
+        assert_eq!(pending, None);
+    }
+
+    /// A failed Wasm update rolls back and leaves the approved proposal available.
+    #[test]
+    fn test_execute_upgrade_with_missing_wasm_preserves_proposal() {
+        let env = Env::default();
+        let (client, _agent_sk, vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+        let missing_hash = BytesN::<32>::random(&env);
+        client.propose_upgrade(&missing_hash);
+
+        env.ledger()
+            .set_sequence_number(1_000 + UPGRADE_TIMELOCK_LEDGERS);
+        let result = env.try_invoke_contract::<(), Error>(
+            &vault_id,
+            &Symbol::new(&env, "execute_upgrade"),
+            Vec::new(&env),
+        );
+
+        assert!(result.is_err(), "missing Wasm should fail execution");
+        assert_eq!(
+            client.pending_upgrade(),
+            Some((missing_hash, 1_000 + UPGRADE_TIMELOCK_LEDGERS)),
+        );
+    }
+
+    /// Near u32::MAX the delay fails closed instead of saturating into immediate readiness.
+    #[test]
+    fn test_propose_upgrade_timelock_overflow_fails_closed() {
+        let sequence = u32::MAX - UPGRADE_TIMELOCK_LEDGERS + 1;
+        assert_eq!(
+            calculate_upgrade_ready_at(sequence),
+            Err(Error::UpgradeTimelockOverflow),
+        );
+    }
+
+    /// Cancellation remains available after the proposal reaches its ready ledger.
+    #[test]
+    fn test_cancel_upgrade_after_ready_clears_proposal_and_emits_notice() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+        let new_wasm_hash = BytesN::<32>::random(&env);
+        let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
+        client.propose_upgrade(&new_wasm_hash);
+
+        env.ledger().set_sequence_number(ready_at_ledger);
+        client.cancel_upgrade();
+
+        let (_, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, EVT_UPGRADE_CANCELLED),
+        );
+        assert_eq!(
+            <(BytesN<32>, u32)>::from_val(&env, &data),
+            (new_wasm_hash.clone(), ready_at_ledger),
+        );
+        assert_eq!(client.pending_upgrade(), None);
+    }
+
+    /// Cancelling without a proposal returns a typed error.
+    #[test]
+    fn test_cancel_upgrade_without_proposal_fails() {
+        let env = Env::default();
+        let (_client, _agent_sk, vault_id, _provider_a) = setup(&env);
+        env.mock_all_auths();
+
+        let result = env.try_invoke_contract::<(), Error>(
+            &vault_id,
+            &Symbol::new(&env, "cancel_upgrade"),
+            Vec::new(&env),
+        );
+
+        assert_eq!(result.unwrap_err().unwrap(), Error::NoPendingUpgrade);
+    }
+
+    /// Only the admin may propose a Wasm change.
     #[test]
     #[should_panic]
-    fn test_upgrade_requires_admin_auth() {
+    fn test_propose_upgrade_requires_admin_auth() {
         let env = Env::default();
         let vault_id = env.register(AgentVault, ());
         let client = AgentVaultClient::new(&env, &vault_id);
-
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
-        client.initialize(&admin, &agent_pk, &5_000_000_i128, &soroban_sdk::Map::new(&env), &10_000_u32, &0_i128);
+        client.initialize(
+            &admin,
+            &agent_pk,
+            &5_000_000_i128,
+            &Map::new(&env),
+            &10_000_u32,
+            &0_i128,
+        );
 
         let non_admin = Address::generate(&env);
         let new_wasm_hash = BytesN::<32>::random(&env);
-
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &non_admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &vault_id,
-                fn_name: "upgrade",
+                fn_name: "propose_upgrade",
                 args: (&new_wasm_hash,).into_val(&env),
                 sub_invokes: &[],
             },
         }]);
-        client.upgrade(&new_wasm_hash);
+        client.propose_upgrade(&new_wasm_hash);
+    }
+
+    /// Only the admin may execute the stored Wasm proposal.
+    #[test]
+    #[should_panic]
+    fn test_execute_upgrade_requires_admin_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(
+            &admin,
+            &agent_pk,
+            &5_000_000_i128,
+            &Map::new(&env),
+            &10_000_u32,
+            &0_i128,
+        );
+        env.mock_all_auths();
+        client.propose_upgrade(&BytesN::<32>::random(&env));
+        env.ledger().set_sequence_number(UPGRADE_TIMELOCK_LEDGERS);
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "execute_upgrade",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.execute_upgrade();
+    }
+
+    /// Only the admin may cancel the stored Wasm proposal.
+    #[test]
+    #[should_panic]
+    fn test_cancel_upgrade_requires_admin_auth() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        client.initialize(
+            &admin,
+            &agent_pk,
+            &5_000_000_i128,
+            &Map::new(&env),
+            &10_000_u32,
+            &0_i128,
+        );
+        env.mock_all_auths();
+        client.propose_upgrade(&BytesN::<32>::random(&env));
+
+        let non_admin = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &non_admin,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &vault_id,
+                fn_name: "cancel_upgrade",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.cancel_upgrade();
     }
 
     /// Test: admin extends expiry after it lapsed — payments succeed again.
