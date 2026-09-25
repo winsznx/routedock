@@ -60,6 +60,26 @@ pub enum Error {
     MalformedAuthContext = 12,
 }
 
+// ── Instance storage TTL ─────────────────────────────────────────────────────
+// Every piece of vault state (admin, caps, allowlist, expiry, frozen flag, agent
+// key) lives in instance storage, so the instance entry's TTL is the vault's own
+// lifetime. Soroban does not refresh an entry's TTL just because it was written,
+// and `__check_auth` is the only entrypoint agent traffic reaches — so a vault
+// that only receives admin calls (frozen, or past its expiry) would keep counting
+// down towards archival from the TTL `initialize` left behind.
+const INSTANCE_TTL_THRESHOLD: u32 = 2_000_000;
+const INSTANCE_TTL_EXTEND_TO: u32 = 2_000_000;
+
+/// Refresh the instance entry's TTL. Called from `initialize`, from `__check_auth`,
+/// and from every admin entrypoint after its auth check succeeds — so an
+/// unauthenticated caller cannot make the vault pay for a bump on someone else's
+/// behalf. Entries still above `INSTANCE_TTL_THRESHOLD` are left alone.
+fn bump_instance(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+}
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -91,7 +111,7 @@ impl AgentVault {
         storage.set(&LIFETIME_SPEND_KEY, &0_i128);
         storage.set(&INIT_KEY, &true);
         // Extend instance storage TTL to outlive any realistic session expiry
-        env.storage().instance().extend_ttl(2_000_000, 2_000_000);
+        bump_instance(&env);
     }
 
     /// Update the daily USDC spend cap (in stroops). Admin only.
@@ -101,6 +121,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         let old_cap: i128 = storage.get(&CAP_KEY).unwrap_or(0);
         storage.set(&CAP_KEY, &new_cap);
         env.events().publish(
@@ -116,6 +137,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         let mut map: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
@@ -134,6 +156,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         let mut map: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
@@ -159,6 +182,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
 
         // topics: (Symbol("session_settled"), channel_id, payee)
         // data:   (payer, cumulative_amount, voucher_count)
@@ -177,6 +201,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         let old_cap: i128 = storage.get(&LIFETIME_CAP_KEY).unwrap_or(0);
         storage.set(&LIFETIME_CAP_KEY, &new_cap);
         env.events().publish(
@@ -194,6 +219,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         storage.set(&EXPIRY_KEY, &new_expiry);
         // topics: (Symbol("expiry_updated"), admin)
         // data:   new_expiry
@@ -212,6 +238,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         storage.set(&AGENT_KEY, &new_pk);
         // topics: (Symbol("agent_key_rotated"),)
         // data:   new_pk
@@ -236,6 +263,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         storage.set(&PENDING_ADMIN_KEY, &new_admin);
         env.events().publish(
             (Symbol::new(&env, EVT_ADMIN_TRANSFER_REQUESTED), admin, new_admin),
@@ -250,6 +278,7 @@ impl AgentVault {
             .get(&PENDING_ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NoPendingAdmin));
         pending_admin.require_auth();
+        bump_instance(&env);
         let old_admin: Address = storage
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
@@ -268,6 +297,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         storage.set(&FROZEN_KEY, &true);
         env.events().publish((Symbol::new(&env, EVT_VAULT_FROZEN),), ());
     }
@@ -279,6 +309,7 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
+        bump_instance(&env);
         storage.set(&FROZEN_KEY, &false);
         env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
     }
@@ -294,6 +325,9 @@ impl AgentVault {
         admin.require_auth();
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+        // The swap rewrites the instance entry itself, so bump after it to leave
+        // the vault with a full TTL when the upgrade returns.
+        bump_instance(&env);
         env.events()
             .publish((Symbol::new(&env, EVT_UPGRADED),), new_wasm_hash);
     }
@@ -352,8 +386,7 @@ impl CustomAccountInterface for AgentVault {
     ) -> Result<(), Error> {
         let storage = env.storage().instance();
         // Keep instance storage alive through the lifetime of auth calls
-        storage.extend_ttl(2_000_000, 2_000_000);
-
+        bump_instance(&env);
 
         // ── Emergency Stop Check ─────────────────────────────────────────────
         let is_frozen: bool = storage.get(&FROZEN_KEY).unwrap_or(false);
@@ -2462,6 +2495,216 @@ mod tests {
             &contexts,
         );
         assert!(result.is_ok(), "valid transfer must still pass: {result:?}");
+    }
+
+    // ── Instance TTL (issue #406) ─────────────────────────────────────────────
+    // All vault state lives in instance storage, so the instance entry's TTL is
+    // the vault's lifetime. `initialize` and `__check_auth` were the only call
+    // sites that refreshed it, which left a vault that sees admin traffic only
+    // — a frozen vault, or one whose expiry lapsed — counting down to archival.
+
+    /// Ledgers to fast-forward so the instance TTL drops inside the bump
+    /// threshold and the next entrypoint has to refresh it.
+    const TTL_DECAY_LEDGERS: u32 = 1_500_000;
+
+    /// Read the vault's instance TTL from inside its own storage context.
+    fn instance_ttl(env: &Env, vault_id: &Address) -> u32 {
+        // `get_ttl` is a testutils-only extension method (soroban-sdk 21+).
+        use soroban_sdk::testutils::storage::Instance as _;
+        env.as_contract(vault_id, || env.storage().instance().get_ttl())
+    }
+
+    /// Fast-forward the ledger far enough that the instance entry is inside the
+    /// bump threshold, and assert that it really decayed — otherwise a later
+    /// claim that the TTL is back at the extend-to value could pass for the
+    /// wrong reason.
+    fn decay_instance_ttl(env: &Env, vault_id: &Address) {
+        let sequence = env.ledger().sequence() + TTL_DECAY_LEDGERS;
+        env.ledger().with_mut(|ledger| ledger.sequence_number = sequence);
+        assert!(
+            instance_ttl(env, vault_id) < INSTANCE_TTL_THRESHOLD,
+            "precondition: {TTL_DECAY_LEDGERS} ledgers must take the instance TTL below the bump threshold"
+        );
+    }
+
+    /// Fast-forward the ledger, run `call`, and assert it refreshed the TTL.
+    fn assert_refreshes_instance_ttl(
+        env: &Env,
+        vault_id: &Address,
+        entrypoint: &str,
+        call: impl FnOnce(),
+    ) {
+        decay_instance_ttl(env, vault_id);
+        call();
+        assert_eq!(
+            instance_ttl(env, vault_id),
+            INSTANCE_TTL_EXTEND_TO,
+            "{entrypoint} must refresh the instance TTL"
+        );
+    }
+
+    /// Test 45: an admin entrypoint refreshes the instance TTL after a long
+    /// stretch with no agent traffic — the recovery path from issue #406.
+    #[test]
+    fn test_admin_entrypoint_refreshes_instance_ttl_after_ledger_advance() {
+        let env = Env::default();
+        let (client, _, vault_id, _) = setup(&env);
+        env.mock_all_auths();
+
+        // #given a vault whose instance TTL has decayed inside the bump threshold
+        decay_instance_ttl(&env, &vault_id);
+
+        // #when the admin freezes it
+        client.freeze();
+
+        // #then the instance entry lives for the full extend-to TTL again
+        assert_eq!(
+            instance_ttl(&env, &vault_id),
+            INSTANCE_TTL_EXTEND_TO,
+            "freeze must refresh the instance TTL"
+        );
+    }
+
+    /// Test 46: every admin entrypoint that writes instance storage refreshes the
+    /// instance TTL. Kept as one loop so a missing bump in any single entrypoint
+    /// fails here rather than silently shipping.
+    #[test]
+    fn test_every_admin_entrypoint_refreshes_instance_ttl() {
+        let env = Env::default();
+        let (client, _, vault_id, provider_a) = setup(&env);
+        env.mock_all_auths();
+        // `upgrade` needs a hash the host can resolve, so upload an empty wasm
+        // rather than passing a random hash.
+        let wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(Bytes::from_slice(&env, &[]));
+        let payee = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        assert_refreshes_instance_ttl(&env, &vault_id, "set_daily_cap", || {
+            client.set_daily_cap(&6_000_000_i128)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "add_to_allowlist", || {
+            client.add_to_allowlist(&payee, &1_000_000_i128)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "remove_from_allowlist", || {
+            client.remove_from_allowlist(&payee)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "record_session_settlement", || {
+            client.record_session_settlement(
+                &Address::generate(&env),
+                &Address::generate(&env),
+                &provider_a,
+                &500_000_i128,
+                &3_u32,
+            )
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "set_lifetime_cap", || {
+            client.set_lifetime_cap(&9_000_000_i128)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "set_expiry", || {
+            client.set_expiry(&2_000_000_u32)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "set_agent_pubkey", || {
+            client.set_agent_pubkey(&BytesN::<32>::random(&env))
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "transfer_admin", || {
+            client.transfer_admin(&new_admin)
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "accept_admin", || {
+            client.accept_admin()
+        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "freeze", || client.freeze());
+        assert_refreshes_instance_ttl(&env, &vault_id, "unfreeze", || client.unfreeze());
+        // Last: swapping the executable rewrites the instance entry.
+        assert_refreshes_instance_ttl(&env, &vault_id, "upgrade", || {
+            client.upgrade(&wasm_hash)
+        });
+    }
+
+    /// Test 47: `__check_auth` still refreshes the instance TTL — it was one of
+    /// the two original call sites, and agent traffic is what keeps a vault that
+    /// is not being administered alive.
+    #[test]
+    fn test_check_auth_refreshes_instance_ttl_after_ledger_advance() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+
+        let admin = Address::generate(&env);
+        let (agent_sk, agent_pk) = gen_keypair(&env);
+        let provider_a = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
+        // Expiry beyond the fast-forward below, so the payment is still in-session.
+        client.initialize(&admin, &agent_pk, &5_000_000_i128, &allowlist, &2_000_000_u32, &0_i128);
+
+        // #given a vault whose instance TTL has decayed inside the bump threshold
+        decay_instance_ttl(&env, &vault_id);
+
+        // #when the agent pays an allowlisted payee
+        let payload = BytesN::<32>::random(&env);
+        let sig = sign_payload(&env, &agent_sk, &payload);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "payment inside the session window should pass: {result:?}");
+
+        // #then the instance entry lives for the full extend-to TTL again
+        assert_eq!(
+            instance_ttl(&env, &vault_id),
+            INSTANCE_TTL_EXTEND_TO,
+            "__check_auth must refresh the instance TTL"
+        );
+    }
+
+    /// Test 48: a rejected call must not leave a refreshed instance TTL behind —
+    /// the bump sits behind the auth check. Note the host also reverts a failed
+    /// invocation, so this asserts the end state rather than the ordering.
+    #[test]
+    fn test_unauthorized_admin_call_does_not_refresh_instance_ttl() {
+        let env = Env::default();
+        let (client, _, vault_id, _) = setup(&env);
+        // No mock_all_auths(): `freeze` has nothing to authorize with.
+
+        decay_instance_ttl(&env, &vault_id);
+        let before = instance_ttl(&env, &vault_id);
+
+        assert!(
+            client.try_freeze().is_err(),
+            "freeze without admin auth must fail"
+        );
+        assert_eq!(
+            instance_ttl(&env, &vault_id),
+            before,
+            "a rejected call must not refresh the instance TTL"
+        );
+    }
+
+    /// Test 49: an admin entrypoint on an uninitialized vault fails with a typed
+    /// error and never reaches the TTL bump.
+    #[test]
+    fn test_admin_entrypoint_before_initialize_does_not_bump_ttl() {
+        let env = Env::default();
+        let vault_id = env.register(AgentVault, ());
+        let client = AgentVaultClient::new(&env, &vault_id);
+        env.mock_all_auths();
+
+        let before = instance_ttl(&env, &vault_id);
+
+        assert_eq!(
+            client.try_freeze().unwrap_err().unwrap(),
+            Error::NotInitialized.into(),
+            "freeze on an uninitialized vault must fail with NotInitialized"
+        );
+        assert_eq!(
+            instance_ttl(&env, &vault_id),
+            before,
+            "an uninitialized vault must not have its instance TTL bumped"
+        );
     }
 }
 

@@ -360,6 +360,11 @@ export interface SessionHandle {
    * parsed response body. With default concurrency (1) the next voucher is not
    * issued until the provider returns HTTP 200 for the previous one.
    *
+   * Once close() has been called — or the maxDurationMs guard has auto-closed
+   * the session — the next `next()` ends the iteration by throwing
+   * `RouteDockChannelStateError` (`session closed`) instead of signing another
+   * voucher; no further spend-cap check or fetch runs.
+   *
    * mpp-session-ws: opens the channel and negotiates the first voucher over
    * HTTP, upgrades the connection to WebSocket, and yields each server frame
    * (JSON frames parsed, raw strings yielded as-is). The stream ends when the

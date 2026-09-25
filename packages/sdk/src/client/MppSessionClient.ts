@@ -437,6 +437,17 @@ export class MppSessionClient {
 
         const concurrency = Math.max(1, options?.concurrency ?? 1)
 
+        // #398: close() sets `closed` but the stream loops never read it, so a
+        // consumer that kept pulling still ran checkSpend()/doFetch() and signed
+        // fresh vouchers after close (or after the maxDuration guard fired).
+        // Every loop checks this before issuing another voucher and ends the
+        // iterator with a typed error so the caller knows why it stopped.
+        const ensureOpen = (): void => {
+          if (closed) {
+            throw new RouteDockChannelStateError('session closed')
+          }
+        }
+
         // Shared fetch-one helper — retries on transient errors.
         const doFetch = (): Promise<unknown> =>
           withRetry(async () => {
@@ -472,6 +483,7 @@ export class MppSessionClient {
           // The next voucher is not issued until the provider returns HTTP 200
           // for the current one, preventing out-of-order sequence numbers.
           while (true) {
+            ensureOpen()
             await checkSpend()
             const data = await doFetch()
             vouchersIssued++
@@ -484,12 +496,17 @@ export class MppSessionClient {
           // concurrent vouchers.
           const queue: Array<Promise<unknown>> = []
           for (let i = 0; i < concurrency; i++) {
+            ensureOpen()
             await checkSpend()
             queue.push(doFetch())
           }
 
           while (true) {
+            ensureOpen()
             const data = await queue.shift()!
+            // A close() that lands while the in-flight fetch was resolving must
+            // not replenish the window with a fresh voucher.
+            ensureOpen()
             // Replenish the window immediately after draining one slot.
             await checkSpend()
             queue.push(doFetch())
