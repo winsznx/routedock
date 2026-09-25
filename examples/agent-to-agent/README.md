@@ -25,7 +25,19 @@ An **orchestrator agent** breaks a document into chunks, then pays a **specialis
    curl "https://friendbot.stellar.org?addr=G<specialist-pubkey>"
    ```
 
-3. Copy the env file:
+3. Add USDC trustlines to both agents and fund the payer. Replace each `<..._KEY>` placeholder with the corresponding Stellar CLI signing-key alias:
+
+   ```bash
+   stellar tx new --source <ORCHESTRATOR_KEY> --network testnet \
+     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+
+   stellar tx new --source <SPECIALIST_KEY> --network testnet \
+     change-trust --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --limit 100
+   ```
+
+   The specialist needs the trustline to receive x402 transfers. Then open [Circle's testnet faucet](https://faucet.circle.com/), select **Stellar Testnet**, paste the orchestrator public key, and request spendable testnet USDC for the payer.
+
+4. Copy the env file:
 
    ```bash
    cp .env.example .env
@@ -92,4 +104,4 @@ Each agent has its own funded Stellar keypair. The orchestrator's wallet is debi
 - Replace the canned summariser with a real LLM call inside the specialist's `POST /summarise` handler.
 - Add more specialist agents (e.g., `/translate`, `/classify`) — the orchestrator calls each one independently.
 - Switch to `mpp-session` if the orchestrator needs to stream many sub-results from a single specialist — see `streaming-orderbook-agent` for the session pattern.
-- Deploy orchestrator and specialist as separate services. The only change needed is setting `INFERENCE_PROVIDER_URL` to the specialist's public URL and `START_MOCK_SPECIALIST=false`.
+- Deploy orchestrator and specialist as separate services. Set `SPECIALIST_URL` to the specialist's public base URL and `START_MOCK_SPECIALIST=false` in the orchestrator environment.
