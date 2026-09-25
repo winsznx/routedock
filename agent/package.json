@@ -7,6 +7,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test __tests__/recoveryExitCode.test.ts",
     "test:e2e": "tsx __tests__/e2e.test.ts",
     "recover-sessions": "ts-node-dev --transpile-only src/recover-sessions.ts"
   },
