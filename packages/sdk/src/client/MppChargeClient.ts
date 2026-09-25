@@ -58,7 +58,15 @@ export class MppChargeClient {
         throw new RouteDockManifestError(`MPP charge failed: HTTP ${response.status}`)
       }
 
-      const data = await response.json()
+      let data: unknown
+      try {
+        data = await response.json()
+      } catch (cause) {
+        throw new RouteDockManifestError(
+          `Failed to parse JSON from response (HTTP ${response.status})`,
+          { cause },
+        )
+      }
       return { data, txHash, mode: 'mpp-charge', amount: pricing.amount, timestamp: Date.now() }
     }, this.retryPolicy)
   }
