@@ -56,7 +56,7 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
 
 **Parameters:**
 - `url` (required): Full URL of the provider endpoint
-- `max_amount` (required): Maximum USDC amount to pay
+- `max_amount` (required): Maximum USDC amount to pay, as a positive decimal string such as `"0.01"` (up to 7 decimal places; no currency symbol)
 - `preferred_mode` (optional): Preferred payment mode (`x402`, `mpp-charge`, `mpp-session`)
 
 **Returns:** Payment result with mode, amount, transaction hash, and response data

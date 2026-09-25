@@ -11,6 +11,7 @@
  * the MCP Server, and dispatching to these functions.
  */
 
+import { usdcToStroops } from '@routedock/routedock'
 import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 
@@ -121,17 +122,36 @@ export async function handlePayForData(
   const { url, max_amount, preferred_mode } = args
   const { client } = deps
 
+  let maxAmountStroops: bigint
+  try {
+    if (typeof max_amount !== 'string') {
+      throw new TypeError('max_amount must be a string')
+    }
+    maxAmountStroops = usdcToStroops(max_amount)
+    if (maxAmountStroops <= 0n) {
+      throw new RangeError('max_amount must be positive')
+    }
+  } catch {
+    return err('max_amount must be a positive USDC amount as a decimal string, e.g. "0.01"')
+  }
+
   const modeOptions = preferred_mode
     ? { forceMode: preferred_mode as PaymentMode }
     : undefined
 
   const estimate = await client.estimateCost(url, modeOptions)
 
-  if (estimate.amount === undefined || isNaN(parseFloat(estimate.amount))) {
+  let estimatedAmountStroops: bigint
+  try {
+    if (estimate.amount === undefined) {
+      throw new TypeError('Provider did not return an amount')
+    }
+    estimatedAmountStroops = usdcToStroops(estimate.amount)
+  } catch {
     return err('Provider returned an undefined or invalid price')
   }
 
-  if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
+  if (estimatedAmountStroops > maxAmountStroops) {
     return err(
       `Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`,
     )
