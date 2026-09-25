@@ -70,6 +70,10 @@ jobs:
         run: pnpm --filter @routedock/routedock build
       - name: Build remaining packages
         run: pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build
+      - name: Check package types (arethetypeswrong)
+        run: |
+          npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/nulth-sdk
+          npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/sdk
 
   typecheck:
     runs-on: ubuntu-latest
