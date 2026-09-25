@@ -6,8 +6,7 @@ import type { Request, Response } from 'express'
 import { Keypair } from '@stellar/stellar-sdk'
 import { routedock, type RouteDockMiddlewareOptions } from '../routedockMiddleware.js'
 import type { RouteDockManifest } from '../../types.js'
-import { InMemorySeenTxStore } from '../SeenTxStore.js'
-
+import { InMemorySeenTxStore, paymentIdempotencyKey } from '../SeenTxStore.js'
 // Generate fresh keypairs — avoids hardcoding secrets while keeping tests self-contained
 const payeeKeypair = Keypair.random()
 const commitKeypair = Keypair.random()
@@ -260,17 +259,56 @@ describe('routedock (Express) — settlement idempotency', () => {
       onSettled: async (txHash: string) => { settled.push(txHash) },
     })
     try {
-      // Seed the store with a fake settlement record so the handler replays it
-      await seenStore.set('fake-key', {
+      const key = await paymentIdempotencyKey((n) => (n === 'payment-signature' ? 'SIG' : undefined))
+      assert.ok(key)
+      await seenStore.set(key, {
         txHash: 'CACHED_TX_HASH',
         headers: { 'X-Payment-Response': 'cached-response' },
       })
 
-      // We can't easily generate a valid idempotency key from a fake header
-      // because paymentIdempotencyKey hashes the header. Instead, test the
-      // InMemorySeenTxStore directly in its own test file. Here we verify the
-      // handler doesn't crash when the store returns a cached value.
-      assert.ok(true, 'idempotency store was seeded without error')
+      const res = await fetch(`${url}/price`, {
+        headers: { 'payment-signature': 'SIG' },
+      })
+      assert.equal(res.status, 200)
+      const data = (await res.json()) as { price: string }
+      assert.equal(data.price, '42')
+      assert.equal(res.headers.get('x-payment-response'), 'cached-response')
+
+      await new Promise((r) => setImmediate(r))
+      assert.equal(settled.length, 0)
+    } finally {
+      await close()
+    }
+  })
+
+  it('replays cached settlement on duplicate authorization header (mpp-charge)', async () => {
+    const seenStore = new InMemorySeenTxStore()
+    const settled: string[] = []
+
+    const { url, close } = await makeServer({
+      modes: ['mpp-charge'],
+      pricing: { 'mpp-charge': '0.0008' },
+      seenTxStore: seenStore,
+      onSettled: async (txHash: string) => { settled.push(txHash) },
+    })
+    try {
+      const key = await paymentIdempotencyKey((n) => (n === 'authorization' ? 'Payment test-credential' : undefined))
+      assert.ok(key)
+      await seenStore.set(key, {
+        txHash: 'CACHED_TX_HASH',
+        headers: { 'X-Payment-Response': 'cached-response' },
+      })
+
+      const res = await fetch(`${url}/price`, {
+        headers: { authorization: 'Payment test-credential' },
+      })
+      assert.equal(res.status, 200)
+      const data = (await res.json()) as { price: string }
+      assert.equal(data.price, '42')
+      assert.equal(res.headers.get('x-payment-response'), 'cached-response')
+
+      await new Promise((r) => setImmediate(r))
+      assert.equal(settled.length, 0)
     } finally {
       await close()
     }

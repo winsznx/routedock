@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { Horizon } from '@stellar/stellar-sdk'
 import { OnChainRegistry } from '../OnChainRegistry.js'
 import { ProviderRegistry } from '../ProviderRegistry.js'
 
@@ -153,6 +154,117 @@ describe('OnChainRegistry.listProviders — multi-account', () => {
 })
 
 // ---------------------------------------------------------------------------
+// OnChainRegistry Tests — timeout and concurrency
+// ---------------------------------------------------------------------------
+
+/** A Horizon that accepts the connection and never answers. */
+function stalled(): Promise<never> {
+  return new Promise<never>(() => {})
+}
+
+function fakeAccount(endpoint: string) {
+  return { data_attr: { routedock_endpoint: endpoint } }
+}
+
+describe('OnChainRegistry.listProviders — timeout', () => {
+  it(
+    'resolves to [] within the timeout budget when the only account stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given a Horizon that never answers
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['SLOW'],
+        timeoutMs: 50,
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 1000, `expected < 1000ms, took ${elapsed}ms`)
+    },
+  )
+
+  it(
+    'returns the healthy account when another account stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given one stalled account and one healthy account
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', (accountId: string) =>
+        accountId === 'SLOW' ? stalled() : Promise.resolve(fakeAccount('https://healthy.example.com')),
+      )
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['SLOW', 'HEALTHY'],
+        timeoutMs: 50,
+      })
+
+      // #when
+      const providers = await registry.listProviders()
+
+      // #then
+      assert.equal(providers.length, 1)
+      assert.equal(providers[0]!.account, 'HEALTHY')
+      assert.equal(providers[0]!.endpoint, 'https://healthy.example.com')
+    },
+  )
+
+  it(
+    'times out three stalled accounts in a single concurrent window',
+    { timeout: 5000 },
+    async (t) => {
+      // #given three accounts that all stall
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['S1', 'S2', 'S3'],
+        timeoutMs: 300,
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then — a sequential loop would need at least 900ms
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 700, `expected concurrent loads (< 700ms), took ${elapsed}ms`)
+    },
+  )
+
+  it(
+    'returns results in knownAccounts order even when loads finish out of order',
+    { timeout: 5000 },
+    async (t) => {
+      // #given the first account is the slowest to answer
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', async (accountId: string) => {
+        if (accountId === 'A') await new Promise((resolve) => setTimeout(resolve, 30))
+        return fakeAccount(`https://${accountId.toLowerCase()}.example.com`)
+      })
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['A', 'B', 'C'],
+        timeoutMs: 1000,
+      })
+
+      // #when
+      const providers = await registry.listProviders()
+
+      // #then
+      assert.deepEqual(
+        providers.map((p) => p.account),
+        ['A', 'B', 'C'],
+      )
+    },
+  )
+})
+
+// ---------------------------------------------------------------------------
 // ProviderRegistry helpers
 // ---------------------------------------------------------------------------
 
@@ -244,4 +356,29 @@ describe('ProviderRegistry.listProviders — on-chain fallback', () => {
     assert.equal(providers.length, 1)
     assert.equal(providers[0]!.source, 'onchain')
   })
+
+  it(
+    'forwards onChain.timeoutMs so listProviders resolves when Horizon stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given a stalled Horizon and a registry configured with a 50ms timeout
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new ProviderRegistry({
+        onChain: {
+          horizonUrl: 'https://horizon-testnet.stellar.org',
+          knownAccounts: ['SLOW'],
+          timeoutMs: 50,
+        },
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 1000, `expected < 1000ms, took ${elapsed}ms`)
+    },
+  )
 })

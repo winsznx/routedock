@@ -55,7 +55,7 @@ graph LR
 
 | Layer | Mechanism | Enforcement Point |
 |---|---|---|
-| Application | voucher monotonic check | `packages/sdk/src/client/MppSessionClient.ts:currentCumulative` |
+| Application | per-voucher challenge guard (channel, amount, cumulative) | `packages/sdk/src/client/MppSessionClient.ts:reserveNextCumulative` |
 | Application | manifest schema validation (AJV draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
 | Database | monotonic cumulative trigger | `supabase/migrations/001_init.sql:37,50` |
 | Database | RLS on sessions table | `supabase/migrations/001_init.sql:128-131` |

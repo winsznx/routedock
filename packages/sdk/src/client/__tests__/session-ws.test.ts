@@ -12,8 +12,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { describe, it, mock } from 'node:test'
+import { beforeEach, describe, it, mock } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
+import { Challenge } from 'mppx'
 import type { RouteDockManifest } from '../../types.js'
 import type { WebSocketFactory } from '../MppSessionClient.js'
 import {
@@ -40,6 +41,33 @@ let wsScript: {
   frames?: string[]
   closeCode?: number
 } = {}
+/** Challenge the provider's 402 probe advertises; honest by default. */
+let wsChallengeScript: { amount?: string; channel?: string; cumulativeAmount?: string } = {}
+/** Contexts createCredential was handed, one per WebSocket voucher. */
+let wsCredentialContexts: Array<{ cumulativeAmount?: string } | undefined> = []
+
+// Each test starts from an honest probe challenge and a clean context log; a
+// test that scripts a hostile challenge must not leak it into the next one.
+beforeEach(() => {
+  wsChallengeScript = {}
+  wsCredentialContexts = []
+})
+
+function buildProbeChallenge(): Challenge.Challenge {
+  return Challenge.from({
+    id: 'ws-probe-challenge',
+    realm: 'provider.test',
+    method: 'stellar',
+    intent: 'channel',
+    request: {
+      amount: wsChallengeScript.amount ?? '1000',
+      channel: wsChallengeScript.channel ?? CHANNEL_CONTRACT,
+      ...(wsChallengeScript.cumulativeAmount !== undefined
+        ? { methodDetails: { cumulativeAmount: wsChallengeScript.cumulativeAmount } }
+        : {}),
+    },
+  })
+}
 
 const fakeMppx = {
   fetch: async (): Promise<Response> => {
@@ -49,9 +77,24 @@ const fakeMppx = {
     if (mppxScript.probeRejects) {
       throw new TypeError('fetch failed')
     }
-    return new Response('', { status: mppxScript.probeStatus ?? 402 })
+    const status = mppxScript.probeStatus ?? 402
+    if (status !== 402) {
+      return new Response('', { status })
+    }
+    // A real 402 carries the challenge the client has to validate before the
+    // voucher is signed into the WebSocket handshake.
+    return new Response('', {
+      status: 402,
+      headers: { 'WWW-Authenticate': Challenge.serialize(buildProbeChallenge()) },
+    })
   },
-  createCredential: async (): Promise<string> => 'Payment fake-voucher-credential',
+  createCredential: async (
+    _response: Response,
+    context?: { cumulativeAmount?: string },
+  ): Promise<string> => {
+    wsCredentialContexts.push(context)
+    return 'Payment fake-voucher-credential'
+  },
 }
 
 mock.module('mppx/client', {
@@ -171,6 +214,22 @@ describe('mpp-session-ws — success path', () => {
     assert.equal(calls[0]!.headers.authorization, 'Payment fake-voucher-credential')
   })
 
+  it('signs an explicit cumulative amount derived from the manifest rate', async () => {
+    mppxScript = {}
+    wsScript = { frames: ['{}'], closeCode: 1000 }
+    wsChallengeScript = { cumulativeAmount: '0' }
+    const { factory } = makeFakeWsFactory()
+
+    const handle = await openWsHandle(factory)
+    for await (const _ of handle.stream()) {
+      // consume
+    }
+
+    // The voucher context is what decides the signed cumulative — it must come
+    // from the client, not from the probe.
+    assert.deepEqual(wsCredentialContexts, [{ cumulativeAmount: '1000' }])
+  })
+
   it('converts http:// URLs to ws://', async () => {
     mppxScript = {}
     wsScript = { frames: ['{}'], closeCode: 1000 }
@@ -249,6 +308,28 @@ describe('mpp-session-ws — failure paths', () => {
         err instanceof RouteDockChannelStateError &&
         /expected HTTP 402/.test((err as Error).message),
     )
+  })
+
+  it('rejects an inflated probe challenge before the voucher is signed', async () => {
+    // #given a provider whose probe reports a cumulative the client never signed
+    mppxScript = {}
+    wsScript = {}
+    wsChallengeScript = { cumulativeAmount: '999000' }
+    const { factory, calls } = makeFakeWsFactory()
+
+    const handle = await openWsHandle(factory)
+    await assert.rejects(
+      async () => {
+        for await (const _ of handle.stream()) {
+          // consume
+        }
+      },
+      (err: unknown) =>
+        err instanceof RouteDockChannelStateError &&
+        /cumulative/i.test((err as Error).message),
+    )
+    assert.equal(wsCredentialContexts.length, 0)
+    assert.equal(calls.length, 0, 'the WebSocket must not open for a rejected challenge')
   })
 
   it('throws a retryable error when the probe fails with HTTP 503', async () => {

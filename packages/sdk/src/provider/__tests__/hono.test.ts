@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Hono } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
-import { routedockHono } from '../hono.js'
+import { routedockHono, type RouteDockHonoOptions } from '../hono.js'
 import type { RouteDockManifest } from '../../types.js'
+import { InMemorySeenTxStore, paymentIdempotencyKey } from '../SeenTxStore.js'
 
 // Generate fresh keypairs — avoids hardcoding secrets while keeping tests self-contained
 const payeeKeypair = Keypair.random()
@@ -46,10 +47,7 @@ const BASE_OPTS = {
   manifest,
 }
 
-function makeApp(overrides: Partial<typeof BASE_OPTS & {
-  modes: ('x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws')[]
-  pricing: Record<string, unknown>
-}> = {}) {
+function makeApp(overrides: Partial<RouteDockHonoOptions> = {}) {
   const app = new Hono()
   app.use(
     '*',
@@ -62,7 +60,7 @@ function makeApp(overrides: Partial<typeof BASE_OPTS & {
         'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
       },
       ...overrides,
-    } as Parameters<typeof routedockHono>[0]),
+    }),
   )
   app.get('/price', (c) => c.json({ price: '42' }))
   return app
@@ -192,3 +190,66 @@ describe('routedockHono — constructor validation', () => {
     )
   })
 })
+
+describe('routedockHono — settlement idempotency', () => {
+  it('replays cached settlement on duplicate payment-signature header', async () => {
+    const seenStore = new InMemorySeenTxStore()
+    const settled: string[] = []
+
+    const key = await paymentIdempotencyKey((n) => (n === 'payment-signature' ? 'SIG' : undefined))
+    assert.ok(key)
+    await seenStore.set(key, {
+      txHash: 'CACHED_TX_HASH',
+      headers: { 'X-Payment-Response': 'cached-response' },
+    })
+
+    const app = makeApp({
+      modes: ['x402'],
+      pricing: { x402: '0.001' },
+      seenTxStore: seenStore,
+      onSettled: async (txHash: string) => { settled.push(txHash) },
+    })
+
+    const res = await app.request('/price', {
+      headers: { 'payment-signature': 'SIG' },
+    })
+    assert.equal(res.status, 200)
+    const data = (await res.json()) as { price: string }
+    assert.equal(data.price, '42')
+    assert.equal(res.headers.get('x-payment-response'), 'cached-response')
+
+    await new Promise((r) => setImmediate(r))
+    assert.equal(settled.length, 0)
+  })
+
+  it('replays cached settlement on duplicate authorization header (mpp-charge)', async () => {
+    const seenStore = new InMemorySeenTxStore()
+    const settled: string[] = []
+
+    const key = await paymentIdempotencyKey((n) => (n === 'authorization' ? 'Payment test-credential' : undefined))
+    assert.ok(key)
+    await seenStore.set(key, {
+      txHash: 'CACHED_TX_HASH',
+      headers: { 'X-Payment-Response': 'cached-response' },
+    })
+
+    const app = makeApp({
+      modes: ['mpp-charge'],
+      pricing: { 'mpp-charge': '0.0008' },
+      seenTxStore: seenStore,
+      onSettled: async (txHash: string) => { settled.push(txHash) },
+    })
+
+    const res = await app.request('/price', {
+      headers: { authorization: 'Payment test-credential' },
+    })
+    assert.equal(res.status, 200)
+    const data = (await res.json()) as { price: string }
+    assert.equal(data.price, '42')
+    assert.equal(res.headers.get('x-payment-response'), 'cached-response')
+
+    await new Promise((r) => setImmediate(r))
+    assert.equal(settled.length, 0)
+  })
+})
+
