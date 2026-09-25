@@ -26,6 +26,7 @@ import {
   RouteDockChannelStateError,
   RouteDockSignatureError,
   RouteDockDisputeError,
+  RouteDockRefundWindowError,
   httpStatusToError,
   wrapFetchError,
 } from '../errors.js'
@@ -419,13 +420,13 @@ export class MppSessionClient {
         try {
           const account = await server.getAccount(agentPublicKey)
           const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
-            .addOperation(contract.call('request_refund'))
+            .addOperation(contract.call('close_start'))
             .setTimeout(30)
             .build()
 
           const simResult = await server.simulateTransaction(tx)
           if (rpcMod.Api.isSimulationError(simResult)) {
-            throw new RouteDockDisputeError(`request_refund simulation failed: ${(simResult as any).error}`)
+            throw new RouteDockDisputeError(`close_start simulation failed: ${(simResult as any).error}`)
           }
 
           const preparedTx = await server.prepareTransaction(tx)
@@ -447,7 +448,35 @@ export class MppSessionClient {
         }
       },
 
+      async claimRefund(): Promise<string> {
+        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const rpcUrl = network === 'testnet' ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org'
+        const server = new rpcMod.Server(rpcUrl)
+        const contract = new Contract(channelFactory)
+        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+        try {
+          const account = await server.getAccount(agentPublicKey)
+          const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(contract.call('refund')).setTimeout(30).build()
+          const simResult = await server.simulateTransaction(tx)
+          if (rpcMod.Api.isSimulationError(simResult)) {
+            const detail = String((simResult as any).error)
+            if (detail.includes('#3') || /waiting|not elapsed/i.test(detail)) throw new RouteDockRefundWindowError(`Refund window has not elapsed: ${detail}`)
+            throw new RouteDockDisputeError(`refund simulation failed: ${detail}`)
+          }
+          const prepared = await server.prepareTransaction(tx); prepared.sign(agentKeypair)
+          const result = await server.sendTransaction(prepared)
+          if (!result.hash) throw new RouteDockDisputeError('Refund transaction not sent')
+          return result.hash
+        } catch (err) {
+          if (err instanceof RouteDockRefundWindowError || err instanceof RouteDockDisputeError) throw err
+          throw new RouteDockDisputeError(`Failed to claim refund: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      },
+
       async settleWithLatestVoucher(): Promise<string> {
+        throw new RouteDockDisputeError('Unilateral voucher settlement is not supported by the deployed channel contract; use requestRefund() and claimRefund()')
+        /*
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = network === 'testnet'
           ? 'https://soroban-testnet.stellar.org'
@@ -499,10 +528,11 @@ export class MppSessionClient {
           if (err instanceof RouteDockDisputeError) throw err
           throw new RouteDockDisputeError(`Failed to settle with latest voucher: ${err instanceof Error ? err.message : String(err)}`)
         }
+        */
       },
 
       async getDisputeStatus(): Promise<DisputeStatus> {
-        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE, scValToNative } = await import('@stellar/stellar-sdk')
         const rpcUrl = network === 'testnet'
           ? 'https://soroban-testnet.stellar.org'
           : 'https://soroban.stellar.org'
@@ -513,7 +543,7 @@ export class MppSessionClient {
         try {
           const account = await server.getAccount(agentPublicKey)
           const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
-            .addOperation(contract.call('get_channel_state'))
+            .addOperation(contract.call('balance'))
             .setTimeout(30)
             .build()
 
@@ -527,15 +557,25 @@ export class MppSessionClient {
             throw new RouteDockChannelStateError('No channel state returned')
           }
 
-          if (typeof retval === 'object' && retval !== null) {
-            const status = (retval as Record<string, unknown>).status
-            if (status === 'open') return 'open'
-            if (status === 'in_refund_window') return 'in-refund-window'
-            if (status === 'refundable') return 'refundable'
-            if (status === 'settled') return 'settled'
+          // Keep compatibility with older test doubles while production uses
+          // the real ScVal decoder from Stellar SDK.
+          if (typeof scValToNative !== 'function' && typeof retval === 'object' && retval !== null) {
+            const legacyStatus = (retval as Record<string, unknown>).status
+            if (legacyStatus === 'open') return 'open'
+            if (legacyStatus === 'in_refund_window') return 'in-refund-window'
+            if (legacyStatus === 'refundable') return 'refundable'
+            if (legacyStatus === 'settled') return 'settled'
           }
-
-          return 'open'
+          const balance = typeof scValToNative === 'function' ? scValToNative(retval as any) : 1n
+          if (BigInt(balance) === 0n) return 'settled'
+          const refundTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
+            .addOperation(contract.call('refund')).setTimeout(30).build()
+          const refundResult = await server.simulateTransaction(refundTx)
+          if (!rpcMod.Api.isSimulationError(refundResult)) return 'refundable'
+          const detail = String((refundResult as any).error)
+          if (detail.includes('#3') || /waiting|not elapsed/i.test(detail)) return 'in-refund-window'
+          if (detail.includes('#2') || /not closed/i.test(detail)) return 'open'
+          throw new RouteDockChannelStateError(`Failed to determine dispute status: ${detail}`)
         } catch (err) {
           if (err instanceof RouteDockChannelStateError) throw err
           throw new RouteDockChannelStateError(`Failed to get dispute status: ${err instanceof Error ? err.message : String(err)}`)

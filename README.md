@@ -172,7 +172,8 @@ Agent deposits USDC into a `stellar-experimental/one-way-channel` Soroban contra
 If a server crashes mid-session, the agent can reclaim deposited funds using the dispute resolution API. Three methods handle the recovery flow:
 
 - **`session.requestRefund()`** — initiates the refund process on the channel contract, starting the refund window (default 17,280 ledgers ≈24h)
-- **`session.settleWithLatestVoucher()`** — server-side counter-mechanism to settle the cumulative amount before the refund window expires, using the highest signed voucher
+- **`session.claimRefund()`** — claims the remaining channel balance after the refund waiting period
+- **`session.settleWithLatestVoucher()`** — deprecated; the deployed channel contract does not authorize unilateral agent settlement
 - **`session.getDisputeStatus()`** — returns the channel state: `'open'`, `'in-refund-window'`, `'refundable'`, or `'settled'`
 
 Raises: `RouteDockDisputeError`, `RouteDockChannelStateError`, `RouteDockRefundWindowError`

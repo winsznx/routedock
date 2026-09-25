@@ -727,14 +727,17 @@ function isWebSocketUpgradeRequest(c: {
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  const modeHandlers = new Map<PaymentMode, MiddlewareHandler>()
   const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
-    handlers.push(createX402HonoHandler({ ...opts, manifest: signedManifest }))
+    const handler = createX402HonoHandler({ ...opts, manifest: signedManifest })
+    handlers.push(handler); modeHandlers.set('x402', handler)
   }
 
   if (opts.modes.includes('mpp-charge') && opts.pricing['mpp-charge']) {
-    handlers.push(createMppChargeHonoHandler({ ...opts, manifest: signedManifest }))
+    const handler = createMppChargeHonoHandler({ ...opts, manifest: signedManifest })
+    handlers.push(handler); modeHandlers.set('mpp-charge', handler)
   }
 
   // Session modes (mpp-session, mpp-session-ws) share one channel store so a
@@ -751,9 +754,8 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     const sessionPricing = opts.pricing[primarySessionMode]!
     const sharedState = createMppSessionHandlerState(opts, sessionPricing, primarySessionMode)
     for (const mode of sessionModes) {
-      handlers.push(
-        createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState),
-      )
+      const handler = createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState)
+      handlers.push(handler); modeHandlers.set(mode, handler)
     }
   }
 
@@ -772,8 +774,10 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     )
     const prefersX402 = c.req.header('x-preferred-mode') === 'x402'
 
-    const handler =
-      hasX402Header || prefersX402 ? handlers[0] : handlers[handlers.length - 1]
+    const preferred = c.req.header('x-preferred-mode') as PaymentMode | undefined
+    const handler = hasX402Header || prefersX402
+      ? modeHandlers.get('x402') ?? modeHandlers.get('mpp-charge') ?? modeHandlers.get('mpp-session')
+      : (preferred ? modeHandlers.get(preferred) : undefined) ?? modeHandlers.get('mpp-charge') ?? modeHandlers.get('mpp-session') ?? handlers[handlers.length - 1]
 
     if (!handler) {
       await next()

@@ -339,7 +339,9 @@ export interface SessionHandle {
   close(): Promise<SessionCloseResult>
   /** Request refund from the channel contract (initiates dispute) */
   requestRefund(): Promise<string>
-  /** Server-side counter-mechanism to settle with latest voucher before refund window expires */
+  /** Claim the channel balance after the refund waiting period has elapsed. */
+  claimRefund(): Promise<string>
+  /** @deprecated The deployed one-way-channel contract does not authorize unilateral agent settlement. */
   settleWithLatestVoucher(): Promise<string>
   /** Get the current dispute status of the channel */
   getDisputeStatus(): Promise<DisputeStatus>

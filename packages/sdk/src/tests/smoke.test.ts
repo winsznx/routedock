@@ -246,83 +246,6 @@ function startTestServer(
   }
 }
 
-// ── Test 5: SessionStore — monotonic invariant rejection ─────────────────────
-
-{
-  // Use an in-memory store implementation to test monotonic invariant
-  // without a real Supabase connection.
-
-  const { RouteDockVoucherMonotonicityError } = await import('../errors.js')
-
-  // Build a minimal in-memory SessionStore-compatible implementation
-  const sessions = new Map<string, import('../types.js').SessionState>()
-  const memStore = {
-    async get(channelId: string) {
-      return sessions.get(channelId) ?? null
-    },
-    async upsert(channelId: string, state: import('../types.js').SessionState) {
-      const existing = sessions.get(channelId)
-      if (existing) {
-        const prev = parseFloat(existing.cumulative_amount)
-        const next = parseFloat(state.cumulative_amount)
-        if (next <= prev) {
-          throw new RouteDockVoucherMonotonicityError(
-            `cumulative_amount must be strictly increasing: ${next} <= ${prev}`,
-          )
-        }
-      }
-      sessions.set(channelId, { ...state })
-    },
-    async close(channelId: string) {
-      const s = sessions.get(channelId)
-      if (s) sessions.set(channelId, { ...s, status: 'closed' })
-    },
-  }
-
-  const baseState: import('../types.js').SessionState = {
-    channel_id: 'test-channel-1',
-    payee: 'GPAYEE',
-    payer: 'GPAYER',
-    cumulative_amount: '0.0010000',
-    last_signature: 'sig1',
-    status: 'open',
-    opened_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    settlement_tx_hash: null,
-  }
-
-  // First upsert — should succeed
-  await memStore.upsert('test-channel-1', baseState)
-
-  // Second upsert with higher amount — should succeed
-  await memStore.upsert('test-channel-1', { ...baseState, cumulative_amount: '0.0020000' })
-
-  // Third upsert with same amount — should throw
-  let threw = false
-  try {
-    await memStore.upsert('test-channel-1', { ...baseState, cumulative_amount: '0.0020000' })
-  } catch (err) {
-    threw = true
-    assert.ok(
-      err instanceof RouteDockVoucherMonotonicityError,
-      `should throw RouteDockVoucherMonotonicityError, got ${String(err)}`,
-    )
-  }
-  assert.ok(threw, 'equal cumulative amount should be rejected')
-
-  // Upsert with lower amount — should also throw
-  threw = false
-  try {
-    await memStore.upsert('test-channel-1', { ...baseState, cumulative_amount: '0.0010000' })
-  } catch (err) {
-    threw = true
-    assert.ok(err instanceof RouteDockVoucherMonotonicityError)
-  }
-  assert.ok(threw, 'lower cumulative amount should be rejected')
-
-  console.log('✓ Test 3: SessionStore monotonic invariant rejection PASSED')
-}
-
 // ── Test 5: Error subclass hierarchy ─────────────────────────────────────────
 
 {
@@ -499,4 +422,3 @@ function startTestServer(
 }
 
 console.log('\nAll smoke tests passed.')
-

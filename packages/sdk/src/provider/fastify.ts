@@ -254,6 +254,7 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
   }
 
   const defaultMode: PaymentMode | undefined =
+    (handlerMap.has('mpp-charge') ? 'mpp-charge' : undefined) ??
     MPP_MODES.find((mode) => handlerMap.has(mode)) ??
     (handlerMap.has('x402') ? 'x402' : undefined)
 
@@ -276,9 +277,12 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
         !!(request.headers['payment-signature'] || request.headers['x-payment']) ||
         request.headers['x-preferred-mode'] === 'x402'
 
+      const preferredMode = request.headers['x-preferred-mode']
       const selectedMode = prefersX402
         ? (handlerMap.has('x402') ? 'x402' : defaultMode)
-        : defaultMode
+        : (typeof preferredMode === 'string' && handlerMap.has(preferredMode as PaymentMode)
+          ? preferredMode as PaymentMode
+          : defaultMode)
 
       if (!selectedMode) return
       const handler = handlerMap.get(selectedMode)

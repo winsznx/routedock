@@ -299,6 +299,7 @@ const status = await session.getDisputeStatus()
 
 // If server is unresponsive, request a refund (starts the refund window)
 const refundTxHash = await session.requestRefund()
+const claimTxHash = await session.claimRefund()
 
 // Server-side: settle with the latest signed voucher before refund window expires
 const settleTxHash = await session.settleWithLatestVoucher()
@@ -308,6 +309,7 @@ const settleTxHash = await session.settleWithLatestVoucher()
 |--------|---------|----------|---------|
 | `getDisputeStatus()` | Query channel state | None | `'open' \| 'in-refund-window' \| 'refundable' \| 'settled'` |
 | `requestRefund()` | Initiate refund process | Signed agent keypair | Transaction hash (string) |
+| `claimRefund()` | Claim balance after refund window | Signed agent keypair | Transaction hash (string) |
 | `settleWithLatestVoucher()` | Server counter-settle | Latest voucher signature | Transaction hash (string) |
 
 Raises: `RouteDockDisputeError`, `RouteDockChannelStateError`, `RouteDockRefundWindowError`

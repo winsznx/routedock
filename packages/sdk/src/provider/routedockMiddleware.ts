@@ -154,6 +154,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
   // The default (non-x402) handler is the highest-priority MPP mode that is
   // actually registered; if the provider speaks only x402, it defaults to that.
   const defaultMode: PaymentMode | undefined =
+    (handlerMap.has('mpp-charge') ? 'mpp-charge' : undefined) ??
     MPP_MODES.find((mode) => handlerMap.has(mode)) ??
     (handlerMap.has('x402') ? 'x402' : undefined)
 
@@ -192,7 +193,9 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
     const prefersX402 = req.headers['x-preferred-mode'] === 'x402'
 
     const x402Handler = handlerMap.get('x402')
-    const defaultHandler = defaultMode ? handlerMap.get(defaultMode) : undefined
+    const preferredMode = req.headers['x-preferred-mode']
+    const preferredHandler = typeof preferredMode === 'string' ? handlerMap.get(preferredMode as PaymentMode) : undefined
+    const defaultHandler = preferredHandler ?? (defaultMode ? handlerMap.get(defaultMode) : undefined)
 
     // Prefer the x402 handler for x402 requests; if the provider doesn't offer
     // x402, fall back to the default handler rather than misrouting.
