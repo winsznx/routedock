@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 
-type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
+type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
 
 interface ModeCardProps {
   mode: PaymentMode
