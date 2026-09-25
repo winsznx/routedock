@@ -39,6 +39,10 @@ pnpm --filter @routedock/nulth-sdk build >/dev/null || fail "@routedock/nulth-sd
 pnpm --filter @routedock/routedock build >/dev/null || fail "@routedock/routedock failed to build"
 echo "  ok"
 
+step "packed package contents"
+bash scripts/check-pack.sh || fail "a published package would ship extra files"
+echo "  ok"
+
 step "typecheck all packages"
 pnpm -r typecheck || fail "typecheck failed"
 

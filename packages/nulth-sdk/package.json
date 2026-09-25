@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Off-chain ZK proof builder for Nulth smart accounts on Stellar",
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "MCP server for RouteDock Stellar payments - exposes payment tools to LLM agents",
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/winsznx/routedock.git",
