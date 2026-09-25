@@ -56,7 +56,16 @@ export class X402Client {
       throw new RouteDockManifestError('manifest.pricing.x402.facilitator missing')
     }
 
-    return withRetry(async () => {
+    // A payment is signed at most once per pay(). The unpaid probe may retry
+    // freely; once a payment header exists every retry resends that exact
+    // header, so the provider's idempotency store (SeenTxStore) dedups it and
+    // the auth-entry nonce blocks on-chain replay. See #386.
+
+    // Phase 1 — unpaid probe. Safe to retry: nothing is signed here. Resolves
+    // to either a free (non-402) result or the decoded payment requirements.
+    const probe = await withRetry<
+      { free: PaymentResult } | { paymentRequired: ReturnType<typeof decodePaymentRequiredHeader> }
+    >(async () => {
       // Initial request — expect 402. Include mode hint so middleware routes correctly.
       let init: Response
       try {
@@ -79,7 +88,7 @@ export class X402Client {
         } catch {
           throw new RouteDockManifestError(`Failed to parse JSON from non-402 response (HTTP ${init.status})`)
         }
-        return { data, txHash: null, mode: 'x402', amount: '0', timestamp: Date.now() }
+        return { free: { data, txHash: null, mode: 'x402', amount: '0', timestamp: Date.now() } }
       }
 
       const reqHeader = init.headers.get('X-Payment-Requirements')
@@ -87,19 +96,26 @@ export class X402Client {
         throw new RouteDockManifestError('402 response missing X-Payment-Requirements header')
       }
 
-      const paymentRequired = decodePaymentRequiredHeader(reqHeader)
+      return { paymentRequired: decodePaymentRequiredHeader(reqHeader) }
+    }, this.retryPolicy)
 
-      let paymentPayload
-      try {
-        paymentPayload = await this.httpClient.createPaymentPayload(paymentRequired)
-      } catch (err) {
-        throw new RouteDockSignatureError(`x402 payment signing failed: ${String(err)}`, {
-          cause: err,
-        })
-      }
+    if ('free' in probe) return probe.free
 
-      const paymentHeaders = this.httpClient.encodePaymentSignatureHeader(paymentPayload)
+    // Phase 2 — sign the payment exactly once, OUTSIDE any retry loop.
+    let paymentPayload
+    try {
+      paymentPayload = await this.httpClient.createPaymentPayload(probe.paymentRequired)
+    } catch (err) {
+      throw new RouteDockSignatureError(`x402 payment signing failed: ${String(err)}`, {
+        cause: err,
+      })
+    }
 
+    const paymentHeaders = this.httpClient.encodePaymentSignatureHeader(paymentPayload)
+
+    // Phase 3 — paid request. Retries resend the SAME paymentHeaders; they never
+    // re-sign. A 402 here is non-retryable and must not trigger a new signature.
+    return withRetry(async () => {
       let settled: Response
       try {
         settled = await fetch(url, { headers: paymentHeaders })
