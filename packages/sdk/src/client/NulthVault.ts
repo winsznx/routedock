@@ -6,7 +6,7 @@
  * where the package may not be built before the DTS worker runs.
  */
 import { createHash } from 'node:crypto'
-import { rpc, hash } from '@stellar/stellar-sdk'
+import { Address, rpc, hash, scValToNative, xdr } from '@stellar/stellar-sdk'
 import type { ClientStellarSigner } from '@x402/stellar'
 import type { SignAuthEntry } from '@stellar/stellar-sdk/contract'
 import type { RouteDockManifest, PaymentMode, VaultMode } from '../types.js'
@@ -61,7 +61,7 @@ export interface NulthClientConfig {
 }
 
 export class NulthPolicyError extends Error {
-  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired'
+  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired' | 'auth_entry_mismatch'
   constructor(code: NulthPolicyError['code'], message: string) {
     super(message)
     this.name = 'NulthPolicyError'
@@ -98,6 +98,96 @@ function dayBucketFromLedger(ledgerSequence: number): number {
 function authDigestFromEntry(authEntryBase64: string): string {
   const entryHash = hash(Buffer.from(authEntryBase64, 'base64'))
   return sha256Hex(entryHash)
+}
+
+/**
+ * Verify that the Soroban auth entry actually being signed matches the
+ * off-chain payment context the policy was checked against. Without this,
+ * the policy (allowlist + daily cap) checks `context.payee` /
+ * `context.amountStroops` while a completely different transfer — a
+ * different recipient, amount, or asset — can be the one that actually
+ * gets signed and submitted.
+ *
+ * Mirrors @routedock/nulth-sdk's assertAuthEntryMatchesContext. Kept inline
+ * (see file header) rather than imported.
+ */
+function assertAuthEntryMatchesContext(
+  authEntry: string,
+  from: string,
+  ctx: Omit<PaymentAuthContext, 'authEntry'>,
+): void {
+  let preimage: xdr.HashIdPreimage
+  try {
+    preimage = xdr.HashIdPreimage.fromXDR(authEntry, 'base64')
+  } catch {
+    throw new NulthPolicyError('auth_entry_mismatch', 'authEntry does not decode as a HashIdPreimage')
+  }
+
+  if (preimage.switch() !== xdr.EnvelopeType.envelopeTypeSorobanAuthorization()) {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      'authEntry is not a Soroban authorization preimage',
+    )
+  }
+
+  const inv = preimage.sorobanAuthorization().invocation()
+
+  if (inv.subInvocations().length !== 0) {
+    throw new NulthPolicyError('auth_entry_mismatch', 'authEntry has unexpected sub-invocations')
+  }
+
+  if (
+    inv.function().switch() !== xdr.SorobanAuthorizedFunctionType.sorobanAuthorizedFunctionTypeContractFn()
+  ) {
+    throw new NulthPolicyError('auth_entry_mismatch', 'authEntry does not invoke a contract function')
+  }
+
+  const fn = inv.function().contractFn()
+
+  const contractAddress = Address.fromScAddress(fn.contractAddress()).toString()
+  if (contractAddress !== ctx.assetContract) {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      `authEntry contract ${contractAddress} does not match assetContract ${ctx.assetContract}`,
+    )
+  }
+
+  const functionName = fn.functionName().toString()
+  if (functionName !== 'transfer') {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      `authEntry function ${functionName} does not match expected transfer`,
+    )
+  }
+
+  const args = fn.args()
+  if (args.length !== 3) {
+    throw new NulthPolicyError('auth_entry_mismatch', `authEntry transfer has ${args.length} args, expected 3`)
+  }
+
+  const entryFrom = scValToNative(args[0]!) as string
+  if (entryFrom !== from) {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      `authEntry from ${entryFrom} does not match nulthAccount ${from}`,
+    )
+  }
+
+  const entryTo = scValToNative(args[1]!) as string
+  if (entryTo !== ctx.payee) {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      `authEntry to ${entryTo} does not match paymentContext.payee ${ctx.payee}`,
+    )
+  }
+
+  const entryAmount = scValToNative(args[2]!) as bigint
+  if (entryAmount !== ctx.amountStroops) {
+    throw new NulthPolicyError(
+      'auth_entry_mismatch',
+      `authEntry amount ${entryAmount} does not match paymentContext.amountStroops ${ctx.amountStroops}`,
+    )
+  }
 }
 
 function insecureMockProof(preimage: string): string {
@@ -214,6 +304,7 @@ export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner
     signAuthEntry: async (authEntry) => {
       const ctx = config.paymentContext
       if (!ctx) throw new Error('Nulth paymentContext must be set before signing')
+      assertAuthEntryMatchesContext(authEntry, nulthAccount, ctx)
       const proof = client.buildPaymentAuthProof({ authEntry, ...ctx })
       return { signedAuthEntry: encodeAuthSignature(proof), signerAddress: nulthAccount }
     },

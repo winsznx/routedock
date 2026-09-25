@@ -3,6 +3,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { Address, Networks, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk'
 import {
   NulthClient,
   NulthPolicyError,
@@ -17,7 +18,35 @@ import {
 const NULTH_ACCOUNT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE_A = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
 const PAYEE_B = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
+const USDC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+const OTHER_ASSET = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
 const WITNESS = 'test-witness-secret'
+
+/** Build a real Soroban authorization preimage for a SEP-41 `transfer` call. */
+function transferPreimage(asset: string, from: string, to: string, amount: bigint): string {
+  const invocation = new xdr.SorobanAuthorizedInvocation({
+    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+      new xdr.InvokeContractArgs({
+        contractAddress: Address.fromString(asset).toScAddress(),
+        functionName: 'transfer',
+        args: [
+          nativeToScVal(from, { type: 'address' }),
+          nativeToScVal(to, { type: 'address' }),
+          nativeToScVal(amount, { type: 'i128' }),
+        ],
+      }),
+    ),
+    subInvocations: [],
+  })
+  return xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+    new xdr.HashIdPreimageSorobanAuthorization({
+      networkId: hash(Buffer.from(Networks.TESTNET)),
+      nonce: xdr.Int64.fromString('1'),
+      signatureExpirationLedger: 300,
+      invocation,
+    }),
+  ).toXDR('base64')
+}
 
 // ── Policy commitments hide raw values ───────────────────────────────────────
 
@@ -61,7 +90,7 @@ const WITNESS = 'test-witness-secret'
     authEntry: Buffer.from('mock-auth-entry').toString('base64'),
     payee: PAYEE_A,
     amountStroops: 10_000n,
-    assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    assetContract: USDC,
     ledgerSequence: 50_000,
   })
 
@@ -92,7 +121,7 @@ const WITNESS = 'test-witness-secret'
         authEntry: Buffer.from('x').toString('base64'),
         payee: PAYEE_B,
         amountStroops: 1_000n,
-        assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+        assetContract: USDC,
         ledgerSequence: 100,
       }),
     (err: unknown) => err instanceof NulthPolicyError && err.code === 'payee_not_allowed',
@@ -104,7 +133,7 @@ const WITNESS = 'test-witness-secret'
         authEntry: Buffer.from('y').toString('base64'),
         payee: PAYEE_A,
         amountStroops: 2_000_000n,
-        assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+        assetContract: USDC,
         ledgerSequence: 100,
       }),
     (err: unknown) => err instanceof NulthPolicyError && err.code === 'daily_cap_exceeded',
@@ -128,7 +157,7 @@ const WITNESS = 'test-witness-secret'
   setNulthPaymentContext(signerConfig, {
     payee: PAYEE_A,
     amountStroops: 5_000n,
-    assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    assetContract: USDC,
     ledgerSequence: 200,
   })
 
@@ -136,13 +165,194 @@ const WITNESS = 'test-witness-secret'
   assert.equal(signer.address, NULTH_ACCOUNT)
 
   const result = await signer.signAuthEntry(
-    Buffer.from('auth-entry-for-x402').toString('base64'),
+    transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_A, 5_000n),
   )
   assert.equal(result.signerAddress, NULTH_ACCOUNT)
 
   const decoded = decodeAuthSignature(result.signedAuthEntry)
   assert.equal(decoded.proof.publicInputs.payeeHash.length, 64)
+  assert.equal(decoded.proof.publicInputs.amountStroops, '5000')
   console.log('✓ nulth signer attaches ZK proof as auth signature')
+}
+
+// ── signAuthEntry rejects an auth entry that doesn't match the payment context ─
+
+{
+  function makeSigner(amountStroops = 5_000n) {
+    const signerConfig = {
+      nulthAccount: NULTH_ACCOUNT,
+      network: 'testnet' as const,
+      policy: createPolicyState({
+        dailyCapUsdc: '1.00',
+        allowedPayees: [PAYEE_A],
+        witnessSecret: WITNESS,
+      }),
+    }
+    setNulthPaymentContext(signerConfig, {
+      payee: PAYEE_A,
+      amountStroops,
+      assetContract: USDC,
+      ledgerSequence: 200,
+    })
+    return createNulthSigner(signerConfig)
+  }
+
+  const isMismatch = (err: unknown) =>
+    err instanceof NulthPolicyError && err.code === 'auth_entry_mismatch'
+
+  // wrong `to` (payee)
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_B, 5_000n)),
+    isMismatch,
+    'rejects when the preimage payee differs from paymentContext.payee',
+  )
+
+  // wrong amount, higher
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_A, 10_000_000_000n)),
+    isMismatch,
+    'rejects when the amount is higher than paymentContext.amountStroops',
+  )
+
+  // wrong amount, lower
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_A, 1n)),
+    isMismatch,
+    'rejects when the amount is lower than paymentContext.amountStroops',
+  )
+
+  // wrong contract
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(transferPreimage(OTHER_ASSET, NULTH_ACCOUNT, PAYEE_A, 5_000n)),
+    isMismatch,
+    'rejects when the invoked contract differs from paymentContext.assetContract',
+  )
+
+  // wrong `from`
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(transferPreimage(USDC, PAYEE_B, PAYEE_A, 5_000n)),
+    isMismatch,
+    'rejects when the from argument differs from nulthAccount',
+  )
+
+  // wrong function name
+  {
+    const invocation = new xdr.SorobanAuthorizedInvocation({
+      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+        new xdr.InvokeContractArgs({
+          contractAddress: Address.fromString(USDC).toScAddress(),
+          functionName: 'approve',
+          args: [
+            nativeToScVal(NULTH_ACCOUNT, { type: 'address' }),
+            nativeToScVal(PAYEE_A, { type: 'address' }),
+            nativeToScVal(5_000n, { type: 'i128' }),
+          ],
+        }),
+      ),
+      subInvocations: [],
+    })
+    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+      new xdr.HashIdPreimageSorobanAuthorization({
+        networkId: hash(Buffer.from(Networks.TESTNET)),
+        nonce: xdr.Int64.fromString('1'),
+        signatureExpirationLedger: 300,
+        invocation,
+      }),
+    ).toXDR('base64')
+
+    await assert.rejects(
+      () => makeSigner().signAuthEntry(preimage),
+      isMismatch,
+      'rejects when the function name is not transfer',
+    )
+  }
+
+  // sub-invocations present
+  {
+    const subInvocation = new xdr.SorobanAuthorizedInvocation({
+      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+        new xdr.InvokeContractArgs({
+          contractAddress: Address.fromString(USDC).toScAddress(),
+          functionName: 'transfer',
+          args: [
+            nativeToScVal(NULTH_ACCOUNT, { type: 'address' }),
+            nativeToScVal(PAYEE_A, { type: 'address' }),
+            nativeToScVal(5_000n, { type: 'i128' }),
+          ],
+        }),
+      ),
+      subInvocations: [],
+    })
+    const invocation = new xdr.SorobanAuthorizedInvocation({
+      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+        new xdr.InvokeContractArgs({
+          contractAddress: Address.fromString(USDC).toScAddress(),
+          functionName: 'transfer',
+          args: [
+            nativeToScVal(NULTH_ACCOUNT, { type: 'address' }),
+            nativeToScVal(PAYEE_A, { type: 'address' }),
+            nativeToScVal(5_000n, { type: 'i128' }),
+          ],
+        }),
+      ),
+      subInvocations: [subInvocation],
+    })
+    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+      new xdr.HashIdPreimageSorobanAuthorization({
+        networkId: hash(Buffer.from(Networks.TESTNET)),
+        nonce: xdr.Int64.fromString('1'),
+        signatureExpirationLedger: 300,
+        invocation,
+      }),
+    ).toXDR('base64')
+
+    await assert.rejects(
+      () => makeSigner().signAuthEntry(preimage),
+      isMismatch,
+      'rejects when the invocation has sub-invocations',
+    )
+  }
+
+  // not a HashIdPreimage / envelopeTypeSorobanAuthorization at all
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(Buffer.from('auth-entry-for-x402').toString('base64')),
+    isMismatch,
+    'rejects a plain non-XDR string',
+  )
+
+  console.log('✓ signAuthEntry rejects auth entries that mismatch the payment context')
+}
+
+// ── A rejected entry never advances daily spend ──────────────────────────────
+
+{
+  const signerConfig = {
+    nulthAccount: NULTH_ACCOUNT,
+    network: 'testnet' as const,
+    policy: createPolicyState({
+      dailyCapUsdc: '0.0005',
+      allowedPayees: [PAYEE_A],
+      witnessSecret: WITNESS,
+    }),
+  }
+  setNulthPaymentContext(signerConfig, {
+    payee: PAYEE_A,
+    amountStroops: 5_000n,
+    assetContract: USDC,
+    ledgerSequence: 200,
+  })
+  const signer = createNulthSigner(signerConfig)
+
+  await assert.rejects(
+    () => signer.signAuthEntry(transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_B, 5_000n)),
+    (err: unknown) => err instanceof NulthPolicyError && err.code === 'auth_entry_mismatch',
+  )
+
+  // Cap equals the context amount — a mismatched attempt must not have spent it.
+  const result = await signer.signAuthEntry(transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_A, 5_000n))
+  const decoded = decodeAuthSignature(result.signedAuthEntry)
+  assert.equal(decoded.proof.publicInputs.amountStroops, '5000')
+  console.log('✓ a rejected sign attempt leaves daily spend unchanged')
 }
 
 console.log('\nAll nulth-sdk tests passed.')
