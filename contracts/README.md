@@ -15,6 +15,22 @@ The RouteDock agent vault is a Soroban smart contract account built on top of
 2. **Endpoint allowlist** — rejects payments to payee addresses not on the allowlist
 3. **Session key with expiry** — session signing key expires at a configured ledger sequence
 
+### Timelocked Wasm upgrades
+
+Wasm replacement is a two-step process with a fixed **17,280-ledger notice period** (approximately one day at the vault's existing ledger-day accounting rate):
+
+- `propose_upgrade(new_wasm_hash)` — admin only; stores the target and earliest executable ledger, extends the instance TTL through the notice period, and emits `upgrade_proposed`.
+- `pending_upgrade()` — returns `Some((new_wasm_hash, ready_at_ledger))` until the proposal is executed or cancelled.
+- `upgrade_timelock_ledgers()` — returns the fixed delay so clients do not need to hard-code it.
+- `execute_upgrade()` — admin only; succeeds at or after `ready_at_ledger`, updates the executable, clears the proposal, and emits `upgraded`.
+- `cancel_upgrade()` — admin only; clears a proposal even after it becomes executable and emits `upgrade_cancelled`.
+
+A replacement proposal replaces the current target and restarts the full delay. The ledger calculation fails closed on overflow instead of saturating into immediate readiness. The target Wasm must already be uploaded on-chain when execution is attempted; a missing target rolls the transaction back and leaves the proposal pending.
+
+The old immediate `upgrade(new_wasm_hash)` entry point has been removed. A contract already running the old Wasm needs one unavoidable bootstrap call through that old interface before it can expose this timelock; new deployments are protected from genesis.
+
+This mechanism gives users notice before the enforcement code changes. It does **not** make the single-admin model trustless: the admin can still rotate agent keys and change caps, allowlists, expiry, and freeze state. Every target Wasm hash must be reviewed, and operators should monitor upgrade events.
+
 ### Prerequisites
 
 - Rust toolchain with `wasm32-unknown-unknown` target
