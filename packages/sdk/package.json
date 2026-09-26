@@ -1,6 +1,6 @@
 {
   "name": "@routedock/routedock",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Unified payment execution layer for autonomous agents on Stellar",
   "license": "MIT",
   "repository": {
