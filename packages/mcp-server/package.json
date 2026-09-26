@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "tsx --experimental-test-module-mocks --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js"

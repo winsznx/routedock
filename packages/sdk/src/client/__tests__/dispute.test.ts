@@ -123,6 +123,7 @@ function buildFakeSdk() {
     TransactionBuilder: FakeTransactionBuilder,
     BASE_FEE: '100',
     nativeToScVal: (value: unknown) => ({ __scval: value }),
+    scValToNative: (value: unknown) => (value as { __scval?: unknown }).__scval ?? value,
   }
 }
 

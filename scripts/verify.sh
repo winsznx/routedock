@@ -42,6 +42,9 @@ echo "  ok"
 step "typecheck all packages"
 pnpm -r typecheck || fail "typecheck failed"
 
+step "lint all packages"
+pnpm -r lint || fail "lint failed"
+
 if (( FAST )); then
   printf '\n\033[32m✔ verify --fast passed\033[0m (tests skipped)\n'
   exit 0

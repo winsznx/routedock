@@ -16,6 +16,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/__tests__/nulth.test.ts"
   },

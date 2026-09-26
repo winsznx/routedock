@@ -631,7 +631,7 @@ export class MppSessionClient {
 
           const simResult = await server.simulateTransaction(tx)
           if (rpcMod.Api.isSimulationError(simResult)) {
-            throw new RouteDockDisputeError(`request_refund simulation failed: ${(simResult as any).error}`)
+            throw new RouteDockDisputeError(`request_refund simulation failed: ${simResult.error}`)
           }
 
           const preparedTx = await server.prepareTransaction(tx)
@@ -639,7 +639,7 @@ export class MppSessionClient {
 
           const result = await server.sendTransaction(preparedTx)
           if (result.status === 'ERROR') {
-            const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : 'status ERROR'
+            const errDetail = result.errorResult ? JSON.stringify(result.errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Refund request transaction failed: ${errDetail}`)
           }
           if (!result.hash) {
@@ -670,9 +670,9 @@ export class MppSessionClient {
             .build()
           const simResult = await server.simulateTransaction(simTx)
           if (rpcMod.Api.isSimulationError(simResult)) {
-            throw new RouteDockDisputeError(`prepare_commitment simulation failed: ${(simResult as any).error}`)
+            throw new RouteDockDisputeError(`prepare_commitment simulation failed: ${simResult.error}`)
           }
-          const commitmentBytes = (simResult as any).result?.retval?.bytes()
+          const commitmentBytes = simResult.result?.retval?.bytes()
           if (!commitmentBytes) throw new RouteDockDisputeError('prepare_commitment returned no bytes')
 
           const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
@@ -693,7 +693,7 @@ export class MppSessionClient {
           preparedSettleTx.sign(agentKeypair)
           const settleResult = await server.sendTransaction(preparedSettleTx)
           if (settleResult.status === 'ERROR') {
-            const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : 'status ERROR'
+            const errDetail = settleResult.errorResult ? JSON.stringify(settleResult.errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Settlement transaction failed: ${errDetail}`)
           }
           if (!settleResult.hash) {
@@ -708,7 +708,7 @@ export class MppSessionClient {
       },
 
       async getDisputeStatus(): Promise<DisputeStatus> {
-        const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
+        const { rpc: rpcMod, Contract, scValToNative, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = network === 'testnet'
           ? 'https://soroban-testnet.stellar.org'
           : 'https://soroban.stellar.org'
@@ -725,16 +725,17 @@ export class MppSessionClient {
 
           const simResult = await server.simulateTransaction(tx)
           if (rpcMod.Api.isSimulationError(simResult)) {
-            throw new RouteDockChannelStateError(`Failed to query channel state: ${(simResult as any).error}`)
+            throw new RouteDockChannelStateError(`Failed to query channel state: ${simResult.error}`)
           }
 
-          const retval = (simResult as any).result?.retval
+          const retval = simResult.result?.retval
           if (!retval) {
             throw new RouteDockChannelStateError('No channel state returned')
           }
 
-          if (typeof retval === 'object' && retval !== null) {
-            const status = (retval as Record<string, unknown>).status
+          const state = scValToNative(retval) as { status?: string }
+          if (typeof state === 'object' && state !== null) {
+            const status = state.status
             if (status === 'open') return 'open'
             if (status === 'in_refund_window') return 'in-refund-window'
             if (status === 'refundable') return 'refundable'
