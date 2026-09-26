@@ -13,6 +13,7 @@ import {
   decodeAuthSignature,
   setNulthPaymentContext,
 } from '../index.js'
+import type { NulthClientConfig } from '../index.js'
 
 const NULTH_ACCOUNT = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE_A = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
@@ -176,3 +177,56 @@ console.log('✓ mainnet rejects the insecure mock prover at construction')
   assert.equal(client.proverBackend, 'mock')
   console.log('✓ NulthClient stores prover backend')
 }
+
+// ── Mainnet guard fails closed for missing/misspelled networks and provers ────
+
+{
+  const policy = createPolicyState({
+    dailyCapUsdc: '1.00',
+    allowedPayees: [PAYEE_A],
+    witnessSecret: WITNESS,
+  })
+
+  const cases: Array<{ name: string; config: Record<string, unknown>; match: RegExp }> = [
+    {
+      name: 'network omitted',
+      config: { nulthAccount: NULTH_ACCOUNT, policy },
+      match: /network must be 'testnet', got undefined/,
+    },
+    {
+      name: "network 'pubnet'",
+      config: { nulthAccount: NULTH_ACCOUNT, network: 'pubnet', policy },
+      match: /network must be 'testnet', got pubnet/,
+    },
+    {
+      name: "network 'public'",
+      config: { nulthAccount: NULTH_ACCOUNT, network: 'public', policy },
+      match: /network must be 'testnet', got public/,
+    },
+    {
+      name: "network 'Mainnet'",
+      config: { nulthAccount: NULTH_ACCOUNT, network: 'Mainnet', policy },
+      match: /network must be 'testnet', got Mainnet/,
+    },
+    {
+      name: "mainnet with prover 'wasm'",
+      config: { nulthAccount: NULTH_ACCOUNT, network: 'mainnet', prover: 'wasm', policy },
+      match: /unknown prover backend/,
+    },
+    {
+      name: "testnet with prover 'wasm'",
+      config: { nulthAccount: NULTH_ACCOUNT, network: 'testnet', prover: 'wasm', policy },
+      match: /unknown prover backend/,
+    },
+  ]
+
+  for (const { name, config, match } of cases) {
+    assert.throws(
+      () => new NulthClient(config as unknown as NulthClientConfig),
+      match,
+      `${name} must fail closed`,
+    )
+  }
+  console.log('✓ mainnet guard fails closed for missing/misspelled network and prover values')
+}
+

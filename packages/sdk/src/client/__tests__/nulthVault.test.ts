@@ -90,3 +90,32 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   )
   console.log('✓ mainnet guard rejects mock prover')
 }
+
+{
+  const vault = {
+    mode: 'nulth' as const,
+    nulthAccount: NULTH,
+    witnessSecret: 'witness',
+    allowedPayees: [PAYEE],
+    dailyCapUsdc: '1.00',
+  }
+
+  for (const network of [undefined, 'pubnet'] as const) {
+    await assert.rejects(
+      () =>
+        prepareNulthSigner(
+          vault,
+          baseManifest,
+          'x402',
+          network as unknown as 'testnet' | 'mainnet',
+          100_000,
+        ),
+      (err: unknown) =>
+        err instanceof RouteDockManifestError &&
+        /network must be 'testnet'/.test(err.message),
+      `prepareNulthSigner must reject network=${String(network)}`,
+    )
+  }
+  console.log('✓ prepareNulthSigner fails closed for missing/misspelled network')
+}
+
