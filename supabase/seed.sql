@@ -147,13 +147,14 @@ VALUES
 
 -- ─── Sample tx_log entries ────────────────────────────────────
 
-INSERT INTO tx_log (tx_type, tx_hash, amount, mode, network, provider_url, agent_address, metadata)
+INSERT INTO tx_log (tx_type, tx_hash, amount, mode, channel_id, network, provider_url, agent_address, metadata)
 VALUES
   (
     'x402_settle',
     'demotxhash005xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     0.001,
     'x402',
+    NULL,
     'testnet',
     'https://provider-a.railway.app/price',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
@@ -164,6 +165,7 @@ VALUES
     'demotxhash006xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     0.0008,
     'mpp-charge',
+    NULL,
     'testnet',
     'https://provider-a.railway.app/price',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
@@ -174,6 +176,7 @@ VALUES
     'demotxhash004xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     0.10,
     'mpp-session',
+    'chan_demo_003_closing',
     'testnet',
     'https://provider-b.railway.app/stream/orderbook',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
