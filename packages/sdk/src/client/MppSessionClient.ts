@@ -458,7 +458,14 @@ export class MppSessionClient {
                 `Voucher request failed: HTTP ${resp.status}`,
               )
             }
-            return resp.json()
+            try {
+              return await resp.json()
+            } catch (cause) {
+              throw new RouteDockChannelStateError(
+                `Voucher response was not valid JSON (HTTP ${resp.status})`,
+                { cause },
+              )
+            }
           }, retryPolicy)
 
         // Check the local daily spend cap before issuing each voucher.
@@ -595,7 +602,15 @@ export class MppSessionClient {
             )
           }
 
-          const body = (await closeResp.json()) as { closeTxHash?: string }
+          let body: { closeTxHash?: string }
+          try {
+            body = (await closeResp.json()) as { closeTxHash?: string }
+          } catch (cause) {
+            throw new RouteDockChannelStateError(
+              `Channel close response was not valid JSON (HTTP ${closeResp.status})`,
+              { cause },
+            )
+          }
           const closeTxHash = body.closeTxHash ?? null
           if (!closeTxHash) {
             throw new RouteDockChannelStateError(
