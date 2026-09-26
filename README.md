@@ -13,10 +13,10 @@ Three payment protocols exist on Stellar for agent-to-service transactions: x402
 ## The Solution
 
 ```ts
-import { RouteDockClient } from '@routedock/routedock'
+import { RouteDockClient } from "@routedock/routedock";
 
-const client = new RouteDockClient({ wallet, network: 'testnet' })
-const result = await client.pay('https://provider.example.com/price')
+const client = new RouteDockClient({ wallet, network: "testnet" });
+const result = await client.pay("https://provider.example.com/price");
 // result.mode → 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws' (selected automatically)
 ```
 
@@ -53,22 +53,23 @@ graph LR
 
 ## Security Architecture
 
-| Layer | Mechanism | Enforcement Point |
-|---|---|---|
-| Application | per-voucher challenge guard (channel, amount, cumulative) | `packages/sdk/src/client/MppSessionClient.ts:reserveNextCumulative` |
-| Application | manifest schema validation (AJV draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
-| Database | monotonic cumulative trigger | `supabase/migrations/001_init.sql:37,50` |
-| Database | RLS on sessions table | `supabase/migrations/001_init.sql:128-131` |
-| Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
-| Contract | endpoint allowlist policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
-| Contract | session key expiry | `contracts/agent-vault/src/lib.rs:__check_auth` |
-| Contract | one-way-channel signature verification | [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH) |
+| Layer       | Mechanism                                                 | Enforcement Point                                                                                                                                                       |
+| ----------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Application | per-voucher challenge guard (channel, amount, cumulative) | `packages/sdk/src/client/MppSessionClient.ts:reserveNextCumulative`                                                                                                     |
+| Application | manifest schema validation (AJV draft-07)                 | `packages/sdk/src/client/ModeRouter.ts`                                                                                                                                 |
+| Database    | monotonic cumulative trigger                              | `supabase/migrations/001_init.sql:37,50`                                                                                                                                |
+| Database    | RLS on sessions table                                     | `supabase/migrations/001_init.sql:128-131`                                                                                                                              |
+| Contract    | daily USDC cap policy                                     | `contracts/agent-vault/src/lib.rs:__check_auth`                                                                                                                         |
+| Contract    | endpoint allowlist policy                                 | `contracts/agent-vault/src/lib.rs:__check_auth`                                                                                                                         |
+| Contract    | session key expiry                                        | `contracts/agent-vault/src/lib.rs:__check_auth`                                                                                                                         |
+| Contract    | one-way-channel signature verification                    | [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH) |
 
 ### Security Notice
 
 The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) has **NOT been audited**. RouteDock wraps it with safe defaults (17280-ledger refund window, durable session store with monotonic invariant, DB-level trigger enforcement). Production mainnet use should await a formal audit.
 
 **Audit Status:**
+
 - Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
 - SCF Audit Bank application: Submitted
 
@@ -76,10 +77,10 @@ The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) ha
 
 The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
 
-| Event | Topics | Data | When |
-|---|---|---|---|
-| `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
-| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
+| Event                | Topics                                          | Data                                                            | When                                                         |
+| -------------------- | ----------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
+| `payment_authorized` | `(Symbol, payer: Address, payee: Address)`      | `(amount: i128, asset: Address, daily_cumulative: i128)`        | Each successful auth pass in `__check_auth`                  |
+| `session_settled`    | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
 
 ```bash
 stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
@@ -91,16 +92,17 @@ stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID
 
 All produced by a single autonomous agent run against two live provider services. No mocks.
 
-| Type | Tx Hash | Explorer |
-|---|---|---|
-| x402 settlement | `5f603387807faacdc02c71efb74b26091b1be67740f74dfd581d23d643e2db64` | [view](https://stellar.expert/explorer/testnet/tx/5f603387807faacdc02c71efb74b26091b1be67740f74dfd581d23d643e2db64) |
-| Channel open (deploy) | `6ceba32ba2cfd7f3145090c2e6f741db65ae4e4116f3204f2c3173b5266b98ff` | [view](https://stellar.expert/explorer/testnet/tx/6ceba32ba2cfd7f3145090c2e6f741db65ae4e4116f3204f2c3173b5266b98ff) |
+| Type                                | Tx Hash                                                            | Explorer                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| x402 settlement                     | `5f603387807faacdc02c71efb74b26091b1be67740f74dfd581d23d643e2db64` | [view](https://stellar.expert/explorer/testnet/tx/5f603387807faacdc02c71efb74b26091b1be67740f74dfd581d23d643e2db64) |
+| Channel open (deploy)               | `6ceba32ba2cfd7f3145090c2e6f741db65ae4e4116f3204f2c3173b5266b98ff` | [view](https://stellar.expert/explorer/testnet/tx/6ceba32ba2cfd7f3145090c2e6f741db65ae4e4116f3204f2c3173b5266b98ff) |
 | Channel close (50 vouchers settled) | `234dcbb34cfb7a086f17474f57cacaa9edee8bc8dee873e8f2b851abc0a29a20` | [view](https://stellar.expert/explorer/testnet/tx/234dcbb34cfb7a086f17474f57cacaa9edee8bc8dee873e8f2b851abc0a29a20) |
-| Policy rejection | NO TX — daily cap enforced locally before any broadcast | — |
+| Policy rejection                    | NO TX — daily cap enforced locally before any broadcast            | —                                                                                                                   |
 
 **50 interactions. 2 on-chain transactions.** The channel close settled the cumulative amount for all 50 vouchers in a single Soroban invocation.
 
 Contracts deployed on testnet:
+
 - Agent vault: [`CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT`](https://stellar.expert/explorer/testnet/contract/CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT)
 - One-way channel: [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH)
 
@@ -139,8 +141,8 @@ Redeploying `provider-a`/`provider-b`: read [`docs/PROVIDER_REDEPLOY_ORDERING.md
 
 ## Examples
 
-| Example | What it shows |
-|---|---|
+| Example                                                                    | What it shows                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`examples/streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session to Provider B's `/stream/orderbook`, consumes 100 voucher-backed orderbook updates, prints best bid/ask, spread, and mid price, then closes the session and logs the settlement tx hash. |
 
 Run it with:
@@ -195,13 +197,16 @@ WebSocket — the transport OpenAI/Anthropic/Google-style inference providers
 speak natively, without an SSE wrapper:
 
 ```ts
-const session = await client.openSession('https://provider.example.com/stream', {
-  mode: 'mpp-session-ws',
-})
+const session = await client.openSession(
+  "https://provider.example.com/stream",
+  {
+    mode: "mpp-session-ws",
+  },
+);
 for await (const chunk of session.stream()) {
   // each WebSocket frame, JSON-decoded
 }
-await session.close()
+await session.close();
 ```
 
 ---
@@ -237,63 +242,83 @@ The Supabase `providers` table indexes manifests with `pg_trgm` trigram search �
 ### Express
 
 ```ts
-import { routedock } from '@routedock/routedock/provider'
+import { routedock } from "@routedock/routedock/provider";
 
-app.use('/price', routedock({
-  modes: ['x402', 'mpp-charge'],
-  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
-  asset: 'USDC',
-  assetContract: process.env.USDC_ASSET_CONTRACT,
-  payee: process.env.STELLAR_PAYEE_ADDRESS,
-  payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
-  network: process.env.STELLAR_NETWORK,
-  facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
-  manifest,
-}))
+app.use(
+  "/price",
+  routedock({
+    modes: ["x402", "mpp-charge"],
+    pricing: { x402: "0.001", "mpp-charge": "0.0008" },
+    asset: "USDC",
+    assetContract: process.env.USDC_ASSET_CONTRACT,
+    payee: process.env.STELLAR_PAYEE_ADDRESS,
+    payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
+    network: process.env.STELLAR_NETWORK,
+    facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
+    manifest,
+  }),
+);
 ```
 
 ### Hono (Cloudflare Workers, Bun, Deno Deploy)
 
 ```ts
-import { Hono } from 'hono'
-import { routedockHono } from '@routedock/sdk/provider/hono'
+import { Hono } from "hono";
+import { routedockHono } from "@routedock/sdk/provider/hono";
 
-const app = new Hono()
+const app = new Hono();
 
-app.use('/price', routedockHono({
-  modes: ['x402', 'mpp-charge'],
-  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
-  asset: 'USDC',
-  assetContract: process.env.USDC_ASSET_CONTRACT,
-  payee: process.env.STELLAR_PAYEE_ADDRESS,
-  payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
-  network: process.env.STELLAR_NETWORK,
-  facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
-  manifest,
-}))
+app.use(
+  "/price",
+  routedockHono({
+    modes: ["x402", "mpp-charge"],
+    pricing: { x402: "0.001", "mpp-charge": "0.0008" },
+    asset: "USDC",
+    assetContract: process.env.USDC_ASSET_CONTRACT,
+    payee: process.env.STELLAR_PAYEE_ADDRESS,
+    payeeSecretKey: process.env.STELLAR_PAYEE_SECRET,
+    network: process.env.STELLAR_NETWORK,
+    facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
+    manifest,
+  }),
+);
 
-export default app
+export default app;
 ```
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
+
+This example uses in-memory defaults for settlement idempotency and session
+state, which aren't safe once requests can land on different isolates or
+processes (Cloudflare Workers, Deno Deploy, or any multi-instance deployment).
+See [Running a provider in production](packages/sdk/README.md#running-a-provider-in-production)
+for the durable stores, cron reconciliation, and `mpp-session-ws` upgrade
+route a serverless provider needs.
 
 ### Testing your settlement callbacks
 
 Provider authors wiring `onSettled` (e.g. a Supabase write) shouldn't have to mock the whole middleware chain or sign real payments to test that callback. `@routedock/routedock/testing` is the `msw`-equivalent for RouteDock providers: a mock middleware that drives your callbacks with synthetic data.
 
 ```ts
-import express from 'express'
-import request from 'supertest'
-import { createMockRoutedockMiddleware } from '@routedock/routedock/testing'
+import express from "express";
+import request from "supertest";
+import { createMockRoutedockMiddleware } from "@routedock/routedock/testing";
 
-const onSettled = vi.fn() // your real Supabase-writing callback under test
+const onSettled = vi.fn(); // your real Supabase-writing callback under test
 
-const app = express()
-app.use('/price', createMockRoutedockMiddleware({ mode: 'x402', payment: 'auto-pass', onSettled }))
-app.get('/price', (_req, res) => res.json({ price: '42' }))
+const app = express();
+app.use(
+  "/price",
+  createMockRoutedockMiddleware({
+    mode: "x402",
+    payment: "auto-pass",
+    onSettled,
+  }),
+);
+app.get("/price", (_req, res) => res.json({ price: "42" }));
 
-await request(app).get('/price').expect(200)
-expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
+await request(app).get("/price").expect(200);
+expect(onSettled).toHaveBeenCalledWith(expect.any(String), "0.001", "x402");
 ```
 
 - `payment: 'auto-pass'` (default) invokes the callbacks with synthetic data, then runs your route handler. `'auto-fail'` responds `402` and skips both — exactly like a rejected payment.
@@ -321,32 +346,32 @@ routedock/
 
 ## Capabilities
 
-| Capability | Detail |
-|---|---|
-| x402 settlement (testnet) | Local `ExactStellarFacilitatorScheme` — no third-party dependency |
-| x402 settlement (mainnet) | OZ hosted facilitator at `channels.openzeppelin.com/x402` with Bearer auth |
-| MPP charge settlement | Server-side broadcast via `@stellar/mpp` pull mode |
-| MPP session: off-chain vouchers | 50 vouchers verified — each signed as ed25519 commitment, no on-chain tx per voucher |
-| MPP session: on-chain close | Single Soroban `close(amount, signature)` settles the cumulative amount |
-| Contract account policy enforcement | `__check_auth` daily cap rejects overspend at the Soroban level |
-| Dashboard Realtime | Supabase `postgres_changes` subscriptions on `sessions` and `tx_log` |
-| Discovery registry | `providers` table with `pg_trgm` trigram indexes for fuzzy capability search |
-| npm package | [`@routedock/routedock@0.1.0`](https://www.npmjs.com/package/@routedock/routedock) |
-| MCP server | [`@routedock/mcp-server`](packages/mcp-server) — LLM agent integration via Model Context Protocol |
-| Network support | `STELLAR_NETWORK=testnet|mainnet` — single env var switches all code paths |
+| Capability                          | Detail                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| x402 settlement (testnet)           | Local `ExactStellarFacilitatorScheme` — no third-party dependency                                 |
+| x402 settlement (mainnet)           | OZ hosted facilitator at `channels.openzeppelin.com/x402` with Bearer auth                        |
+| MPP charge settlement               | Server-side broadcast via `@stellar/mpp` pull mode                                                |
+| MPP session: off-chain vouchers     | 50 vouchers verified — each signed as ed25519 commitment, no on-chain tx per voucher              |
+| MPP session: on-chain close         | Single Soroban `close(amount, signature)` settles the cumulative amount                           |
+| Contract account policy enforcement | `__check_auth` daily cap rejects overspend at the Soroban level                                   |
+| Dashboard Realtime                  | Supabase `postgres_changes` subscriptions on `sessions` and `tx_log`                              |
+| Discovery registry                  | `providers` table with `pg_trgm` trigram indexes for fuzzy capability search                      |
+| npm package                         | [`@routedock/routedock@0.1.0`](https://www.npmjs.com/package/@routedock/routedock)                |
+| MCP server                          | [`@routedock/mcp-server`](packages/mcp-server) — LLM agent integration via Model Context Protocol |
+| Network support                     | `STELLAR_NETWORK=testnet                                                                          | mainnet` — single env var switches all code paths |
 
 ---
 
 ## Deployed Services
 
-| Service | URL | Status |
-|---|---|---|
-| npm package | [`@routedock/routedock`](https://www.npmjs.com/package/@routedock/routedock) | published |
-| Agent vault | `CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT` | live (testnet) |
-| Channel contract | `CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH` | live (testnet) |
-| Dashboard | [routedock.xyz](https://www.routedock.xyz) | live |
-| Provider A (price endpoint) | [api-a.routedock.xyz](https://api-a.routedock.xyz) | live |
-| Provider B (orderbook endpoint) | [api-b.routedock.xyz](https://api-b.routedock.xyz) | live |
+| Service                         | URL                                                                          | Status         |
+| ------------------------------- | ---------------------------------------------------------------------------- | -------------- |
+| npm package                     | [`@routedock/routedock`](https://www.npmjs.com/package/@routedock/routedock) | published      |
+| Agent vault                     | `CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT`                   | live (testnet) |
+| Channel contract                | `CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`                   | live (testnet) |
+| Dashboard                       | [routedock.xyz](https://www.routedock.xyz)                                   | live           |
+| Provider A (price endpoint)     | [api-a.routedock.xyz](https://api-a.routedock.xyz)                           | live           |
+| Provider B (orderbook endpoint) | [api-b.routedock.xyz](https://api-b.routedock.xyz)                           | live           |
 
 ---
 
