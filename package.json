@@ -1,7 +1,6 @@
 {
   "name": "routedock",
   "private": true,
-  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",

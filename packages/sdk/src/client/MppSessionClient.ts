@@ -437,9 +437,10 @@ export class MppSessionClient {
           // voucher negotiated over HTTP before the upgrade. Each signed
           // connection counts as one voucher issued.
           await checkSpend()
-          for await (const item of streamWs(url, mppx, createGuardedCredential, () => {
+          const onSigned = (): void => {
             vouchersIssued++
-          })) {
+          }
+          for await (const item of streamWs(url, mppx, createGuardedCredential, onSigned)) {
             yield item
           }
           return
