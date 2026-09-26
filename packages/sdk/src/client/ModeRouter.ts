@@ -165,14 +165,21 @@ export function invalidateManifest(baseUrl: string): void {
 
 /**
  * Per-entry freshness from response headers, per RFC 9111:
- * `Cache-Control: max-age` wins over `Expires`, and both win over the
- * default TTL. Missing or unparseable directives fall back to the default
- * TTL (60s). `max-age=0` yields an immediately-stale entry, disabling
+ * `Cache-Control: no-store` and `no-cache` disable caching outright and take
+ * precedence over everything else — the client has no revalidation path, so
+ * `no-cache` (which permits reuse only after revalidation) is treated the
+ * same as `no-store`. Otherwise, `max-age` wins over `Expires`, and both win
+ * over the default TTL. Missing or unparseable directives fall back to the
+ * default TTL (60s). `max-age=0` yields an immediately-stale entry, disabling
  * caching for that response.
  */
 function ttlFromHeaders(headers: Headers, now: number): number {
   const cacheControl = headers.get('cache-control')
   if (cacheControl) {
+    const directives = cacheControl.split(',').map((directive) => directive.trim().toLowerCase())
+    if (directives.includes('no-store') || directives.includes('no-cache')) {
+      return 0
+    }
     const maxAge = /max-age=(\d+)/i.exec(cacheControl)
     if (maxAge) {
       return Number.parseInt(maxAge[1]!, 10) * 1000
