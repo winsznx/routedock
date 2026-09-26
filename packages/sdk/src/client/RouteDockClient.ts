@@ -3,7 +3,7 @@ import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertM
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
-import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
+import { createNulthVaultClient, fetchLedgerSequence, paymentContextFromManifest, NulthPolicyError, type NulthVaultConfig, type NulthClient } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
@@ -176,6 +176,7 @@ export class RouteDockClient {
   private readonly manifestTimeoutMs: number | undefined
   private readonly expectedPayee: string | undefined
   private readonly vault: VaultConfig | undefined
+  private nulthClient: NulthClient | undefined
 
   /**
    * Durable backing store for the local daily spend accumulator (keyed by
@@ -396,17 +397,40 @@ export class RouteDockClient {
       )
     }
 
-    try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
-      const x402 = this.x402.withSigner(signer)
-      const result = await x402.pay(url, manifest)
-      return result
-    } catch (err) {
-      if (err instanceof NulthPolicyError) {
-        throw new RouteDockPolicyRejectError((err as NulthPolicyError).code)
+    const ledgerSequence = await this._fetchNulthLedgerSequence()
+    const context = paymentContextFromManifest(manifest, mode as 'x402' | 'mpp-charge', ledgerSequence)
+    return this._withSpendMutex(async () => {
+      try {
+        this.nulthClient ??= createNulthVaultClient(this.vault!, this.network, ledgerSequence)
+        const reservation = this.nulthClient.reserve({ authEntry: '', ...context })
+        const signer = {
+          address: this.vault!.nulthAccount,
+          signAuthEntry: async (authEntry: string) => ({
+            signedAuthEntry: Buffer.from(JSON.stringify({
+              nulth: 'zk-v1',
+              proof: this.nulthClient!.buildPaymentAuthProofUntracked({ authEntry, ...context }),
+            })).toString('base64'),
+            signerAddress: this.vault!.nulthAccount,
+          }),
+        }
+        try {
+          return await this.x402.withSigner(signer)
+            .pay(url, manifest)
+        } catch (err) {
+          this.nulthClient.release(reservation, ledgerSequence)
+          throw err
+        }
+      } catch (err) {
+        if (err instanceof NulthPolicyError) {
+          throw new RouteDockPolicyRejectError(err.code)
+        }
+        throw err
       }
-      throw err
-    }
+    })
+  }
+
+  private _fetchNulthLedgerSequence(): Promise<number> {
+    return fetchLedgerSequence(this.network)
   }
 
   /**

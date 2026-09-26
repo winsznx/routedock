@@ -130,6 +130,9 @@ Once configured, ask Claude:
 > "Pay for data from https://api-a.routedock.xyz/price with a max of 0.01 USDC"
 > "Open a session with https://api-b.routedock.xyz for streaming orderbook data"
 
+Use `open_session` with `mode: "mpp-session-ws"` when the provider advertises
+the WebSocket session transport; the default mode is `mpp-session`.
+
 ## Implementation Details
 
 ### Tool Schema

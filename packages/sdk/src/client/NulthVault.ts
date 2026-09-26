@@ -52,6 +52,11 @@ export interface NulthAuthSignature {
   proof: NulthProof
 }
 
+export interface NulthReservation {
+  amountStroops: bigint
+  dayBucket: number
+}
+
 export interface NulthClientConfig {
   nulthAccount: string
   network: 'testnet' | 'mainnet'
@@ -119,7 +124,7 @@ function usdcToStroops(amount: string): bigint {
 // Inlined NulthClient (from @routedock/nulth-sdk/NulthClient)
 // ---------------------------------------------------------------------------
 
-class NulthClient {
+export class NulthClient {
   private policy: NulthPolicyState
   private readonly prover: 'mock'
 
@@ -148,13 +153,40 @@ class NulthClient {
   }
 
   buildPaymentAuthProof(context: PaymentAuthContext): NulthProof {
-    this.enforcePolicy(context)
+    const reservation = this.reserve(context)
+    const proof = this.buildPaymentAuthProofUntracked(context)
+    // Direct callers retain the original check-and-count behavior.
+    if (reservation.amountStroops !== context.amountStroops) {
+      throw new Error('Nulth reservation amount mismatch')
+    }
+    return proof
+  }
 
+  /** Reserve policy spend before a network payment is attempted. */
+  reserve(context: PaymentAuthContext): NulthReservation {
+    this.enforcePolicy(context)
     const bucket = dayBucketFromLedger(context.ledgerSequence)
     if (bucket !== this.policy.dayBucket) {
       this.policy.dayBucket = bucket
       this.policy.dailySpendStroops = 0n
     }
+    this.policy.dailySpendStroops += context.amountStroops
+    return { amountStroops: context.amountStroops, dayBucket: bucket }
+  }
+
+  /** Roll back a reservation when the payment attempt fails. */
+  release(reservation: NulthReservation, ledgerSequence: number): void {
+    if (dayBucketFromLedger(ledgerSequence) === this.policy.dayBucket) {
+      this.policy.dailySpendStroops =
+        this.policy.dailySpendStroops > reservation.amountStroops
+          ? this.policy.dailySpendStroops - reservation.amountStroops
+          : 0n
+    }
+  }
+
+  /** Build a proof without changing the accumulated spend. */
+  buildPaymentAuthProofUntracked(context: PaymentAuthContext): NulthProof {
+    const bucket = dayBucketFromLedger(context.ledgerSequence)
 
     const authDigest = authDigestFromEntry(context.authEntry)
     const capCommitment = this.capCommitment
@@ -179,7 +211,6 @@ class NulthClient {
       },
     }
 
-    this.policy.dailySpendStroops += context.amountStroops
     return proof
   }
 
@@ -280,6 +311,7 @@ export interface NulthVaultConfig {
   prover?: 'mock'
   witnessSecret: string
   allowedPayees: readonly string[]
+  /** In-memory per-client cap using Stellar ledger-day buckets; resets on restart. */
   dailyCapUsdc: string
   expiryLedger?: number
   verifierContract?: string
@@ -303,6 +335,32 @@ export async function fetchLedgerSequence(network: 'testnet' | 'mainnet'): Promi
   return latest.sequence
 }
 
+export function createNulthVaultClient(
+  vault: NulthVaultConfig,
+  network: 'testnet' | 'mainnet',
+  ledgerSequence: number,
+): NulthClient {
+  const prover = vault.prover ?? 'mock'
+  if (network === 'mainnet' && prover === 'mock') {
+    throw new RouteDockManifestError(
+      'nulth vault uses the insecure mock prover and cannot be used on mainnet',
+    )
+  }
+  return new NulthClient({
+    nulthAccount: vault.nulthAccount,
+    network,
+    prover,
+    policy: createPolicyState({
+      dailyCapUsdc: vault.dailyCapUsdc,
+      allowedPayees: vault.allowedPayees,
+      witnessSecret: vault.witnessSecret,
+      ledgerSequence,
+      ...(vault.expiryLedger !== undefined ? { expiryLedger: vault.expiryLedger } : {}),
+    }),
+    ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),
+  })
+}
+
 export async function prepareNulthSigner(
   vault: NulthVaultConfig,
   manifest: RouteDockManifest,
@@ -320,19 +378,18 @@ export async function prepareNulthSigner(
   }
 
   const ledgerSequence = ledgerSequenceOverride ?? (await fetchLedgerSequence(network))
-  const policy = createPolicyState({
-    dailyCapUsdc: vault.dailyCapUsdc,
-    allowedPayees: vault.allowedPayees,
-    witnessSecret: vault.witnessSecret,
-    ledgerSequence,
-    ...(vault.expiryLedger !== undefined ? { expiryLedger: vault.expiryLedger } : {}),
-  })
-
+  const client = createNulthVaultClient(vault, network, ledgerSequence)
   const config: NulthSignerConfig = {
     nulthAccount: vault.nulthAccount,
     network,
     prover,
-    policy,
+    policy: createPolicyState({
+      dailyCapUsdc: vault.dailyCapUsdc,
+      allowedPayees: vault.allowedPayees,
+      witnessSecret: vault.witnessSecret,
+      ledgerSequence,
+      ...(vault.expiryLedger !== undefined ? { expiryLedger: vault.expiryLedger } : {}),
+    }),
     ...(vault.verifierContract !== undefined ? { verifierContract: vault.verifierContract } : {}),
   }
 
@@ -342,7 +399,13 @@ export async function prepareNulthSigner(
     throw new RouteDockManifestError(`Nulth ZK vault does not support payment mode: ${mode}`)
   }
 
-  const signer = createNulthSigner(config)
+  const signer: NulthStellarSigner = {
+    address: vault.nulthAccount,
+    signAuthEntry: async (authEntry) => ({
+      signedAuthEntry: encodeAuthSignature(client.buildPaymentAuthProof({ authEntry, ...config.paymentContext! })),
+      signerAddress: vault.nulthAccount,
+    }),
+  }
   return { signer: signer as ClientStellarSigner, config }
 }
 

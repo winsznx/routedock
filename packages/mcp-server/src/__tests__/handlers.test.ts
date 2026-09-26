@@ -33,22 +33,15 @@ type _AssertPaymentModes = (typeof SDK_PAYMENT_MODES)[number] extends import('@r
   : never
 
 describe('TOOLS schema regression', () => {
-  it('pay_for_data preferred_mode enum matches SDK PaymentMode exactly', () => {
-    const tool = TOOLS.find((t) => t.name === 'pay_for_data')
-    assert.ok(tool, 'pay_for_data tool must exist in TOOLS')
-
-    const enumValues = (tool.inputSchema as unknown as {
-      properties: { preferred_mode: { enum: string[] } }
-    }).properties.preferred_mode.enum
-
-    const expected = [...SDK_PAYMENT_MODES].sort()
-    const actual = [...enumValues].sort()
-
-    assert.deepEqual(
-      actual,
-      expected,
-      `Tool enum ${JSON.stringify(actual)} must match SDK PaymentMode ${JSON.stringify(expected)}`,
-    )
+  it('keeps discrete and streaming mode enums separate', () => {
+    const payTool = TOOLS.find((t) => t.name === 'pay_for_data')!
+    const sessionTool = TOOLS.find((t) => t.name === 'open_session')!
+    const payModes = (payTool.inputSchema as any).properties.preferred_mode.enum
+    const sessionModes = (sessionTool.inputSchema as any).properties.mode.enum
+    assert.deepEqual(payModes, ['x402', 'mpp-charge'])
+    assert.deepEqual(sessionModes, ['mpp-session', 'mpp-session-ws'])
+    assert.deepEqual([...new Set([...payModes, ...sessionModes])].sort(), [...SDK_PAYMENT_MODES].sort())
+    assert.ok(!(sessionTool.inputSchema as any).required.includes('mode'))
   })
 })
 
@@ -134,6 +127,14 @@ function baseDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
 // ---------------------------------------------------------------------------
 
 describe('handlePayForData', () => {
+  it('directs session modes to open_session without estimating or paying', async () => {
+    let estimated = false
+    const deps = baseDeps({ client: makeClient({ estimateCost: async () => { estimated = true; return estimate('1') } }) })
+    const result = await handlePayForData({ url: 'https://p.example.com', max_amount: '1', preferred_mode: 'mpp-session-ws' }, deps)
+    assert.equal(result.isError, true)
+    assert.equal(estimated, false)
+    assert.match((parseResult(result) as any).error, /open_session/)
+  })
   it('returns success when estimate is within max_amount', async () => {
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
@@ -198,6 +199,19 @@ describe('handlePayForData', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleOpenSession', () => {
+  it('passes an explicitly selected WebSocket mode to the SDK', async () => {
+    let options: unknown
+    const deps = baseDeps({ client: makeClient({ openSession: async (_url, received) => { options = received; return (await makeClient().openSession('x')) } }) })
+    await handleOpenSession({ url: 'https://provider.example.com', mode: 'mpp-session-ws' }, deps, 'secret123')
+    assert.deepEqual(options, { mode: 'mpp-session-ws' })
+  })
+
+  it('uses the selected mode when validating min_deposit', async () => {
+    const fetchManifest = async (_url: string) => ({ json: async () => ({ pricing: { 'mpp-session': { min_deposit: '1.0' }, 'mpp-session-ws': { min_deposit: '10.0' } } }) })
+    const result = await handleOpenSession({ url: 'https://provider.example.com', mode: 'mpp-session-ws', initial_deposit: '5.0' }, baseDeps({ fetchManifest }), 'secret123')
+    assert.equal(result.isError, true)
+    assert.match((parseResult(result) as any).error, /min_deposit/)
+  })
   it('returns isError when COMMITMENT_SECRET is missing', async () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com' },
@@ -293,6 +307,7 @@ describe('handleStreamSession', () => {
   it('pulls up to max_messages from the async iterator', async () => {
     const items = ['msg1', 'msg2', 'msg3']
     let idx = 0
+    let returned = 0
     const fakeSession = {
       stream: () => ({
         [Symbol.asyncIterator]: () => ({
@@ -300,6 +315,7 @@ describe('handleStreamSession', () => {
             idx < items.length
               ? { done: false, value: items[idx++] }
               : { done: true, value: undefined },
+          return: async () => { returned++ },
         }),
       }),
     }
@@ -312,6 +328,7 @@ describe('handleStreamSession', () => {
     const body = parseResult(result) as any
     assert.equal(body.count, 2)
     assert.deepEqual(body.messages, ['msg1', 'msg2'])
+    assert.equal(returned, 1)
   })
 
   it('stops early when stream is exhausted before max_messages', async () => {

@@ -11,7 +11,7 @@
  * the MCP Server, and dispatching to these functions.
  */
 
-import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
+import type { RouteDockClient, SessionHandle, PaymentMode, SessionOptions } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 
 // ---------------------------------------------------------------------------
@@ -121,6 +121,10 @@ export async function handlePayForData(
   const { url, max_amount, preferred_mode } = args
   const { client } = deps
 
+  if (preferred_mode === 'mpp-session' || preferred_mode === 'mpp-session-ws') {
+    return err(`${preferred_mode} is a streaming mode; use open_session with its mode argument instead of pay_for_data`)
+  }
+
   const modeOptions = preferred_mode
     ? { forceMode: preferred_mode as PaymentMode }
     : undefined
@@ -156,6 +160,7 @@ export async function handlePayForData(
 export interface OpenSessionArgs {
   url: string
   initial_deposit?: string
+  mode?: SessionOptions['mode']
 }
 
 /**
@@ -167,11 +172,15 @@ export async function handleOpenSession(
   deps: HandlerDeps,
   commitmentSecret: string | undefined,
 ): Promise<ToolResult> {
-  const { url, initial_deposit } = args
+  const { url, initial_deposit, mode } = args
   const { client, openSessions, fetchManifest } = deps
 
   if (!commitmentSecret) {
     return err('COMMITMENT_SECRET environment variable is required for session mode')
+  }
+
+  if (mode !== undefined && mode !== 'mpp-session' && mode !== 'mpp-session-ws') {
+    return err(`Unsupported session mode: ${String(mode)}`)
   }
 
   if (initial_deposit) {
@@ -184,9 +193,10 @@ export async function handleOpenSession(
       pricing?: Record<string, { min_deposit?: string }>
     }
 
-    const minDeposit =
-      manifest?.pricing?.['mpp-session']?.min_deposit ??
-      manifest?.pricing?.['mpp-session-ws']?.min_deposit
+    const minDeposit = mode
+      ? manifest?.pricing?.[mode]?.min_deposit
+      : manifest?.pricing?.['mpp-session']?.min_deposit ??
+        manifest?.pricing?.['mpp-session-ws']?.min_deposit
     if (minDeposit && parseFloat(initial_deposit) < parseFloat(minDeposit)) {
       return err(
         `initial_deposit ${initial_deposit} is below this provider's min_deposit ${minDeposit}. ` +
@@ -196,7 +206,7 @@ export async function handleOpenSession(
     }
   }
 
-  const session = await client.openSession(url)
+  const session = await client.openSession(url, mode ? { mode } : undefined)
   openSessions.set(session.channelId, session)
 
   return ok({
@@ -239,10 +249,14 @@ export async function handleStreamSession(
   const messages: unknown[] = []
   const iterator = session.stream()[Symbol.asyncIterator]()
 
-  for (let i = 0; i < limit; i++) {
-    const { value, done } = await iterator.next()
-    if (done) break
-    messages.push(value)
+  try {
+    for (let i = 0; i < limit; i++) {
+      const { value, done } = await iterator.next()
+      if (done) break
+      messages.push(value)
+    }
+  } finally {
+    await iterator.return?.()
   }
 
   return ok({

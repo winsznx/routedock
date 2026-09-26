@@ -11,7 +11,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'pay_for_data',
     description:
-      "Pay for a single data request from a RouteDock provider. Automatically selects the best payment mode (x402, mpp-charge, mpp-session, or mpp-session-ws) based on the provider's manifest. Use mpp-session-ws for WebSocket-transport streaming providers (e.g. provider-b).",
+      "Pay for a single data request from a RouteDock provider using x402 or mpp-charge. For streaming providers, use open_session instead.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -26,9 +26,9 @@ export const TOOLS: Tool[] = [
         },
         preferred_mode: {
           type: 'string',
-          enum: ['x402', 'mpp-charge', 'mpp-session', 'mpp-session-ws'],
+          enum: ['x402', 'mpp-charge'],
           description:
-            'Optional preferred payment mode. If not specified, the best mode is selected automatically. mpp-session-ws opens a WebSocket-transport MPP session instead of the default HTTP/SSE variant.',
+            'Optional preferred payment mode for a single request.',
         },
       },
       required: ['url', 'max_amount'],
@@ -49,6 +49,11 @@ export const TOOLS: Tool[] = [
           type: 'string',
           description:
             "Amount in USDC you intend the channel to be funded with (e.g., \"1.0\"). RouteDock channels are pre-deployed and funded out-of-band before the agent runs — this is checked against the provider's advertised min_deposit as a safety guard, it does not itself move funds.",
+        },
+        mode: {
+          type: 'string',
+          enum: ['mpp-session', 'mpp-session-ws'],
+          description: 'Optional session transport. Defaults to mpp-session; choose mpp-session-ws for WebSocket streaming.',
         },
       },
       required: ['url'],
