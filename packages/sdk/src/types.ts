@@ -62,9 +62,16 @@ export interface SLAConfig {
 export interface EndpointDescriptor {
   method: string
   path: string
-  /** Whether this endpoint is retained only for backwards compatibility. */
+  /**
+   * Whether this endpoint is retained only for backwards compatibility.
+   * The SDK logs a `[RouteDock] WARNING:` line before paying a deprecated
+   * endpoint.
+   */
   deprecated?: boolean
-  /** ISO 8601 timestamp after which callers should stop using this endpoint. */
+  /**
+   * ISO 8601 timestamp after which callers should stop using this endpoint.
+   * The SDK refuses to pay (`RouteDockManifestSunsetError`) once it has passed.
+   */
   sunset_at?: string
   headers?: Record<string, string>
   request_schema?: unknown
@@ -434,3 +441,4 @@ export {
 
 /** Dispute status of a channel */
 export type DisputeStatus = 'open' | 'in-refund-window' | 'refundable' | 'settled'
+
