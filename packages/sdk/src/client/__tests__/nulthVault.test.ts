@@ -8,13 +8,16 @@ import {
   prepareNulthSigner,
   createPolicyState,
   paymentContextFromManifest,
+  NulthPolicyError,
 } from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
 import { RouteDockManifestError } from '../../errors.js'
 import { decodeAuthSignature } from '../NulthVault.js'
+import { resolvePayee } from '../../provider/payee.js'
 
 const NULTH = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
+const PAYEE_B = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 
 const baseManifest: RouteDockManifest = {
   routedock: '1.0',
@@ -138,3 +141,61 @@ await assert.rejects(
   RangeError,
 )
 console.log('✓ prepareNulthSigner rejects negative price')
+
+// --- per-mode payee override tests ---
+
+{
+  const manifestWithOverride: RouteDockManifest = {
+    ...baseManifest,
+    payee: PAYEE,
+    pricing: {
+      ...baseManifest.pricing!,
+      x402: { ...baseManifest.pricing!.x402!, payee: PAYEE_B },
+      'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet', payee: PAYEE_B },
+    },
+  }
+
+  // allowlisting the override address signs
+  {
+    const vaultWithOverride = { ...vault, allowedPayees: [PAYEE_B] }
+    const { signer } = await prepareNulthSigner(vaultWithOverride, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await signer.signAuthEntry(Buffer.from('route-dock-auth-entry').toString('base64'))
+    console.log('✓ allowlisting override address signs')
+  }
+
+  // allowlisting only the top-level payee rejects
+  {
+    const vaultDefault = { ...vault, allowedPayees: [PAYEE] }
+    const { signer } = await prepareNulthSigner(vaultDefault, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await assert.rejects(
+      () => signer.signAuthEntry(Buffer.from('route-dock-auth-entry').toString('base64')),
+      (err: unknown) => err instanceof NulthPolicyError && (err as NulthPolicyError).code === 'payee_not_allowed',
+    )
+    console.log('✓ allowlisting only top-level payee rejects')
+  }
+
+  // paymentContextFromManifest returns override when set
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'mpp-charge'))
+  }
+
+  // paymentContextFromManifest returns top-level payee when no override
+  const manifestNoOverride: RouteDockManifest = {
+    ...baseManifest,
+    pricing: { ...baseManifest.pricing!, 'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' } },
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'mpp-charge'))
+  }
+}
+console.log('✓ per-mode payee override works correctly')

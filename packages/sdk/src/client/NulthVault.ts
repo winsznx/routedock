@@ -225,7 +225,7 @@ export function paymentContextFromManifest(
   manifest: {
     payee: string
     asset_contract: string
-    pricing: { x402?: { amount: string }; 'mpp-charge'?: { amount: string } }
+    pricing: { x402?: { amount: string; payee?: string }; 'mpp-charge'?: { amount: string; payee?: string } }
   },
   mode: 'x402' | 'mpp-charge',
   ledgerSequence: number,
@@ -233,7 +233,7 @@ export function paymentContextFromManifest(
   const pricing = manifest.pricing[mode]
   if (!pricing) throw new Error(`manifest.pricing.${mode} missing`)
   return {
-    payee: manifest.payee,
+    payee: pricing.payee ?? manifest.payee,
     amountStroops: usdcToStroops(pricing.amount),
     assetContract: manifest.asset_contract,
     ledgerSequence,
