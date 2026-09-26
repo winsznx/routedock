@@ -114,6 +114,22 @@ jobs:
               exit 1
             fi
           done
+      - name: Guard action SHA pinning
+        # Every third-party `uses:` must be a full 40-character commit SHA.
+        # actionlint does not check this, and mutable refs can change without
+        # a reviewable diff in this repository.
+        run: |
+          unpinned=$(grep -HnE "^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[\"']?[^./ \"']+[^@]*@" .github/workflows/*.y*ml \
+            | grep -vE "@[0-9a-f]{40}[\"']?([[:space:]]|$)" || true)
+          if [ -n "$unpinned" ]; then
+            while IFS= read -r hit; do
+              file=${hit%%:*}
+              rest=${hit#*:}
+              line=${rest%%:*}
+              echo "::error file=${file},line=${line}::action ref is not pinned to a 40-character commit SHA"
+            done <<< "$unpinned"
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
