@@ -89,7 +89,7 @@ export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
   wallet: Keypair | string
   network: 'testnet' | 'mainnet'
-  /** Optional local daily spend cap — checked before every payment (local-key vault only) */
+  /** Optional local daily spend cap — checked before every payment (local-key vault and nulth vault) */
   spendCap?: SpendCap
   /**
    * Ed25519 secret key (S...) for signing channel commitments. Required for mpp-session.
@@ -336,10 +336,6 @@ export class RouteDockClient {
 
     await this._checkTrustline(manifest)
 
-    if (this.vault?.mode === 'nulth') {
-      return this._payWithNulthVault(url, manifest, mode)
-    }
-
     let amount: string
     switch (mode) {
       case 'x402':
@@ -357,19 +353,26 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
+    // Reserve against the local spend cap BEFORE any payment path runs,
+    // including the nulth vault path (#396) — otherwise vault payments
+    // bypass spendCap / endpointCaps and never count toward the daily total.
     const reserveId = await this._checkAndReserveSpend(amount, baseUrl)
 
     let result: PaymentResult
     try {
-      switch (mode) {
-        case 'x402':
-          result = await this.x402.pay(url, manifest)
-          break
-        case 'mpp-charge':
-          result = await this.charge.pay(url, manifest)
-          break
-        default:
-          throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+      if (this.vault?.mode === 'nulth') {
+        result = await this._payWithNulthVault(url, manifest, mode)
+      } else {
+        switch (mode) {
+          case 'x402':
+            result = await this.x402.pay(url, manifest)
+            break
+          case 'mpp-charge':
+            result = await this.charge.pay(url, manifest)
+            break
+          default:
+            throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+        }
       }
     } catch (err) {
       await this._rollbackSpend(reserveId).catch(() => {})
