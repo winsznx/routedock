@@ -19,18 +19,7 @@ import {
   type Network,
 } from './manifest.js'
 import type { Env } from './env.js'
-
-/**
- * Mirrors the SDK's OrphanedSessionInfo. Declared locally because the type is
- * only re-exported from `@routedock/routedock/provider`, the Node-only Express
- * entry point, which must not appear in a Workers bundle.
- */
-interface OrphanedSessionInfo {
-  cumulativeAmount: string
-  lastSignature: string
-  voucherCount: number
-  reason: 'connection-closed' | 'idle-timeout'
-}
+import { createSessionWriters } from './sessionWrites.js'
 
 interface OrderBookLevel {
   price: string
@@ -111,6 +100,13 @@ export class ChannelSession extends DurableObject<Env> {
 
     const providerUrl = `${env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'}/stream/orderbook`
 
+    const sessionWriters = createSessionWriters(supabase, {
+      payee: env.STELLAR_PAYEE_ADDRESS,
+      network,
+      channelContract,
+      providerUrl,
+    })
+
     const sessionStore = this.ctx?.storage
       ? Store.from({
           get: (key: string) => this.ctx.storage.get(key),
@@ -137,73 +133,7 @@ export class ChannelSession extends DurableObject<Env> {
         commitmentPublicKey,
         sessionStore,
         manifest,
-        onSessionOpen: async (channelId, payer) => {
-          if (!supabase) return
-          const { error } = await supabase.from('sessions').insert({
-            channel_id: channelId,
-            payee: env.STELLAR_PAYEE_ADDRESS,
-            payer: payer ?? 'unknown',
-            cumulative_amount: '0',
-            status: 'open',
-            channel_contract: channelId,
-            network,
-            voucher_count: 0,
-          })
-          if (error) console.error('[supabase] session insert failed:', error.message)
-        },
-        onVoucher: async (channelId, voucherIndex, cumulativeAmount, signature) => {
-          if (!supabase) return
-          const { error } = await supabase
-            .from('sessions')
-            .update({
-              cumulative_amount: cumulativeAmount,
-              voucher_count: voucherIndex,
-              last_signature: signature,
-            })
-            .eq('channel_id', channelId)
-          if (error) console.error('[supabase] voucher update failed:', error.message)
-        },
-        onOrphaned: async (channelId: string, info: OrphanedSessionInfo) => {
-          if (!supabase) return
-          const { error } = await supabase
-            .from('sessions')
-            .update({
-              status: 'closing',
-              cumulative_amount: info.cumulativeAmount,
-              last_signature: info.lastSignature || null,
-              voucher_count: info.voucherCount,
-            })
-            .eq('channel_id', channelId)
-          if (error) console.error('[supabase] orphan update failed:', error.message)
-          else console.log(`[supabase] session marked closing (${info.reason}): ${channelId}`)
-        },
-        onSettled: async (txHash, totalPaid, mode, payer) => {
-          console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid}`)
-          if (!supabase) return
-
-          // Matched on channel_id, not channel_contract. The Express build
-          // closed by `.eq('channel_contract', CHANNEL_CONTRACT_ID)` plus
-          // `status='open'`, which closes an arbitrary row as soon as two
-          // sessions share a channel contract.
-          const { error: closeErr } = await supabase
-            .from('sessions')
-            .update({ status: 'closed', settlement_tx_hash: txHash })
-            .eq('channel_id', channelContract)
-            .eq('status', 'open')
-          if (closeErr) console.error('[supabase] session close failed:', closeErr.message)
-
-          const { error } = await supabase.from('tx_log').insert({
-            tx_type: 'channel_close',
-            tx_hash: txHash,
-            amount: parseFloat(totalPaid),
-            mode,
-            network,
-            provider_url: providerUrl,
-            agent_address: payer,
-            metadata: { settled_at: new Date().toISOString() },
-          })
-          if (error) console.error('[supabase] tx_log insert failed:', error.message)
-        },
+        ...sessionWriters,
       }),
     )
 
@@ -326,3 +256,4 @@ export class ChannelSession extends DurableObject<Env> {
     return this.app.fetch(request)
   }
 }
+
