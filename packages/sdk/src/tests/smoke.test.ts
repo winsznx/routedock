@@ -283,6 +283,8 @@ function startTestServer(
     channel_id: 'test-channel-1',
     payee: 'GPAYEE',
     payer: 'GPAYER',
+    channel_contract: 'test-channel-contract-1',
+    network: 'testnet',
     cumulative_amount: '0.0010000',
     last_signature: 'sig1',
     status: 'open',

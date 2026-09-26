@@ -402,6 +402,8 @@ export interface SessionState {
   channel_id: string
   payee: string
   payer: string
+  channel_contract: string
+  network: 'testnet' | 'mainnet'
   /** Monotonically increasing cumulative amount — stored as string to preserve precision */
   cumulative_amount: string
   last_signature: string

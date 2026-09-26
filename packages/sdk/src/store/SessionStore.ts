@@ -9,8 +9,14 @@ import {
 
 export interface SessionStore {
   get(channelId: string): Promise<SessionState | null>
-  /** Enforce monotonic invariant at application level before writing */
+  /** Enforce monotonic invariant at application level before writing (used for voucher amount advances) */
   upsert(channelId: string, state: SessionState): Promise<void>
+  /** Update session status without altering cumulative_amount */
+  setStatus(
+    channelId: string,
+    status: SessionState['status'],
+    settlementTxHash?: string | null,
+  ): Promise<void>
   close(channelId: string): Promise<void>
 }
 
@@ -35,6 +41,8 @@ export class SupabaseSessionStore implements SessionStore {
       channel_id: data.channel_id as string,
       payee: data.payee as string,
       payer: data.payer as string,
+      channel_contract: data.channel_contract as string,
+      network: data.network as SessionState['network'],
       cumulative_amount: String(data.cumulative_amount),
       last_signature: data.last_signature as string,
       status: data.status as SessionState['status'],
@@ -61,6 +69,8 @@ export class SupabaseSessionStore implements SessionStore {
         channel_id: state.channel_id,
         payee: state.payee,
         payer: state.payer,
+        channel_contract: state.channel_contract,
+        network: state.network,
         cumulative_amount: state.cumulative_amount,
         last_signature: state.last_signature,
         status: state.status,
@@ -81,14 +91,30 @@ export class SupabaseSessionStore implements SessionStore {
     }
   }
 
-  async close(channelId: string): Promise<void> {
+  async setStatus(
+    channelId: string,
+    status: SessionState['status'],
+    settlementTxHash?: string | null,
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      status,
+      updated_at: new Date().toISOString(),
+    }
+    if (settlementTxHash !== undefined) {
+      payload.settlement_tx_hash = settlementTxHash
+    }
+
     const { error } = await this.supabase
       .from('sessions')
-      .update({ status: 'closed', updated_at: new Date().toISOString() })
+      .update(payload)
       .eq('channel_id', channelId)
 
     if (error) {
-      throw new RouteDockNetworkError(`SessionStore.close failed: ${error.message}`)
+      throw new RouteDockNetworkError(`SessionStore.setStatus failed: ${error.message}`)
     }
+  }
+
+  async close(channelId: string): Promise<void> {
+    await this.setStatus(channelId, 'closed')
   }
 }

@@ -24,6 +24,9 @@ export interface MppChargeHandlerOptions {
   amount: string
   assetContract: string
   manifest: RouteDockManifest
+  /**
+   * @deprecated Ignored. Charge mode opens no channel, so there is nothing for a session store to hold.
+   */
   store?: SessionStore
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
   onCallbackError?: (err: unknown, cb: string) => void
