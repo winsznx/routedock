@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { getSupabaseBrowserClient, type TxLogEntry } from '@/lib/supabase'
+import { networkLabel } from '@/lib/explorer'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 import { TxHashLink } from '@/components/shared/TxHashLink'
 
@@ -76,7 +77,7 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
           <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
         )}
         <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
-          Live Feed — Testnet
+          Live Feed — {networkLabel()}
         </span>
       </div>
       {feedFailed && (

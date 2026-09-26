@@ -1,10 +1,11 @@
 import type { Metadata } from 'next'
+import { networkLabel } from '@/lib/explorer'
 
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
   title: 'Dashboard',
-  description: 'Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar testnet.',
+  description: `Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar ${networkLabel()}.`,
 }
 
 import { getSupabaseServerClient } from '@/lib/supabase'

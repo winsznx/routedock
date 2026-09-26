@@ -1,7 +1,5 @@
 import { ExternalLink } from 'lucide-react'
-
-const EXPLORER_URL =
-  process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ?? 'https://stellar.expert/explorer/testnet'
+import { explorerHome, networkLabel } from '@/lib/explorer'
 
 export function DashboardHeader() {
   return (
@@ -14,12 +12,12 @@ export function DashboardHeader() {
             </span>
             <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-[var(--status-success)]/30 bg-[var(--status-success)]/10 px-2.5 py-0.5 text-xs font-medium text-[var(--status-success)]">
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
-              Testnet Live
+              {networkLabel()} Live
             </span>
           </div>
 
           <a
-            href={EXPLORER_URL}
+            href={explorerHome()}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
