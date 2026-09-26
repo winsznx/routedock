@@ -34,6 +34,36 @@ export function withTypedChannelErrors(method: Method.AnyServer): Method.AnyServ
   } as Method.AnyServer
 }
 
+/** The shape `commit` needs from a channel credential — amount, signature, payer. */
+export interface ChannelVerifyCredential {
+  payload?: { amount?: unknown; signature?: unknown }
+  source?: string
+}
+
+/**
+ * Wraps a channel method so `commit` only runs once the underlying `verify`
+ * has resolved successfully. Nothing about a credential — its signature, its
+ * amount, the payer it names — may be trusted or recorded before mppx has
+ * actually verified it: a crafted header that fails verification must not be
+ * able to overwrite state a previous, genuinely verified voucher set.
+ *
+ * If `verify` throws, `commit` is never called and the error propagates
+ * unchanged (compose with {@link withTypedChannelErrors} for typed errors).
+ */
+export function onVerifiedCredential(
+  method: Method.AnyServer,
+  commit: (credential: ChannelVerifyCredential) => void | Promise<void>,
+): Method.AnyServer {
+  return {
+    ...method,
+    async verify(parameters: { credential: ChannelVerifyCredential; request: unknown }) {
+      const receipt = await method.verify(parameters)
+      await commit(parameters.credential)
+      return receipt
+    },
+  } as Method.AnyServer
+}
+
 function mapChannelError(error: unknown): Error {
   const message = formatMppError(error)
   const details = error && typeof error === 'object' && 'details' in error

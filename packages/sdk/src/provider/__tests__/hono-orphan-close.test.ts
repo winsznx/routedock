@@ -46,11 +46,31 @@ mock.module('@stellar/mpp/channel/server', {
     close: async () => {
       throw new Error('rpc outage')
     },
-    // mppChannel: capture the wrapped store so the test can feed a voucher in,
+    // mppChannel: capture the wrapped store so the test can still reach it,
     // and return no methods (the orphan/close paths never use mppx methods).
     stellar: (opts: { store: unknown }) => {
       capturedStore = opts.store as WrappedStore
       return []
+    },
+  },
+})
+
+// hono.ts now commits voucher state only after mppCompatibility's
+// onVerifiedCredential confirms mppx's verify succeeded — a direct store.put
+// (the old way this test fed in a voucher) no longer opens the session or
+// arms the idle timer. Capture the real `commit` callback so the test can
+// invoke it directly, simulating a verified voucher without needing a full
+// signed credential.
+const actualCompat = await import('../mppCompatibility.js')
+let capturedCommit: ((credential: unknown) => void | Promise<void>) | null = null
+mock.module('../mppCompatibility.js', {
+  namedExports: {
+    channelAuthorizer: actualCompat.channelAuthorizer,
+    withTypedChannelErrors: actualCompat.withTypedChannelErrors,
+    formatMppError: actualCompat.formatMppError,
+    onVerifiedCredential: (method: unknown, commit: (credential: unknown) => void | Promise<void>) => {
+      capturedCommit = commit
+      return method
     },
   },
 })
@@ -112,9 +132,12 @@ describe('routedockHono — orphan recovery on failed channel close', () => {
       }),
     )
 
-    // Feed a live voucher so the session is open and the idle timer is armed.
+    // Feed a live (verified) voucher so the session is open and the idle
+    // timer is armed — via the captured `commit` callback, which is only
+    // ever invoked by onVerifiedCredential after a real verify succeeds.
     assert.ok(capturedStore, 'stellar mock should have captured the wrapped store')
-    await capturedStore!.put(`stellar:channel:cumulative:${CHANNEL_CONTRACT}`, { amount: '1' })
+    assert.ok(capturedCommit, 'onVerifiedCredential mock should have captured commit')
+    await capturedCommit!({ payload: { amount: '1', signature: 'deadbeef' } })
 
     // DELETE with a mocked close broadcast that always fails → 500, and the
     // orphan state must remain armed (settledCleanly must NOT be set).
