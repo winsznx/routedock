@@ -11,6 +11,11 @@
 # Skip with:  git push --no-verify
 set -euo pipefail
 
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  echo "pre-push: skipped on GitHub Actions, the CI workflow runs these checks"
+  exit 0
+fi
+
 root="$(git rev-parse --show-toplevel)"
 
 printf '\033[36m▸ pre-push: verifying (skip with --no-verify)\033[0m\n'

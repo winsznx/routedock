@@ -11,7 +11,7 @@
     "release": "pnpm run release:build && changeset publish",
     "release:build": "pnpm --filter @routedock/nulth-sdk build && pnpm --filter @routedock/routedock build && pnpm --filter @routedock/mcp-server build",
     "verify": "bash scripts/verify.sh",
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
+    "prepare": "[ -n \"${CI:-}\" ] || git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",

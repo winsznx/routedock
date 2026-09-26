@@ -39,6 +39,9 @@ A **pre-push hook** runs `pnpm verify --fast` automatically. It is installed by
 `pnpm install` (via `prepare`, which sets `core.hooksPath`), so you get it
 without doing anything. Bypass with `git push --no-verify` when you need to.
 
+The hook is not installed when `CI` is set, and it also skips itself when it
+does run on GitHub Actions, since the CI workflow already runs the same checks.
+
 It runs on push rather than on every commit deliberately: the check has to build
 the SDK first, which is slow enough that a per-commit hook gets bypassed, and a
 bypassed hook catches nothing. Pushing is the point where the work becomes
