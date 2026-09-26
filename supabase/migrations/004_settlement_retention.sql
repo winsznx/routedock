@@ -33,9 +33,9 @@ END;
 $$;
 
 -- ── 2. pg_cron schedule (conditional) ────────────────────────
--- Enable the pg_cron extension if available. Supabase projects ship with
--- it, but local/self-hosted instances may not. CREATE EXTENSION IF NOT
--- EXISTS is safe — it no-ops when the extension is already installed.
+-- Supabase projects can provide pg_cron, but local/self-hosted instances
+-- may not. Migration 005 attempts to enable it where the extension is
+-- available; keep this guard so migration 004 remains safe on its own.
 
 DO $$
 BEGIN

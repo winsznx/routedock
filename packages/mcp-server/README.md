@@ -15,11 +15,7 @@ This MCP server implements the thesis that base payment infrastructure should be
 
 ## Installation
 
-```bash
-npm install -g @routedock/mcp-server
-```
-
-Or build from source:
+Build from source:
 
 ```bash
 cd packages/mcp-server
@@ -38,6 +34,9 @@ Create a `.env` file (e.g., `~/.routedock/.env`):
 STELLAR_SECRET="SDU5..."  # Use a dedicated low-balance testnet key for safety
 STELLAR_NETWORK="testnet"  # or "mainnet"
 ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
+
+# Optional: durable local spend ledger (defaults to ~/.routedock/spend.json)
+ROUTEDOCK_SPEND_STORE_PATH="~/.routedock/spend.json"
 
 # Optional (for session mode)
 COMMITMENT_SECRET="S..."  # Ed25519 secret for channel commitments
@@ -127,7 +126,7 @@ Add this to your Claude Desktop config file:
   "mcpServers": {
     "routedock": {
       "command": "node",
-      "args": ["/path/to/@routedock/mcp-server/dist/index.js"],
+  "args": ["/absolute/path/to/routedock/packages/mcp-server/dist/index.js"],
       "env": {
         "ROUTEDOCK_ENV_FILE": "/absolute/path/to/your/.env"
       }
