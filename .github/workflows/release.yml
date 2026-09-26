@@ -19,7 +19,22 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # GITHUB_TOKEN can't hold the workflows permission, so releases
+      # fail when a pushed commit changes .github/workflows/*.
+      # See https://github.com/winsznx/routedock/issues/361
+      - name: Mint release token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
@@ -38,8 +53,8 @@ jobs:
         with:
           publish: pnpm run release
           version: pnpm run version
+          github-token: ${{ steps.app-token.outputs.token }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Release runs on push, so its result is never part of a PR's check set.

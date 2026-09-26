@@ -3,9 +3,9 @@ import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertM
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
-import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
+import type { NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
-import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
+import { RouteDockManifestError, RouteDockSignatureError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { usdcToStroops } from '../internal/usdc.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
@@ -76,8 +76,9 @@ export interface RouteDockClientConfig {
   expectedPayee?: string
 
   /**
-   * Vault custody mode. When `nulth`, payments use a Nulth account as payer
-   * with off-chain ZK proofs attached as auth signatures.
+   * Vault custody mode. When `nulth`, payments are not yet supported
+   * because the x402 exact scheme can only attach ed25519 signatures.
+   * See https://github.com/winsznx/routedock/issues/356
    */
   vault?: VaultConfig
 }
@@ -325,33 +326,15 @@ export class RouteDockClient {
     return result
   }
 
-  /** Nulth ZK vault path — proof built off-chain, attached as auth signature */
+  /** Nulth ZK vault path — not yet supported. @see https://github.com/winsznx/routedock/issues/356 */
   private async _payWithNulthVault(
     url: string,
     manifest: import('../types.js').RouteDockManifest,
     mode: import('../types.js').PaymentMode,
   ): Promise<PaymentResult> {
-    const prover = this.vault?.prover ?? 'mock';
-    if (this.network === 'mainnet' && prover === 'mock') {
-      throw new RouteDockManifestError('nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet');
-    }
-    if (mode !== 'x402') {
-      throw new RouteDockManifestError(
-        'nulth vault currently supports x402 mode — force x402 via { forceMode: "x402" }',
-      )
-    }
-
-    try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
-      const x402 = this.x402.withSigner(signer)
-      const result = await x402.pay(url, manifest)
-      return result
-    } catch (err) {
-      if (err instanceof NulthPolicyError) {
-        throw new RouteDockPolicyRejectError((err as NulthPolicyError).code)
-      }
-      throw err
-    }
+    throw new RouteDockSignatureError(
+      'Nulth vault payments are not supported yet: the x402 exact scheme can only attach ed25519 signatures, not Nulth ZK proofs. See https://github.com/winsznx/routedock/issues/356',
+    )
   }
 
   /**

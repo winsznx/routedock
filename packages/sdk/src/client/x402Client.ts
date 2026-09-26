@@ -42,7 +42,7 @@ export class X402Client {
     this.httpClient = new x402HTTPClient(core)
   }
 
-  /** Replace signer (e.g. swap to Nulth ZK account payer before pay) */
+  /** Replace signer (note: Nulth vault signers are not supported) */
   withSigner(signer: ClientStellarSigner): X402Client {
     return new X402Client(signer, this.network, this.retryPolicy)
   }
