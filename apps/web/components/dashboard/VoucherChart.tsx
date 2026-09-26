@@ -40,7 +40,7 @@ export function VoucherChart() {
       .from('public_sessions')
       .select('opened_at, voucher_count')
       .not('voucher_count', 'eq', 0)
-      .order('opened_at', { ascending: true })
+      .order('opened_at', { ascending: false })
       .limit(500)
 
     if (!rows || rows.length === 0) {
@@ -133,3 +133,4 @@ export function VoucherChart() {
     </div>
   )
 }
+
