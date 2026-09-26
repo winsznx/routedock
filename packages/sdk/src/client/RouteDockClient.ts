@@ -95,7 +95,7 @@ export const usdcToMicros = usdcToStroops
  */
 const ASSET_ISSUERS: Record<string, Record<string, string>> = {
   USDC: {
-    testnet: 'GBQY2K7IZDSK5QN3OF6ZSOLQ6CWAH5Q5JXEG5Q3S4OD5B7LYO24B6B6L',
+    testnet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
     mainnet: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
   },
 }
@@ -241,19 +241,20 @@ export class RouteDockClient {
     try {
       const account = await server.loadAccount(this.keypair.publicKey())
       const balances = account.balances as unknown[]
+      const expectedIssuer = getAssetIssuer(manifest.asset, this.network)
       const hasTrustline = balances.some(
         (b) =>
           typeof b === 'object' &&
           b !== null &&
           'asset_code' in b &&
-          (b as Record<string, unknown>).asset_code === manifest.asset,
+          (b as Record<string, unknown>).asset_code === manifest.asset &&
+          (!expectedIssuer || (b as Record<string, unknown>).asset_issuer === expectedIssuer),
       )
       if (!hasTrustline) {
-        const issuer = getAssetIssuer(manifest.asset, this.network)
-        const remediation = issuer
-          ? `Run: stellar tx new --source ${this.keypair.publicKey()} --network ${this.network} change-trust --asset ${manifest.asset}:${issuer} --limit 100000`
+        const remediation = expectedIssuer
+          ? `Run: stellar tx new --source ${this.keypair.publicKey()} --network ${this.network} change-trust --asset ${manifest.asset}:${expectedIssuer} --limit 100000`
           : `Establish a trustline for ${manifest.asset} with the appropriate issuer on ${this.network}`
-        throw new RouteDockTrustlineError(manifest.asset, issuer || 'unknown', remediation)
+        throw new RouteDockTrustlineError(manifest.asset, expectedIssuer || 'unknown', remediation)
       }
       RouteDockClient._trustlineCache.set(cacheKey, {
         exists: true,
