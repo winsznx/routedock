@@ -13,7 +13,7 @@ import {
 import { NulthClient } from './NulthClient.js'
 import type { NulthClientConfig, PaymentAuthContext } from './types.js'
 
-/** Compatible with @x402/stellar ClientStellarSigner */
+/** Nulth ZK signer. Not compatible with x402 exact scheme (see #356) */
 export interface NulthStellarSigner {
   address: string
   signAuthEntry: SignAuthEntry
@@ -25,10 +25,11 @@ export interface NulthSignerConfig extends NulthClientConfig {
 }
 
 /**
- * Create an x402-compatible signer that pays from a Nulth ZK account.
- * Proofs are built off-chain; allowlist and cap never leave the agent.
- */
-export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner {
+   * Create a Nulth signer. Note: RouteDockClient.pay() rejects
+   * Nulth vaults until a Nulth scheme client and account contract exist.
+   * See https://github.com/winsznx/routedock/issues/356
+   */
+  export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner {
   const client = new NulthClient(config)
   const nulthAccount = config.nulthAccount
 
@@ -68,7 +69,7 @@ export function paymentContextFromManifest(
   manifest: {
     payee: string
     asset_contract: string
-    pricing: { x402?: { amount: string }; 'mpp-charge'?: { amount: string } }
+    pricing: { x402?: { amount: string; payee?: string }; 'mpp-charge'?: { amount: string; payee?: string } }
   },
   mode: 'x402' | 'mpp-charge',
   ledgerSequence: number,
@@ -78,7 +79,7 @@ export function paymentContextFromManifest(
     throw new Error(`manifest.pricing.${mode} missing`)
   }
   return {
-    payee: manifest.payee,
+    payee: pricing.payee ?? manifest.payee,
     amountStroops: usdcToStroops(pricing.amount),
     assetContract: manifest.asset_contract,
     ledgerSequence,

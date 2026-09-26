@@ -10,5 +10,7 @@ SHA-512 digest as a placeholder. No real zero-knowledge proof is generated.
   currently implement a production prover backend.
 - The `mock` backend is deliberately not a cryptographic proof and must never be
   used for custody or policy enforcement.
+- `RouteDockClient.pay()` rejects Nulth vaults until a Nulth scheme client and
+  account contract exist. See [Issue #356](https://github.com/winsznx/routedock/issues/356).
 
 See [Issue #143](https://github.com/winsznx/routedock/issues/143) for context.
