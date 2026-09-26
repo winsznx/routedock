@@ -272,8 +272,10 @@ export class RouteDockClient {
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
    * runs trustline preflight, reserves local spend cap BEFORE executing the
    * payment, then commits the spend record on success. Rolls back the
-   * reservation if the on-chain payment fails. Concurrent pay() calls are
-   * serialized through a per-instance mutex to prevent spend-cap overrun.
+   * reservation if the on-chain payment fails, and also when the call
+   * completes without paying anything (an x402 endpoint answering a plain
+   * 200 with no challenge). Concurrent pay() calls are serialized through a
+   * per-instance mutex to prevent spend-cap overrun.
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
@@ -322,7 +324,18 @@ export class RouteDockClient {
       throw err
     }
 
-    await this._commitSpend(reserveId)
+    // A real payment keeps its reservation. `X402Client` returns
+    // `{ txHash: null, amount: '0' }` only from its non-402 branch, where
+    // nothing was signed or paid (a plain 200, e.g. a path outside the
+    // paywall), so that reservation must be released rather than charged
+    // against the daily and endpoint caps. Paid results carry the manifest
+    // price even when the facilitator omits the settlement header, so they
+    // still commit. See #325 (regression of #139).
+    if (result.txHash === null && result.amount === '0') {
+      await this._rollbackSpend(reserveId)
+    } else {
+      await this._commitSpend(reserveId)
+    }
     return result
   }
 
