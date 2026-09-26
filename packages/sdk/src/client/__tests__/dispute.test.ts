@@ -63,6 +63,7 @@ interface RpcScript {
   simulateTransaction?: (tx: unknown) => unknown
   prepareTransaction?: (tx: unknown) => unknown
   sendTransaction?: (tx: unknown) => unknown
+  getTransaction?: (hash: string) => unknown
   isSimulationError?: (result: unknown) => boolean
 }
 
@@ -88,6 +89,9 @@ function buildFakeSdk() {
     }
     async sendTransaction(tx: unknown) {
       return (rpc.sendTransaction ?? (() => ({ hash: 'DEFAULT_HASH' })))(tx)
+    }
+    async getTransaction(hash: string) {
+      return (rpc.getTransaction ?? (() => ({ status: 'SUCCESS' })))(hash)
     }
   }
 
@@ -149,11 +153,61 @@ beforeEach(() => {
 // ── requestRefund() ────────────────────────────────────────────────────────────
 
 describe('requestRefund()', () => {
-  it('returns the transaction hash when the refund is submitted', async () => {
+  it('returns the transaction hash when the refund is submitted and confirmed on-chain', async () => {
     rpc.sendTransaction = () => ({ hash: 'REFUND_TX_HASH' })
+    rpc.getTransaction = () => ({ status: 'SUCCESS' })
     const handle = await openHandle()
     const hash = await handle.requestRefund()
     assert.equal(hash, 'REFUND_TX_HASH')
+  })
+
+  it('throws RouteDockDisputeError when sendTransaction returns TRY_AGAIN_LATER', async () => {
+    rpc.sendTransaction = () => ({ status: 'TRY_AGAIN_LATER', hash: 'TRY_AGAIN_HASH' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /TRY_AGAIN_LATER/i.test((err as Error).message),
+    )
+  })
+
+  it('throws RouteDockDisputeError when getTransaction returns FAILED', async () => {
+    rpc.sendTransaction = () => ({ hash: 'FAILED_TX_HASH' })
+    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: 'AAAA...' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /FAILED/i.test((err as Error).message),
+    )
+  })
+
+  it('resolves with the hash when getTransaction returns NOT_FOUND then SUCCESS', async () => {
+    let pollCount = 0
+    rpc.sendTransaction = () => ({ hash: 'POLL_TX_HASH' })
+    rpc.getTransaction = () => {
+      pollCount++
+      return pollCount < 3 ? { status: 'NOT_FOUND' } : { status: 'SUCCESS' }
+    }
+    const handle = await openHandle()
+    const hash = await handle.requestRefund({ intervalMs: 10, timeoutMs: 500 })
+    assert.equal(hash, 'POLL_TX_HASH')
+    assert.ok(pollCount >= 3)
+  })
+
+  it('throws RouteDockDisputeError with the hash when getTransaction keeps returning NOT_FOUND past timeout', async () => {
+    rpc.sendTransaction = () => ({ hash: 'TIMEOUT_TX_HASH' })
+    rpc.getTransaction = () => ({ status: 'NOT_FOUND' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.requestRefund({ timeoutMs: 25, intervalMs: 5 }),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        (err as Error).message.includes('TIMEOUT_TX_HASH') &&
+        /timed out/i.test((err as Error).message),
+    )
   })
 
   it('throws RouteDockDisputeError when there is no open channel (simulation fails)', async () => {
@@ -197,9 +251,71 @@ describe('settleWithLatestVoucher()', () => {
       result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
     })
     rpc.sendTransaction = () => ({ hash: 'SETTLE_TX_HASH' })
+    rpc.getTransaction = () => ({ status: 'SUCCESS' })
     const handle = await openHandle()
     const hash = await handle.settleWithLatestVoucher()
     assert.equal(hash, 'SETTLE_TX_HASH')
+  })
+
+  it('throws RouteDockDisputeError when sendTransaction returns TRY_AGAIN_LATER', async () => {
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    rpc.sendTransaction = () => ({ status: 'TRY_AGAIN_LATER', hash: 'TRY_AGAIN_HASH' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.settleWithLatestVoucher(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /TRY_AGAIN_LATER/i.test((err as Error).message),
+    )
+  })
+
+  it('throws RouteDockDisputeError when getTransaction returns FAILED', async () => {
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    rpc.sendTransaction = () => ({ hash: 'SETTLE_FAILED_HASH' })
+    rpc.getTransaction = () => ({ status: 'FAILED', resultXdr: 'AAAA...' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.settleWithLatestVoucher(),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        /FAILED/i.test((err as Error).message),
+    )
+  })
+
+  it('resolves with the hash when getTransaction returns NOT_FOUND then SUCCESS', async () => {
+    let pollCount = 0
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    rpc.sendTransaction = () => ({ hash: 'SETTLE_POLL_HASH' })
+    rpc.getTransaction = () => {
+      pollCount++
+      return pollCount < 3 ? { status: 'NOT_FOUND' } : { status: 'SUCCESS' }
+    }
+    const handle = await openHandle()
+    const hash = await handle.settleWithLatestVoucher({ intervalMs: 10, timeoutMs: 500 })
+    assert.equal(hash, 'SETTLE_POLL_HASH')
+    assert.ok(pollCount >= 3)
+  })
+
+  it('throws RouteDockDisputeError with the hash when getTransaction keeps returning NOT_FOUND past timeout', async () => {
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    rpc.sendTransaction = () => ({ hash: 'SETTLE_TIMEOUT_HASH' })
+    rpc.getTransaction = () => ({ status: 'NOT_FOUND' })
+    const handle = await openHandle()
+    await assert.rejects(
+      () => handle.settleWithLatestVoucher({ timeoutMs: 25, intervalMs: 5 }),
+      (err: unknown) =>
+        err instanceof RouteDockDisputeError &&
+        (err as Error).message.includes('SETTLE_TIMEOUT_HASH') &&
+        /timed out/i.test((err as Error).message),
+    )
   })
 
   it('throws RouteDockDisputeError when prepare_commitment returns no bytes', async () => {

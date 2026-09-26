@@ -36,6 +36,45 @@ import { usdcToStroops } from '../internal/usdc.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 
+/** Polling parameters for on-chain transaction confirmation. */
+export const TX_CONFIRM_INTERVAL_MS = 1_000
+export const TX_CONFIRM_TIMEOUT_MS = 30_000
+
+/**
+ * Polls Soroban RPC server.getTransaction until the transaction succeeds, fails, or times out.
+ * Returns the hash on SUCCESS, throws RouteDockDisputeError on FAILED or timeout.
+ */
+async function confirmTransaction(
+  server: { getTransaction(hash: string): Promise<any> },
+  hash: string,
+  label: string,
+  timeoutMs: number = TX_CONFIRM_TIMEOUT_MS,
+  intervalMs: number = TX_CONFIRM_INTERVAL_MS,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  while (true) {
+    const txResponse = await server.getTransaction(hash)
+    const status = txResponse?.status
+    if (status === 'SUCCESS') {
+      return hash
+    }
+    if (status === 'FAILED') {
+      const detail = txResponse.resultXdr
+        ? ` (resultXdr: ${typeof txResponse.resultXdr === 'string' ? txResponse.resultXdr : JSON.stringify(txResponse.resultXdr)})`
+        : ''
+      throw new RouteDockDisputeError(`${label} transaction failed on-chain: status FAILED${detail}`)
+    }
+    if (Date.now() >= deadline) {
+      break
+    }
+    const remaining = deadline - Date.now()
+    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, Math.max(1, remaining))))
+  }
+  throw new RouteDockDisputeError(
+    `${label} transaction confirmation timed out after ${timeoutMs}ms (hash: ${hash})`,
+  )
+}
+
 /** Internal listener shape: every event's payload, unioned. The public on()
  * signature narrows this per event through SessionEventPayloadMap. */
 type SessionListener = (payload: SessionEventPayloadMap[SessionEvent]) => void
@@ -613,7 +652,11 @@ export class MppSessionClient {
         }
       },
 
-      async requestRefund(): Promise<string> {
+      /**
+       * Request refund from the channel contract (initiates dispute).
+       * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+       */
+      async requestRefund(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string> {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = network === 'testnet'
           ? 'https://soroban-testnet.stellar.org'
@@ -642,18 +685,31 @@ export class MppSessionClient {
             const errDetail = (result as any).errorResult ? JSON.stringify((result as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Refund request transaction failed: ${errDetail}`)
           }
+          if (result.status === 'TRY_AGAIN_LATER') {
+            throw new RouteDockDisputeError('Refund request transaction rejected with TRY_AGAIN_LATER: transaction not queued')
+          }
           if (!result.hash) {
             throw new RouteDockDisputeError('Refund request transaction not sent')
           }
 
-          return result.hash
+          return await confirmTransaction(
+            server,
+            result.hash,
+            'Refund request',
+            options?.timeoutMs,
+            options?.intervalMs,
+          )
         } catch (err) {
           if (err instanceof RouteDockDisputeError) throw err
           throw new RouteDockDisputeError(`Failed to request refund: ${err instanceof Error ? err.message : String(err)}`)
         }
       },
 
-      async settleWithLatestVoucher(): Promise<string> {
+      /**
+       * Server-side counter-mechanism to settle with latest voucher before refund window expires.
+       * Returns the transaction hash only after on-chain confirmation (SUCCESS).
+       */
+      async settleWithLatestVoucher(options?: { timeoutMs?: number; intervalMs?: number }): Promise<string> {
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
         const rpcUrl = network === 'testnet'
           ? 'https://soroban-testnet.stellar.org'
@@ -696,11 +752,20 @@ export class MppSessionClient {
             const errDetail = (settleResult as any).errorResult ? JSON.stringify((settleResult as any).errorResult) : 'status ERROR'
             throw new RouteDockDisputeError(`Settlement transaction failed: ${errDetail}`)
           }
+          if (settleResult.status === 'TRY_AGAIN_LATER') {
+            throw new RouteDockDisputeError('Settlement transaction rejected with TRY_AGAIN_LATER: transaction not queued')
+          }
           if (!settleResult.hash) {
             throw new RouteDockDisputeError('Settlement transaction not sent')
           }
 
-          return settleResult.hash
+          return await confirmTransaction(
+            server,
+            settleResult.hash,
+            'Settlement',
+            options?.timeoutMs,
+            options?.intervalMs,
+          )
         } catch (err) {
           if (err instanceof RouteDockDisputeError) throw err
           throw new RouteDockDisputeError(`Failed to settle with latest voucher: ${err instanceof Error ? err.message : String(err)}`)
