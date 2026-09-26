@@ -13,13 +13,21 @@ import { FadeInUp } from '@/components/landing/FadeInUp'
 async function fetchInitialFeed(): Promise<TxLogEntry[]> {
   try {
     const supabase = getSupabaseServerClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('tx_log')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(5)
+
+    if (error) {
+      console.error('[landing] failed to load tx_log:', error.message)
+    }
     return (data ?? []) as TxLogEntry[]
-  } catch {
+  } catch (err) {
+    console.error(
+      '[landing] failed to load tx_log:',
+      err instanceof Error ? err.message : String(err),
+    )
     return []
   }
 }

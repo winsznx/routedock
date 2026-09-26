@@ -32,15 +32,23 @@ interface SessionTableProps {
 
 export function SessionTable({ initialSessions = [] }: SessionTableProps) {
   const [sessions, setSessions] = useState<Session[]>(initialSessions)
+  const [refreshFailed, setRefreshFailed] = useState(false)
 
   const refreshSessions = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('public_sessions')
       .select('*')
       .order('opened_at', { ascending: false })
       .limit(50)
 
+    if (error) {
+      // Keep the rows already on screen instead of blanking the table.
+      console.warn('[sessions] failed to refresh public_sessions:', error.message)
+      setRefreshFailed(true)
+      return
+    }
+    setRefreshFailed(false)
     if (data) setSessions(data as Session[])
   }, [])
 
@@ -58,6 +66,11 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
       <div className="px-5 py-4 border-b border-[var(--border-default)]">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">Sessions</h2>
       </div>
+      {refreshFailed && (
+        <p className="px-5 py-2 text-xs text-[var(--status-error)] border-b border-[var(--border-default)]">
+          {"Couldn't refresh sessions. Showing the last loaded data."}
+        </p>
+      )}
       <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>

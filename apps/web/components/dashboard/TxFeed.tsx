@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getSupabaseBrowserClient, type TxLogEntry } from '@/lib/supabase'
+import { mergeTxEntries } from '@/lib/mergeTxEntries'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 import { TxHashLink } from '@/components/shared/TxHashLink'
 
 const MAX_ENTRIES = 20
+const FALLBACK_POLL_MS = 10_000
 
 function timeAgo(date: string): string {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000)
@@ -35,9 +37,47 @@ interface TxFeedProps {
 
 export function TxFeed({ initialEntries = [] }: TxFeedProps) {
   const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
+  const [paused, setPaused] = useState(false)
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient()
+    let disposed = false
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+
+    function stopPolling() {
+      if (pollTimer !== null) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+    }
+
+    // Same query the dashboard page uses for its SSR snapshot.
+    async function fetchLatest(): Promise<TxLogEntry[] | null> {
+      const { data, error } = await supabase
+        .from('tx_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(MAX_ENTRIES)
+
+      if (error) {
+        console.warn('[tx-feed] failed to refresh tx_log:', error.message)
+        return null
+      }
+      return (data ?? []) as TxLogEntry[]
+    }
+
+    // A failed refetch keeps the rows already on screen.
+    async function refresh() {
+      const rows = await fetchLatest()
+      if (disposed || rows === null) return
+      setEntries((prev) => mergeTxEntries(prev, rows, MAX_ENTRIES))
+    }
+
+    // Only one fallback interval at a time.
+    function startPolling() {
+      if (pollTimer !== null) return
+      pollTimer = setInterval(() => void refresh(), FALLBACK_POLL_MS)
+    }
 
     const channel = supabase
       .channel('txlog-realtime')
@@ -45,12 +85,36 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'tx_log' },
         (payload) => {
-          setEntries((prev) => [payload.new as TxLogEntry, ...prev].slice(0, MAX_ENTRIES))
+          setEntries((prev) =>
+            mergeTxEntries(prev, [payload.new as TxLogEntry], MAX_ENTRIES),
+          )
         },
       )
-      .subscribe()
+      .subscribe((status: string, err?: Error) => {
+        if (disposed) return
+
+        if (status === 'SUBSCRIBED') {
+          setPaused(false)
+          stopPolling()
+          // postgres_changes has no replay: backfill the gap between the SSR
+          // snapshot and the channel going live, plus anything missed while the
+          // socket was down.
+          void refresh()
+          return
+        }
+
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('[tx-feed] realtime channel', status, err?.message ?? '')
+          setPaused(true)
+          startPolling()
+        }
+      })
 
     return () => {
+      // removeChannel fires a CLOSED status of its own; ignore it so we don't
+      // start a poll on an unmounted component.
+      disposed = true
+      stopPolling()
       void supabase.removeChannel(channel)
     }
   }, [])
@@ -59,6 +123,9 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
     <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] flex flex-col max-h-[420px]">
       <div className="px-5 py-4 border-b border-[var(--border-default)] shrink-0">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">Transaction Feed</h2>
+        {paused && (
+          <p className="mt-1 text-xs text-[var(--status-pending)]">Live updates paused</p>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">

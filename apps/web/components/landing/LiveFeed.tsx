@@ -23,15 +23,24 @@ interface LiveFeedProps {
 
 export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
   const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
+  const [feedFailed, setFeedFailed] = useState(false)
 
   useEffect(() => {
     async function poll() {
       const supabase = getSupabaseBrowserClient()
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tx_log')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(5)
+
+      if (error) {
+        // Keep the rows already on screen and flag the feed as unavailable.
+        console.warn('[live-feed] failed to load tx_log:', error.message)
+        setFeedFailed(true)
+        return
+      }
+      setFeedFailed(false)
       if (data) setEntries(data as TxLogEntry[])
     }
 
@@ -44,12 +53,18 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
     return (
       <div className="rounded-2xl border border-white/5 bg-[#101A33] p-6">
         <div className="flex items-center gap-2 mb-4">
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+          {!feedFailed && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+          )}
           <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
             Live Feed
           </span>
         </div>
-        <p className="text-sm text-[var(--text-muted)]">Waiting for transactions...</p>
+        {feedFailed ? (
+          <p className="text-sm text-[var(--status-error)]">Feed unavailable</p>
+        ) : (
+          <p className="text-sm text-[var(--text-muted)]">Waiting for transactions...</p>
+        )}
       </div>
     )
   }
@@ -57,11 +72,16 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
   return (
     <div className="rounded-2xl border border-white/5 bg-[#101A33] p-6">
       <div className="flex items-center gap-2 mb-4">
-        <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+        {!feedFailed && (
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+        )}
         <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
           Live Feed — Testnet
         </span>
       </div>
+      {feedFailed && (
+        <p className="mb-4 text-sm text-[var(--status-error)]">Feed unavailable</p>
+      )}
       <ul className="space-y-3">
         {entries.map((entry) => (
           <li key={entry.id} className="flex items-center gap-3">
