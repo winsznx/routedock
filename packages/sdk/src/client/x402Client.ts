@@ -42,7 +42,11 @@ export class X402Client {
     this.httpClient = new x402HTTPClient(core)
   }
 
-  /** Replace signer (note: Nulth vault signers are not supported) */
+  /**
+   * Replace signer. Nulth vault signers are not supported: the x402 exact
+   * scheme can only attach ed25519 signatures, not Nulth ZK proofs.
+   * See https://github.com/winsznx/routedock/issues/356
+   */
   withSigner(signer: ClientStellarSigner): X402Client {
     return new X402Client(signer, this.network, this.retryPolicy)
   }

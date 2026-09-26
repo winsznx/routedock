@@ -251,7 +251,9 @@ function stubTrustlineCache(client: RouteDockClient): void {
     nulth_account: NULTH,
   }, signerKp.secret())
 
+  const requests: string[] = []
   const server = await startTestServer((req, res) => {
+    requests.push(req.url ?? '')
     if (req.url === '/.well-known/routedock.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(manifest))
@@ -272,6 +274,8 @@ function stubTrustlineCache(client: RouteDockClient): void {
     () => client.pay(server.url + '/price'),
     (err: unknown) => err instanceof RouteDockSignatureError && /nulth/i.test(err.message) && /not supported/i.test(err.message),
   )
+  assert.equal(requests.length, 1, 'server should only receive the manifest request')
+  assert.equal(requests[0], '/.well-known/routedock.json', 'only request should be the manifest')
   await server.close()
   console.log('✓ RouteDockClient.pay() rejects Nulth vaults')
 }
