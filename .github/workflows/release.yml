@@ -65,3 +65,17 @@ jobs:
               --label release \
               --body "$body"
           fi
+
+      # Close any stale alarm after a successful release. This step must stay
+      # after the failure handler so a failure in the handler cannot turn into
+      # a false green close operation.
+      - name: Close the release alarm
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for n in $(gh issue list --state open --label release \
+            --search "Release workflow is failing in:title" --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Release green again on ${GITHUB_SHA:0:8}: $RUN_URL"
+          done
