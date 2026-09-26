@@ -114,6 +114,10 @@ jobs:
               exit 1
             fi
           done
+          if ! grep -qE "^[[:space:]]+permission-workflows:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
+            echo "::error file=.github/workflows/release.yml::the release App token must request 'permission-workflows: write'"
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
