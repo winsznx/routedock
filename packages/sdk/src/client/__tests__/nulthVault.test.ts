@@ -3,6 +3,10 @@
  */
 
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Keypair, Networks } from '@stellar/stellar-sdk'
+import { authorizeEntry, xdr } from '@stellar/stellar-sdk'
 import {
   assertNulthVaultManifest,
   prepareNulthSigner,
@@ -11,9 +15,11 @@ import {
   NulthPolicyError,
 } from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
-import { RouteDockManifestError } from '../../errors.js'
+import { RouteDockManifestError, RouteDockSignatureError } from '../../errors.js'
 import { decodeAuthSignature } from '../NulthVault.js'
 import { resolvePayee } from '../../provider/payee.js'
+import { RouteDockClient } from '../RouteDockClient.js'
+import { signManifest } from '../../manifest/sign.js'
 
 const NULTH = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
@@ -199,3 +205,103 @@ console.log('✓ prepareNulthSigner rejects negative price')
   }
 }
 console.log('✓ per-mode payee override works correctly')
+
+// --- RouteDockClient.pay() rejects Nulth vaults ---
+
+function startTestServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = createServer(handler)
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as { port: number }
+      resolve({
+        url: `http://127.0.0.1:${addr.port}`,
+        close: () => new Promise<void>((res) => server.close(() => res())),
+      })
+    })
+  })
+}
+
+function stubTrustlineCache(client: RouteDockClient): void {
+  const keypair = (client as any).keypair as Keypair
+  const network = (client as any).network as string
+  const cacheKey = `${network}:${keypair.publicKey()}:USDC`
+  ;(RouteDockClient as any)._trustlineCache.set(cacheKey, {
+    exists: true,
+    expiresAt: Date.now() + 300_000,
+  })
+}
+
+{
+  const signerKp = Keypair.random()
+  const manifest = signManifest({
+    routedock: '1.0',
+    name: 'Nulth Vault Test Provider',
+    description: 'Test',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: signerKp.publicKey(),
+    pricing: { x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' } },
+    endpoints: { price: { method: 'GET', path: '/price' } },
+    tags: ['test'],
+    vault: 'nulth',
+    nulth_account: NULTH,
+  }, signerKp.secret())
+
+  const server = await startTestServer((req, res) => {
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(manifest))
+    } else {
+      res.writeHead(404); res.end()
+    }
+  })
+
+  const client = new RouteDockClient({
+    wallet: Keypair.random(),
+    network: 'testnet',
+    expectedPayee: signerKp.publicKey(),
+    vault: { mode: 'nulth', nulthAccount: NULTH, witnessSecret: 'witness', allowedPayees: [PAYEE], dailyCapUsdc: '1.00' },
+  })
+  stubTrustlineCache(client)
+
+  await assert.rejects(
+    () => client.pay(server.url + '/price'),
+    (err: unknown) => err instanceof RouteDockSignatureError && /nulth/i.test(err.message) && /not supported/i.test(err.message),
+  )
+  await server.close()
+  console.log('✓ RouteDockClient.pay() rejects Nulth vaults')
+}
+
+// --- authorizeEntry rejects Nulth signer ---
+
+{
+  const vault = {
+    mode: 'nulth' as const,
+    nulthAccount: NULTH,
+    witnessSecret: 'witness',
+    allowedPayees: [PAYEE],
+    dailyCapUsdc: '1.00',
+  }
+  const signerResult = await prepareNulthSigner(vault, baseManifest, 'x402', 'testnet', 100_000)
+
+  const creds = xdr.SorobanCredentials.sorobanCredentialsAddress(
+    new xdr.SorobanAddressCredentials({ address: 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT' } as any),
+  )
+  const entry = new xdr.SorobanAuthorizationEntry({ credentials: creds } as any)
+
+  // This should reject because the Nulth signer returns JSON bytes, not ed25519 signatures
+  // See https://github.com/winsznx/routedock/issues/356
+  await assert.rejects(
+    () => authorizeEntry(
+      entry,
+      async (preimage) => Buffer.from((await signerResult.signer.signAuthEntry(preimage.toXDR('base64'))).signedAuthEntry, 'base64'),
+      100_000,
+      Networks.TESTNET,
+    ),
+  )
+  console.log('✓ authorizeEntry rejects Nulth signer')
+}

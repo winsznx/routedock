@@ -113,7 +113,7 @@ const WITNESS = 'test-witness-secret'
   console.log('✓ policy enforcement')
 }
 
-// ── x402-compatible signer attaches proof as auth signature ───────────────────
+// ── Nulth signer attaches proof as auth signature ───────────────────
 
 {
   const signerConfig = {
