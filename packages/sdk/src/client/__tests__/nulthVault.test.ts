@@ -6,6 +6,8 @@ import assert from 'node:assert/strict'
 import {
   assertNulthVaultManifest,
   prepareNulthSigner,
+  createPolicyState,
+  paymentContextFromManifest,
 } from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
 import { RouteDockManifestError } from '../../errors.js'
@@ -90,3 +92,49 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   )
   console.log('✓ mainnet guard rejects mock prover')
 }
+
+// --- usdcToStroops validation tests ---
+
+function manifestWithPrice(amount: string): RouteDockManifest {
+  const pricing = { ...baseManifest.pricing! }
+  pricing.x402 = { ...baseManifest.pricing!.x402!, amount }
+  return { ...baseManifest, pricing }
+}
+
+const INVALID_AMOUNTS = ['-5', '-1.5', '', '1.123456789', '0.00000009']
+
+for (const amount of INVALID_AMOUNTS) {
+  assert.throws(
+    () => createPolicyState({ dailyCapUsdc: amount, allowedPayees: [PAYEE], witnessSecret: 'witness' }),
+    RangeError,
+  )
+  assert.throws(
+    () => paymentContextFromManifest(
+      { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount } } },
+      'x402',
+      100_000,
+    ),
+    RangeError,
+  )
+}
+console.log('✓ invalid amounts throw RangeError')
+
+{
+  const policy = createPolicyState({ dailyCapUsdc: '1.00', allowedPayees: [PAYEE], witnessSecret: 'witness' })
+  assert.equal(policy.dailyCapStroops, 10_000_000n)
+}
+{
+  const ctx = paymentContextFromManifest(
+    { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount: '0.001' } } },
+    'x402',
+    100_000,
+  )
+  assert.equal(ctx.amountStroops, 10_000n)
+}
+console.log('✓ valid amounts produce correct stroops')
+
+await assert.rejects(
+  () => prepareNulthSigner(vault, manifestWithPrice('-1'), 'x402', 'testnet', 100_000),
+  RangeError,
+)
+console.log('✓ prepareNulthSigner rejects negative price')
