@@ -265,8 +265,7 @@ PROVIDER_B_URL=http://localhost:3002`}</Code>
               <p className="mt-4"><strong>Dashboard:</strong></p>
               <Code>{`NEXT_PUBLIC_SUPABASE_URL=https://...supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-NEXT_PUBLIC_STELLAR_NETWORK=testnet
-NEXT_PUBLIC_STELLAR_EXPERT_URL=https://stellar.expert/explorer/testnet`}</Code>
+NEXT_PUBLIC_STELLAR_NETWORK=testnet`}</Code>
             </Section>
           </div>
         </div>

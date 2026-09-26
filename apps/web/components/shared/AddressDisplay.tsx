@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Copy, Check, ExternalLink, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { explorerUrl, type ExplorerKind } from '@/lib/explorer'
 
 function truncateAddress(address: string): string {
   if (address.length <= 12) return address
@@ -13,6 +14,11 @@ type CopyStatus = 'idle' | 'copied' | 'error'
 
 interface AddressDisplayProps {
   address: string
+  /**
+   * Network the address belongs to. Drives the explorer link; unknown or
+   * missing values fall back to the configured network (see lib/explorer).
+   */
+  network?: string
   showFull?: boolean
   label?: string
   /**
@@ -26,6 +32,7 @@ interface AddressDisplayProps {
 
 export function AddressDisplay({
   address,
+  network,
   showFull = false,
   label,
   accessibleLabel,
@@ -33,11 +40,8 @@ export function AddressDisplay({
 }: AddressDisplayProps) {
   const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
-  const explorerBase =
-    process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ?? 'https://stellar.expert/explorer/testnet'
-
   const baseAddress = address.includes(':') ? address.split(':')[0]! : address
-  const explorerType = baseAddress.startsWith('C') ? 'contract' : 'account'
+  const explorerType: ExplorerKind = baseAddress.startsWith('C') ? 'contract' : 'account'
 
   const displayAddress = showFull ? baseAddress : truncateAddress(baseAddress)
   const accessibleName = accessibleLabel ?? label ?? 'address'
@@ -75,7 +79,7 @@ export function AddressDisplay({
         )}
       </button>
       <a
-        href={`${explorerBase}/${explorerType}/${baseAddress}`}
+        href={explorerUrl(network, explorerType, baseAddress)}
         target="_blank"
         rel="noopener noreferrer"
         aria-label={linkLabel}

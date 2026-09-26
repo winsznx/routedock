@@ -1,3 +1,5 @@
+import { explorerHome } from '@/lib/explorer'
+
 export function PublicFooter() {
   const links = [
     { label: 'GitHub', href: 'https://github.com/winsznx/routedock' },
@@ -5,9 +7,7 @@ export function PublicFooter() {
     { label: 'Docs', href: '/docs' },
     {
       label: 'Stellar Explorer',
-      href:
-        process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ??
-        'https://stellar.expert/explorer/testnet',
+      href: explorerHome(),
     },
   ]
 
