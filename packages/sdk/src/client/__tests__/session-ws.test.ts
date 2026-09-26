@@ -22,6 +22,7 @@ import {
   RouteDockChannelStateError,
   RouteDockNetworkError,
   RouteDockFacilitatorError,
+  RouteDockPolicyRejectError,
 } from '../../errors.js'
 
 const CHANNEL_CONTRACT = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
@@ -45,12 +46,16 @@ let wsScript: {
 let wsChallengeScript: { amount?: string; channel?: string; cumulativeAmount?: string } = {}
 /** Contexts createCredential was handed, one per WebSocket voucher. */
 let wsCredentialContexts: Array<{ cumulativeAmount?: string } | undefined> = []
+let rawFetchCalls = 0
+let createCredentialCalls = 0
 
 // Each test starts from an honest probe challenge and a clean context log; a
 // test that scripts a hostile challenge must not leak it into the next one.
 beforeEach(() => {
   wsChallengeScript = {}
   wsCredentialContexts = []
+  rawFetchCalls = 0
+  createCredentialCalls = 0
 })
 
 function buildProbeChallenge(): Challenge.Challenge {
@@ -74,6 +79,7 @@ const fakeMppx = {
     throw new Error('mpp-session-ws stream must not use the SSE fetch path')
   },
   rawFetch: async (): Promise<Response> => {
+    rawFetchCalls++
     if (mppxScript.probeRejects) {
       throw new TypeError('fetch failed')
     }
@@ -92,6 +98,7 @@ const fakeMppx = {
     _response: Response,
     context?: { cumulativeAmount?: string },
   ): Promise<string> => {
+    createCredentialCalls++
     wsCredentialContexts.push(context)
     return 'Payment fake-voucher-credential'
   },
@@ -182,11 +189,11 @@ function makeFakeWsFactory(): { factory: WebSocketFactory; calls: Array<{ url: s
   return { factory, calls, closes }
 }
 
-function openWsHandle(wsFactory: WebSocketFactory) {
+function openWsHandle(wsFactory: WebSocketFactory, onSpend?: (amount: string) => Promise<void>) {
   const client = new MppSessionClient(Keypair.random(), 'testnet', undefined, wsFactory)
   return client.openSession(SESSION_URL, buildManifest(), Keypair.random().secret(), {
     mode: 'mpp-session-ws',
-  })
+  }, onSpend)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -292,6 +299,28 @@ describe('mpp-session-ws — success path', () => {
 })
 
 describe('mpp-session-ws — failure paths', () => {
+  it('rejects before any network call when onSpend denies the local cap', async () => {
+    mppxScript = {}
+    wsScript = { frames: ['{"a":1}'], closeCode: 1000 }
+    const { factory, calls } = makeFakeWsFactory()
+    const onSpend = async () => {
+      throw new RouteDockPolicyRejectError('local_daily_cap_exceeded')
+    }
+
+    const handle = await openWsHandle(factory, onSpend)
+    await assert.rejects(
+      async () => {
+        for await (const _ of handle.stream()) {
+          // consume
+        }
+      },
+      (err: unknown) => err instanceof RouteDockPolicyRejectError && err.reason === 'local_daily_cap_exceeded',
+    )
+    assert.equal(rawFetchCalls, 0)
+    assert.equal(createCredentialCalls, 0)
+    assert.equal(calls.length, 0)
+  })
+
   it('throws a typed error when the provider responds 200 instead of a 402 challenge', async () => {
     mppxScript = { probeStatus: 200 }
     wsScript = {}
@@ -308,6 +337,7 @@ describe('mpp-session-ws — failure paths', () => {
         err instanceof RouteDockChannelStateError &&
         /expected HTTP 402/.test((err as Error).message),
     )
+    assert.equal(handle.stats().vouchersIssued, 0)
   })
 
   it('rejects an inflated probe challenge before the voucher is signed', async () => {
@@ -332,6 +362,50 @@ describe('mpp-session-ws — failure paths', () => {
     assert.equal(calls.length, 0, 'the WebSocket must not open for a rejected challenge')
   })
 
+  it('calls onSpend once per ws stream and records the expected rate', async () => {
+    mppxScript = {}
+    wsScript = { frames: ['{"a":1}'], closeCode: 1000 }
+    const { factory } = makeFakeWsFactory()
+    const amounts: string[] = []
+    const onSpend = async (amount: string) => {
+      amounts.push(amount)
+    }
+
+    const handle = await openWsHandle(factory, onSpend)
+    for await (const _ of handle.stream()) {
+      // consume
+    }
+    for await (const _ of handle.stream()) {
+      // consume
+    }
+
+    assert.deepEqual(amounts, ['0.0001', '0.0001'])
+    assert.equal(rawFetchCalls, 2)
+    assert.equal(createCredentialCalls, 2)
+  })
+
+  it('counts one voucher per signed WebSocket connection, not per frame', async () => {
+    mppxScript = {}
+    wsScript = { frames: ['{"a":1}', '{"a":2}', '{"a":3}'], closeCode: 1000 }
+    const { factory } = makeFakeWsFactory()
+
+    const handle = await openWsHandle(factory)
+    const items: unknown[] = []
+    for await (const item of handle.stream()) {
+      items.push(item)
+    }
+
+    assert.deepEqual(items, [{ a: 1 }, { a: 2 }, { a: 3 }])
+    assert.equal(handle.stats().vouchersIssued, 1)
+
+    const secondItems: unknown[] = []
+    for await (const item of handle.stream()) {
+      secondItems.push(item)
+    }
+    assert.deepEqual(secondItems, [{ a: 1 }, { a: 2 }, { a: 3 }])
+    assert.equal(handle.stats().vouchersIssued, 2)
+  })
+
   it('throws a retryable error when the probe fails with HTTP 503', async () => {
     mppxScript = { probeStatus: 503 }
     wsScript = {}
@@ -347,6 +421,7 @@ describe('mpp-session-ws — failure paths', () => {
       (err: unknown) =>
         err instanceof RouteDockFacilitatorError && (err as RouteDockFacilitatorError).status === 503,
     )
+    assert.equal(handle.stats().vouchersIssued, 0)
   })
 
   it('wraps a probe network failure as RouteDockNetworkError', async () => {
