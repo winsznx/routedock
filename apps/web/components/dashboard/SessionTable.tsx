@@ -105,10 +105,10 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
                   className="hover:bg-[var(--bg-subtle)] transition-colors"
                 >
                   <td className="px-4 py-3">
-                    <AddressDisplay address={session.channel_id} />
+                    <AddressDisplay address={session.channel_id} accessibleLabel="channel" />
                   </td>
                   <td className="px-4 py-3">
-                    <AddressDisplay address={session.payer} />
+                    <AddressDisplay address={session.payer} accessibleLabel="payer" />
                   </td>
                   <td className="px-4 py-3">
                     <ModeBadge mode="mpp-session" />

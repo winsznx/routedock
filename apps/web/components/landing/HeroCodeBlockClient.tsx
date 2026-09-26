@@ -1,20 +1,26 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, X } from 'lucide-react'
 
 interface HeroCodeBlockClientProps {
   html: string
   code: string
 }
 
+type CopyStatus = 'idle' | 'copied' | 'error'
+
 export function HeroCodeBlockClient({ html, code }: HeroCodeBlockClientProps) {
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('error')
+    }
+    setTimeout(() => setCopyStatus('idle'), 2000)
   }
 
   return (
@@ -30,10 +36,15 @@ export function HeroCodeBlockClient({ html, code }: HeroCodeBlockClientProps) {
           aria-label="Copy code"
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-white/40 hover:text-white/80 hover:bg-white/5 transition-colors"
         >
-          {copied ? (
+          {copyStatus === 'copied' ? (
             <>
               <Check className="h-3.5 w-3.5" />
               Copied
+            </>
+          ) : copyStatus === 'error' ? (
+            <>
+              <X className="h-3.5 w-3.5 text-[var(--status-error)]" />
+              <span className="text-[var(--status-error)]">Copy failed</span>
             </>
           ) : (
             <>
