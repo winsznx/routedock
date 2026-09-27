@@ -136,6 +136,14 @@ function openHandle() {
 
 before(() => {
   mock.module('@stellar/stellar-sdk', { namedExports: buildFakeSdk() })
+  // openSession verifies the deployed channel's refund window. Registered here
+  // rather than at module scope because this suite imports the SUT statically;
+  // the read is a call-time dynamic import, so it still resolves to the mock.
+  mock.module('@stellar/mpp/channel/server', {
+    namedExports: {
+      getChannelState: async () => ({ refundWaitingPeriod: 17280 }),
+    },
+  })
 })
 
 after(() => {

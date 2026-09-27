@@ -113,6 +113,15 @@ mock.module('@stellar/mpp/channel/client', {
   },
 })
 
+// openSession verifies the deployed channel's refund window before opening.
+// Report the manifest's declared value so these cases stay offline and focused
+// on the WebSocket transport; the read itself is covered separately.
+mock.module('@stellar/mpp/channel/server', {
+  namedExports: {
+    getChannelState: async () => ({ refundWaitingPeriod: 17280 }),
+  },
+})
+
 const { MppSessionClient } = await import('../MppSessionClient.js')
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
