@@ -39,44 +39,84 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./client": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js",
-      "require": "./dist/client.cjs"
+      "import": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
     },
     "./provider": {
-      "types": "./dist/provider.d.ts",
-      "import": "./dist/provider.js",
-      "require": "./dist/provider.cjs"
+      "import": {
+        "types": "./dist/provider.d.ts",
+        "default": "./dist/provider.js"
+      },
+      "require": {
+        "types": "./dist/provider.d.cts",
+        "default": "./dist/provider.cjs"
+      }
     },
     "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/react.js",
-      "require": "./dist/react.cjs"
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
     },
     "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js",
-      "require": "./dist/testing.cjs"
+      "import": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      },
+      "require": {
+        "types": "./dist/testing.d.cts",
+        "default": "./dist/testing.cjs"
+      }
     },
     "./provider/hono": {
-      "types": "./dist/provider/hono.d.ts",
-      "import": "./dist/provider/hono.js",
-      "require": "./dist/provider/hono.cjs"
+      "import": {
+        "types": "./dist/provider/hono.d.ts",
+        "default": "./dist/provider/hono.js"
+      },
+      "require": {
+        "types": "./dist/provider/hono.d.cts",
+        "default": "./dist/provider/hono.cjs"
+      }
     },
     "./provider/fastify": {
-      "types": "./dist/provider/fastify.d.ts",
-      "import": "./dist/provider/fastify.js",
-      "require": "./dist/provider/fastify.cjs"
+      "import": {
+        "types": "./dist/provider/fastify.d.ts",
+        "default": "./dist/provider/fastify.js"
+      },
+      "require": {
+        "types": "./dist/provider/fastify.d.cts",
+        "default": "./dist/provider/fastify.cjs"
+      }
     },
     "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js",
-      "require": "./dist/schema.cjs"
+      "import": {
+        "types": "./dist/schema.d.ts",
+        "default": "./dist/schema.js"
+      },
+      "require": {
+        "types": "./dist/schema.d.cts",
+        "default": "./dist/schema.cjs"
+      }
     }
   },
   "scripts": {

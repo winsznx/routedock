@@ -70,6 +70,14 @@ jobs:
         run: pnpm --filter @routedock/routedock build
       - name: Build remaining packages
         run: pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build
+      - name: Check published types resolve correctly (attw)
+        # Both SDKs are `type: module` and ship `.d.cts` next to `.d.ts`. A flat
+        # `types` key in `exports` points CJS `require()` at the ESM declarations,
+        # which attw reports as "Masquerading as ESM". This runs against the
+        # built dist/, so it must stay after the builds above.
+        run: |
+          npx --yes @arethetypeswrong/cli@0.18.5 --pack ./packages/sdk
+          npx --yes @arethetypeswrong/cli@0.18.5 --pack ./packages/nulth-sdk
 
   typecheck:
     runs-on: ubuntu-latest
