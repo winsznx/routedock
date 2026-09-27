@@ -25,11 +25,11 @@ export const metadata: Metadata = {
     template: '%s | RouteDock',
   },
   description:
-    'x402, MPP charge, and MPP session — unified behind client.pay(url). One interface. Three payment modes. Zero hardcoding.',
+    'x402, MPP charge, MPP session and MPP session over WebSocket — unified behind client.pay(url). One interface. Four payment modes. Zero hardcoding.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://www.routedock.xyz'),
   openGraph: {
     title: 'RouteDock — Unified Agent Payment Execution on Stellar',
-    description: 'One SDK for x402, MPP charge, and MPP session on Stellar. Agents pay for services with a single function call.',
+    description: 'One SDK for x402, MPP charge, MPP session and MPP session over WebSocket on Stellar. Agents pay for services with a single function call.',
     siteName: 'RouteDock',
     type: 'website',
     images: [{ url: '/og.png', width: 1200, height: 630, alt: 'RouteDock — unified agent payment execution on Stellar' }],
