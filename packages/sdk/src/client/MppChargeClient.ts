@@ -22,27 +22,39 @@ export class MppChargeClient {
       throw new RouteDockManifestError('manifest.pricing.mpp-charge missing')
     }
 
+    let txHash: string | null = null
+    // Signed at most once per pay(). onChallenge answers the 402 a single time
+    // and caches the credential; retries resend it via rawFetch rather than
+    // signing a fresh transfer, so the provider's idempotency store dedups it
+    // and the auth-entry nonce blocks any on-chain replay. See #386.
+    let credential: string | undefined
+
+    const mppx = Mppx.create({
+      polyfill: false,
+      onChallenge: async (_challenge, { createCredential }) =>
+        (credential ??= await createCredential()),
+      methods: [
+        stellar.charge({
+          keypair: this.keypair,
+          mode: 'pull',
+          onProgress(event) {
+            if (event.type === 'paid') {
+              txHash = event.hash
+            }
+          },
+        }),
+      ],
+    })
+
     return withRetry(async () => {
-      let txHash: string | null = null
-
-      const mppx = Mppx.create({
-        polyfill: false,
-        methods: [
-          stellar.charge({
-            keypair: this.keypair,
-            mode: 'pull',
-            onProgress(event) {
-              if (event.type === 'paid') {
-                txHash = event.hash
-              }
-            },
-          }),
-        ],
-      })
-
       let response: Response
       try {
-        response = await mppx.fetch(url)
+        // First attempt: mppx.fetch answers the 402 challenge (signs once via
+        // onChallenge). Later attempts resend the same credential with rawFetch.
+        response =
+          credential === undefined
+            ? await mppx.fetch(url)
+            : await mppx.rawFetch(url, { headers: { Authorization: credential } })
       } catch (err) {
         throw wrapFetchError(err, 'MPP charge request')
       }
