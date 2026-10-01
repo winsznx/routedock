@@ -29,6 +29,20 @@ const CAIP2: Record<Network, X402Network> = {
 
 const OZ_FACILITATOR_URL = 'https://channels.openzeppelin.com/x402'
 
+/**
+ * The x402 facilitator reports failures as data (`{ success: false, … }`)
+ * rather than throwing. Only an explicit `success: true` carrying a non-empty
+ * transaction hash counts as settled; everything else must not be recorded, be
+ * reported through `onSettled`, or reach the protected route.
+ */
+function settledTxHash(settleResult: unknown): string | null {
+  const result = settleResult as { success?: unknown; transaction?: unknown } | null | undefined
+  if (!result || result.success !== true) return null
+  return typeof result.transaction === 'string' && result.transaction.length > 0
+    ? result.transaction
+    : null
+}
+
 export interface X402HandlerOptions {
   payeeSecretKey: string
   network: Network
@@ -90,39 +104,47 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
   }
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    // Shared unpaid/failed-settlement response: it always carries the same
+    // payment requirements header an unpaid request would, so the agent can
+    // retry, and never an X-Payment-Response header.
+    const respondPaymentRequired = async (error: string, reason?: string): Promise<void> => {
+      const body = { error, ...(reason ? { reason } : {}) }
+      if (ozServer) {
+        const resourceInfo = {
+          url: `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`,
+          description: opts.manifest.name,
+        }
+        const paymentRequired = await ozServer.createPaymentRequiredResponse(
+          [requirements],
+          resourceInfo,
+        )
+        res
+          .status(402)
+          .setHeader('Content-Type', 'application/json')
+          .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(paymentRequired))
+          .json(body)
+      } else {
+        const x402Response = {
+          x402Version: 2,
+          resource: {
+            url: `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`,
+            description: opts.manifest.name,
+          },
+          accepts: [requirements],
+        }
+        res
+          .status(402)
+          .setHeader('Content-Type', 'application/json')
+          .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(x402Response))
+          .json(body)
+      }
+    }
+
     try {
       const paymentHeader = (req.headers['payment-signature'] ?? req.headers['x-payment']) as string | undefined
 
       if (!paymentHeader) {
-        if (ozServer) {
-          const resourceInfo = {
-            url: `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`,
-            description: opts.manifest.name,
-          }
-          const paymentRequired = await ozServer.createPaymentRequiredResponse(
-            [requirements],
-            resourceInfo,
-          )
-          res
-            .status(402)
-            .setHeader('Content-Type', 'application/json')
-            .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(paymentRequired))
-            .json({ error: 'Payment Required' })
-        } else {
-          const x402Response = {
-            x402Version: 2,
-            resource: {
-              url: `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`,
-              description: opts.manifest.name,
-            },
-            accepts: [requirements],
-          }
-          res
-            .status(402)
-            .setHeader('Content-Type', 'application/json')
-            .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(x402Response))
-            .json({ error: 'Payment Required' })
-        }
+        await respondPaymentRequired('Payment Required')
         return
       }
 
@@ -168,15 +190,21 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
+        const settledTx = settledTxHash(settleResult)
+        if (!settledTx) {
+          await respondPaymentRequired(
+            'Payment settlement failed',
+            (settleResult as { errorReason?: string } | null | undefined)?.errorReason,
           )
+          return
         }
+        txHash = settledTx
+        res.setHeader(
+          'X-Payment-Response',
+          encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+          ),
+        )
       } else {
         const verifyResult = await localFacilitator.verify(
           payload as Parameters<typeof localFacilitator.verify>[0],
@@ -193,15 +221,21 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           payload as Parameters<typeof localFacilitator.settle>[0],
           requirements,
         )
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
+        const settledTx = settledTxHash(settleResult)
+        if (!settledTx) {
+          await respondPaymentRequired(
+            'Payment settlement failed',
+            (settleResult as { errorReason?: string } | null | undefined)?.errorReason,
           )
+          return
         }
+        txHash = settledTx
+        res.setHeader(
+          'X-Payment-Response',
+          encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+          ),
+        )
       }
 
       // Record the settlement so a retry of this exact payment is deduped.
