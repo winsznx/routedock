@@ -6,6 +6,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import type { RouteDockLogger } from '../internal/logger.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -55,6 +56,11 @@ export interface RouteDockMiddlewareOptions {
    * duplicate settlement on agent retries. Defaults to per-handler in-memory.
    */
   seenTxStore?: SeenTxStore
+  /**
+   * Structured log sink for every adapter diagnostic (settlement errors,
+   * callback failures, orphaned sessions). Defaults to a console-backed logger.
+   */
+  logger?: RouteDockLogger
 }
 
 /**
@@ -100,6 +106,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -119,6 +126,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -146,6 +154,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }

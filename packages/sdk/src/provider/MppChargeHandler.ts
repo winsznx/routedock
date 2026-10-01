@@ -5,6 +5,7 @@ import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from './payee.js'
 import { extractPayerAddress } from './payer.js'
 import type { SessionStore } from '../store/SessionStore.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -35,6 +36,8 @@ export interface MppChargeHandlerOptions {
    * retries the same signed charge. Defaults to a per-handler in-memory store.
    */
   seenTxStore?: SeenTxStore
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHandler {
@@ -42,6 +45,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
   const amountHumanReadable = opts.amount
   const recipient = resolvePayee(opts.manifest, 'mpp-charge')
   const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
+  const logger = resolveLogger(opts.logger)
 
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
@@ -158,7 +162,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
 
       if (reference && opts.onSettled) {
         Promise.resolve().then(() => opts.onSettled!(reference!, opts.amount, 'mpp-charge', payerAddress)).catch(err => {
-          console.error('[mpp-charge] onSettled callback error:', err)
+          logger('error', '[mpp-charge] onSettled callback error', { error: err })
           opts.onCallbackError?.(err, 'onSettled')
         })
       }

@@ -3,6 +3,17 @@ export * from '../types.js'
 export * from '../errors.js'
 export type { RetryPolicy } from '../internal/retry.js'
 export { withRetry, backoffDelayMs, DEFAULT_RETRY_POLICY } from '../internal/retry.js'
+export {
+  createConsoleLogger,
+  consoleLogger,
+  noopLogger,
+  resolveLogger,
+} from '../internal/logger.js'
+export type {
+  RouteDockLogger,
+  RouteDockLogLevel,
+  RouteDockLogFields,
+} from '../internal/logger.js'
 export { usdcToStroops, usdcToUnits, USDC_DECIMALS } from '../internal/usdc.js'
 export * from './RouteDockClient.js'
 export * from './ModeRouter.js'

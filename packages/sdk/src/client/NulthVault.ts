@@ -11,6 +11,7 @@ import type { ClientStellarSigner } from '@x402/stellar'
 import type { SignAuthEntry } from '@stellar/stellar-sdk/contract'
 import type { RouteDockManifest, PaymentMode, VaultMode } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 
 // ---------------------------------------------------------------------------
 // Inlined types (from @routedock/nulth-sdk/types)
@@ -58,6 +59,8 @@ export interface NulthClientConfig {
   prover?: 'mock'
   policy: NulthPolicyState
   verifierContract?: string
+  /** Log sink for the mock-prover warning. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export class NulthPolicyError extends Error {
@@ -226,7 +229,10 @@ class NulthClient {
         `NulthClient cannot use the insecure mock prover on mainnet; a production prover is required (network must be 'testnet', got ${String(config.network)})`,
       )
     }
-    console.warn('NulthClient is using the insecure mock prover; proofs are not cryptographically sound')
+    resolveLogger(config.logger)(
+      'warn',
+      'NulthClient is using the insecure mock prover; proofs are not cryptographically sound',
+    )
   }
 
   get proverBackend(): string { return this.prover }

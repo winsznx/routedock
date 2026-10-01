@@ -1,4 +1,5 @@
 import { RouteDockError } from '../errors.js'
+import { resolveLogger, type RouteDockLogger } from './logger.js'
 
 export interface RetryPolicy {
   /** Total attempts including the first call. Default: 4 (3 retries). */
@@ -14,9 +15,14 @@ export interface RetryPolicy {
    * aborting the retry loop.
    */
   onRetry?: (attempt: number, error: Error, nextDelayMs: number) => void | Promise<void>
+  /**
+   * Log sink for internal diagnostics (an `onRetry` hook that throws).
+   * Defaults to a console-backed logger.
+   */
+  logger?: RouteDockLogger
 }
 
-export const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'onRetry'>> = {
+export const DEFAULT_RETRY_POLICY: Required<Omit<RetryPolicy, 'onRetry' | 'logger'>> = {
   maxAttempts: 4,
   baseDelayMs: 250,
   maxDelayMs: 30_000,
@@ -47,10 +53,11 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   policy: RetryPolicy = {},
 ): Promise<T> {
-  const { maxAttempts, baseDelayMs, maxDelayMs, onRetry } = {
+  const { maxAttempts, baseDelayMs, maxDelayMs, onRetry, logger } = {
     ...DEFAULT_RETRY_POLICY,
     ...policy,
   }
+  const log = resolveLogger(logger)
   let lastError: RouteDockError | undefined
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -75,7 +82,7 @@ export async function withRetry<T>(
         try {
           await onRetry(attempt, err, delay)
         } catch (cbErr) {
-          console.error('[withRetry] onRetry callback threw:', cbErr)
+          log('error', '[withRetry] onRetry callback threw:', { error: cbErr })
         }
       }
 

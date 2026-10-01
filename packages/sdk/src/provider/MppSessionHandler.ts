@@ -13,6 +13,7 @@ import {
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
 import type { Method } from 'mppx'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 
 /** Store shape extended with optional atomic update operation. */
 export type ChannelStore = MppxStore.Store & {
@@ -86,12 +87,15 @@ export interface MppSessionHandlerOptions {
    * activity. Disabled when unset.
    */
   idleTimeoutMs?: number
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
   const networkId = MPP_NETWORK[opts.network]
   const rateHuman = opts.rate
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
+  const logger = resolveLogger(opts.logger)
   const voucherRecordKey = `routedock:session:voucher:${opts.channelFactory}`
 
   const innerStore = Store.memory()
@@ -172,7 +176,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
           reason,
         })
       } catch (err) {
-        console.error('[mpp-session] onOrphaned handler failed:', err)
+        logger('error', '[mpp-session] onOrphaned handler failed', { error: err })
       }
     }
   }
@@ -226,7 +230,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         Promise.resolve()
           .then(() => opts.onSessionOpen!(opts.channelFactory, record!.payer))
           .catch((err) => {
-            console.error('[mpp-session] onSessionOpen callback error:', err)
+            logger('error', '[mpp-session] onSessionOpen callback error', { error: err })
             opts.onCallbackError?.(err, 'onSessionOpen')
           })
       }
@@ -234,7 +238,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     if (opts.onVoucher) {
       const humanAmount = (Number(record.amount) / 1e7).toFixed(7)
       Promise.resolve().then(() => opts.onVoucher!(opts.channelFactory, voucherCount, humanAmount, record!.signature)).catch(err => {
-        console.error('[mpp-session] onVoucher callback error:', err)
+        logger('error', '[mpp-session] onVoucher callback error', { error: err })
         opts.onCallbackError?.(err, 'onVoucher')
       })
     }
@@ -293,7 +297,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
           if (opts.onSettled) {
             const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
             Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', closePayer)).catch(err => {
-              console.error('[mpp-session] onSettled callback error:', err)
+              logger('error', '[mpp-session] onSettled callback error', { error: err })
               opts.onCallbackError?.(err, 'onSettled')
             })
           }
@@ -308,7 +312,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
               payeeKeypair.publicKey(),
             )
             if (!settlementAddresses) {
-              console.error('[mpp-session] skipped session_settled vault record: payer address unavailable')
+              logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
             } else {
               try {
                 const { Contract, TransactionBuilder, BASE_FEE, Networks, Account } = await import('@stellar/stellar-sdk')
@@ -341,7 +345,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
                 preparedTx.sign(adminKp)
                 await server.sendTransaction(preparedTx)
               } catch (recordErr) {
-                console.error('[mpp-session] failed to record session_settled on vault:', recordErr)
+                logger('error', '[mpp-session] failed to record session_settled on vault', { error: recordErr })
               }
             }
           }

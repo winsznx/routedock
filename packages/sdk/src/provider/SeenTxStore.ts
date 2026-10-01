@@ -1,3 +1,5 @@
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
+
 /**
  * Idempotency store for payment settlement.
  *
@@ -35,6 +37,8 @@ export interface InMemorySeenTxStoreOptions {
   maxEntries?: number
   /** Log a startup warning about non-durability. Defaults to true. */
   warn?: boolean
+  /** Log sink for the non-durability warning. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 /**
@@ -61,7 +65,8 @@ export class InMemorySeenTxStore implements SeenTxStore {
         typeof globalThis.navigator !== 'undefined' &&
         globalThis.navigator.userAgent === 'Cloudflare-Workers'
       if (isServerless) {
-        console.warn(
+        resolveLogger(options.logger)(
+          'warn',
           '[RouteDock] Using in-memory SeenTxStore: settlement deduplication is NOT durable ' +
             'and resets on every isolate restart. Supply a SupabaseSeenTxStore (or other ' +
             'durable SeenTxStore) for production safety.',
