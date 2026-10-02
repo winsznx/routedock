@@ -285,6 +285,13 @@ export default app
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
 
+This example uses in-memory defaults for settlement idempotency and session
+state, which aren't safe once requests can land on different isolates or
+processes (Cloudflare Workers, Deno Deploy, or any multi-instance deployment).
+See [Running a provider in production](packages/sdk/README.md#running-a-provider-in-production)
+for the durable stores, cron reconciliation, and `mpp-session-ws` upgrade
+route a serverless provider needs.
+
 ### Testing your settlement callbacks
 
 Provider authors wiring `onSettled` (e.g. a Supabase write) shouldn't have to mock the whole middleware chain or sign real payments to test that callback. `@routedock/routedock/testing` is the `msw`-equivalent for RouteDock providers: a mock middleware that drives your callbacks with synthetic data.

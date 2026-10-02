@@ -136,6 +136,307 @@ app.use('/stream', routedock({
 | `onVoucher(index, cumulativeAmount)` | Each verified ed25519 commitment | No |
 | `onSettled(txHash, amount, mode)` | Channel close transaction confirmed | Yes |
 
+## Running a provider in production
+
+The `routedockHono` defaults — `InMemorySeenTxStore` for `seenTxStore` and
+`Store.memory()` for `sessionStore` — are only safe in a single long-lived
+process. Any runtime that can route requests to different isolates or
+processes (Cloudflare Workers, Deno Deploy, Lambda@Edge, or even a
+multi-instance Node deployment) needs the durable stores below, or an agent
+retry can settle a payment twice or lose voucher tracking mid-session.
+
+### Settlement idempotency (`seenTxStore`)
+
+`seenTxStore` guards against double-settlement when an agent retries the same
+payment after a timeout. The in-memory default is per-handler and per-process,
+so a retry landing in a fresh isolate misses the cache and settles again,
+charging twice on-chain.
+
+`SupabaseSeenTxStore` backs it with Postgres, which gives the read-your-writes
+consistency this needs. **Don't use Workers KV here** — it's eventually
+consistent, so a retry can outrun propagation and reintroduce the double
+settle.
+
+Requires the `settlements` table from migration `003_settlement_idempotency`
+(see `supabase/migrations/003_settlement_idempotency.sql`; the follow-up
+migration `004_settlement_retention.sql` adds cleanup for old rows):
+
+```ts
+import { createClient } from '@supabase/supabase-js'
+import { routedockHono, SupabaseSeenTxStore } from '@routedock/routedock/provider/hono'
+
+const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY)
+const seenTxStore = new SupabaseSeenTxStore(supabase)
+
+app.use('*', routedockHono({
+  modes: ['x402', 'mpp-charge'],
+  pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+  asset: 'USDC',
+  assetContract: env.USDC_ASSET_CONTRACT,
+  payee: env.STELLAR_PAYEE_ADDRESS,
+  payeeSecretKey: env.STELLAR_PAYEE_SECRET,
+  network: 'testnet',
+  manifest,
+  seenTxStore,
+}))
+```
+
+On Cloudflare Workers, `InMemorySeenTxStore` logs a `console.warn` when
+constructed so this isn't missed silently — but that check only detects the
+Workers user agent, so Bun and Deno operators get no warning today. Don't rely
+on it; wire a durable store explicitly.
+
+### Session state (`sessionStore`)
+
+`sessionStore` backs the `mpp-session` channel store (voucher monotonicity
+tracking). The in-memory default doesn't survive isolate eviction, and
+`MppSessionClient` issues one HTTP request per voucher — so voucher N and
+voucher N+1 can land in different isolates entirely.
+
+> **Note:** this `sessionStore` option takes a `@stellar/mpp` `Store.Store`.
+> That's a different thing from this SDK's own `SessionStore` /
+> `SupabaseSessionStore` (in `packages/sdk/src/store/SessionStore.ts`), which
+> is a separate interface over the Supabase `sessions` table used for
+> dashboards and reconciliation. Don't confuse the two.
+
+On Cloudflare Workers, back it with a Durable Object per channel so voucher
+reads and writes serialize through one instance:
+
+```ts
+import { DurableObject } from 'cloudflare:workers'
+import { Hono } from 'hono'
+import { routedockHono } from '@routedock/routedock/provider/hono'
+import { Store } from '@stellar/mpp/channel/server'
+
+// The provider needs @stellar/mpp as a direct dependency for Store.
+
+export class ChannelSession extends DurableObject<Env> {
+  private app: Hono | null = null
+
+  private buildApp(): Hono {
+    const env = this.env
+    const sessionStore = Store.from({
+      get: (key: string) => this.ctx.storage.get(key),
+      put: (key: string, value: unknown) => this.ctx.storage.put(key, value),
+      delete: async (key: string) => {
+        await this.ctx.storage.delete(key)
+      },
+    })
+
+    const app = new Hono()
+    app.use('*', routedockHono({
+      modes: ['mpp-session'],
+      pricing: {
+        'mpp-session': { rate: '0.0001', channelFactory: env.CHANNEL_CONTRACT_ID },
+      },
+      asset: 'USDC',
+      assetContract: env.USDC_ASSET_CONTRACT,
+      payee: env.STELLAR_PAYEE_ADDRESS,
+      payeeSecretKey: env.STELLAR_PAYEE_SECRET,
+      network: 'testnet',
+      commitmentPublicKey: env.COMMITMENT_PUBLIC_KEY!,
+      sessionStore,
+      manifest,
+    }))
+    return app
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    this.app ??= this.buildApp()
+    return this.app.fetch(request)
+  }
+}
+```
+
+Route all requests for a given channel to the same object, keyed by channel
+contract, so vouchers for one channel always serialize through one instance:
+
+```ts
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const id = env.CHANNEL_SESSION.idFromName(env.CHANNEL_CONTRACT_ID)
+    return env.CHANNEL_SESSION.get(id).fetch(request)
+  },
+}
+```
+
+Wire the binding and migration in `wrangler.jsonc`:
+
+```jsonc
+{
+  "durable_objects": {
+    "bindings": [{ "name": "CHANNEL_SESSION", "class_name": "ChannelSession" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChannelSession"] }]
+}
+```
+
+**Limitation:** the Durable Object persists the `@stellar/mpp` channel store
+only. `routedockHono` still tracks `lastCumulativeAmount`, `voucherCount`,
+`lastSignatureHex` and `sessionPayerAddress` in closure scope, so if the
+instance is evicted mid-session those reset, and the close path falls back to
+the client-supplied amount and signature. Moving them into the same durable
+store is tracked separately — check the current state of that work before
+relying on it.
+
+### Orphaned sessions and reconciliation
+
+Without recovery wiring, a session abandoned mid-stream (client disconnects,
+goes idle) just sits open forever with funds locked in the channel. Two pieces
+are required together:
+
+`onOrphaned` writes the session row as `status: 'closing'` (the `sessions`
+table comes from migration `001_init.sql`) so the reconciler can find it.
+
+`idleTimeoutMs` has to be set explicitly. Without it no idle timer is armed,
+and an idle (as opposed to disconnected) session is never flagged orphaned.
+
+On Cloudflare Workers it doesn't help yet. The idle timer is a `setTimeout`
+inside the Durable Object, and Cloudflare evicts an idle object after roughly
+70 to 140 seconds, so the timer never fires. provider-b has the same gap, see
+[#314](https://github.com/winsznx/routedock/issues/314).
+
+The status and cumulative-amount fields need to be written separately.
+Writing `cumulative_amount` in the same update as `status: 'closing'` can
+collide with the `monotonic_cumulative` trigger (`supabase/migrations/001_init.sql:40,48-50`),
+which rejects any update where the new amount isn't strictly greater than the
+stored one — and `onVoucher` has usually already stored that exact amount, so
+the combined update silently fails and the row never reaches `closing`. This
+is the same bug tracked as [#338](https://github.com/winsznx/routedock/issues/338):
+
+```ts
+app.use('*', routedockHono({
+  // ...
+  idleTimeoutMs: 5 * 60_000,
+  onOrphaned: async (channelId, info) => {
+    await supabase.from('sessions')
+      .update({ status: 'closing' })
+      .eq('channel_id', channelId)
+    await supabase.from('sessions')
+      .update({
+        cumulative_amount: info.cumulativeAmount,
+        last_signature: info.lastSignature || null,
+        voucher_count: info.voucherCount,
+      })
+      .eq('channel_id', channelId)
+      .lt('cumulative_amount', info.cumulativeAmount)
+  },
+}))
+```
+
+Then schedule `reconcileAbandonedSessions` to actually settle those `closing`
+sessions with their latest voucher:
+
+```ts
+import { reconcileAbandonedSessions } from '@routedock/routedock/provider/hono'
+
+export default {
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
+    await reconcileAbandonedSessions({
+      supabase,
+      network: 'testnet',
+      payeeSecretKey: env.STELLAR_PAYEE_SECRET,
+      onRecovered: async (channelId, txHash, totalPaid) => {
+        console.log(`[reconcile] recovered ${channelId}: ${txHash} (${totalPaid} USDC)`)
+      },
+    })
+  },
+}
+```
+
+Trigger it on a schedule in `wrangler.jsonc`:
+
+```jsonc
+{
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
+}
+```
+
+### Registering in discovery
+
+A provider doesn't show up in the discovery registry unless it registers
+itself. Sign the manifest, then call `registerProvider` inside
+`ctx.waitUntil(...)` with a `.catch` so a registry hiccup never blocks serving
+a request:
+
+```ts
+import { registerProvider, signManifest } from '@routedock/routedock/provider/hono'
+
+const signed = signManifest(manifest, env.STELLAR_PAYEE_SECRET)
+ctx.waitUntil(
+  registerProvider({
+    supabase,
+    manifest: signed,
+    baseUrl: 'https://your-provider.example.com',
+  }).catch((err) => {
+    console.error('[registry] failed to register provider:', err)
+  }),
+)
+```
+
+This writes to the `providers` table from migration `001_init.sql`.
+
+### Serving `mpp-session-ws`
+
+`mpp-session-ws` upgrades the HTTP connection to a WebSocket after the
+handshake's payment is verified. Hono's `upgradeWebSocket` calls its callback
+before it looks at the `Upgrade` header, so a guard placed only inside that
+callback (throwing when `mppSessionWsVerified(c)` is false) also fires — and
+throws — for an ordinary `mpp-session` GET on the same route, which has
+nothing to do with a WebSocket handshake. Check the header in a separate
+middleware ahead of the upgrade route instead, and let a second, plain route
+serve `mpp-session` requests once the payment middleware has verified them:
+
+```ts
+import { upgradeWebSocket } from 'hono/cloudflare-workers'
+import { routedockHono, mppSessionWsVerified } from '@routedock/routedock/provider/hono'
+
+app.use('*', routedockHono({
+  modes: ['mpp-session', 'mpp-session-ws'],
+  pricing: {
+    'mpp-session': { rate: '0.0001', channelFactory: env.CHANNEL_CONTRACT_ID },
+    'mpp-session-ws': { rate: '0.0001', channelFactory: env.CHANNEL_CONTRACT_ID },
+  },
+  asset: 'USDC',
+  assetContract: env.USDC_ASSET_CONTRACT,
+  payee: env.STELLAR_PAYEE_ADDRESS,
+  payeeSecretKey: env.STELLAR_PAYEE_SECRET,
+  network: 'testnet',
+  commitmentPublicKey: env.COMMITMENT_PUBLIC_KEY!,
+  manifest,
+}))
+
+app.get(
+  '/stream',
+  async (c, next) => {
+    const isUpgrade = c.req.header('upgrade')?.toLowerCase() === 'websocket'
+    if (isUpgrade && !mppSessionWsVerified(c)) {
+      return c.json({ error: 'refusing unverified WebSocket handshake' }, 403)
+    }
+    await next()
+  },
+  upgradeWebSocket(() => ({
+    onMessage: (_evt, ws) => {
+      ws.send(JSON.stringify({ type: 'ack' }))
+    },
+  })),
+)
+
+// mpp-session (HTTP) requests land here after the middleware verified the voucher.
+app.get('/stream', (c) => c.json({ data: '...' }))
+```
+
+### Workers-safe imports
+
+Every snippet above imports from `@routedock/routedock/provider/hono`, which
+re-exports `routedockHono`, `mppSessionWsVerified`, `registerProvider`,
+`signManifest`, `SupabaseSeenTxStore` and `reconcileAbandonedSessions`. Don't
+import from `@routedock/routedock/provider` in a Workers snippet — that's the
+Node-only Express entry point and pulls in dependencies (like `express`) that
+don't run on Workers.
+
 ## React Integration
 
 > **Warning:** These hooks create a RouteDockClient in the browser, so the wallet secret and any commitmentSecret are readable by anyone who loads the page.
