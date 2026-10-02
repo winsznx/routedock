@@ -293,12 +293,18 @@ app.use('/price', createMockRoutedockMiddleware({ mode: 'x402', payment: 'auto-p
 app.get('/price', (_req, res) => res.json({ price: '42' }))
 
 await request(app).get('/price').expect(200)
-expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
+expect(onSettled).toHaveBeenCalledWith(
+  expect.any(String),
+  '0.001',
+  'x402',
+  expect.any(String), // payer
+)
 ```
 
 - `payment: 'auto-pass'` (default) invokes the callbacks with synthetic data, then runs your route handler. `'auto-fail'` responds `402` and skips both — exactly like a rejected payment.
-- `mode: 'mpp-session'` drives the full `onSessionOpen → onVoucher* → onSettled` sequence.
-- Override synthetic values via `synthetic: { txHash, amount, channelId, rate, voucherCount }`.
+- `mode: 'mpp-session'` and `mode: 'mpp-session-ws'` both drive the full `onSessionOpen → onVoucher* → onSettled` sequence; `onSettled` reports the transport it ran.
+- The callbacks receive the same arguments as the real adapter, including `payer` (a Stellar `G...` account by default, or `null`).
+- Override synthetic values via `synthetic: { txHash, amount, channelId, rate, voucherCount, payer }`.
 - To test a callback with no HTTP server at all, call `runMockSettlement(opts)` directly — it returns the synthetic settlement record.
 
 ---
