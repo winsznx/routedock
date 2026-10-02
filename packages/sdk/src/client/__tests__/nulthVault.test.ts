@@ -7,14 +7,18 @@ import { Address, Networks, hash, nativeToScVal, xdr } from '@stellar/stellar-sd
 import {
   assertNulthVaultManifest,
   prepareNulthSigner,
+  createPolicyState,
+  paymentContextFromManifest,
+  NulthPolicyError,
+  decodeAuthSignature,
 } from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
 import { RouteDockManifestError } from '../../errors.js'
-import { decodeAuthSignature, NulthPolicyError } from '../NulthVault.js'
+import { resolvePayee } from '../../provider/payee.js'
 
 const NULTH = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
-const OTHER_PAYEE = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
+const PAYEE_B = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const USDC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 const OTHER_ASSET = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
 
@@ -163,7 +167,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
 
   // wrong `to` (payee)
   await assert.rejects(
-    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, NULTH, OTHER_PAYEE, 10_000n))),
+    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n))),
     isMismatch,
     'rejects when the preimage payee differs from paymentContext.payee',
   )
@@ -191,7 +195,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
 
   // wrong `from`
   await assert.rejects(
-    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, OTHER_PAYEE, PAYEE, 10_000n))),
+    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, PAYEE_B, PAYEE, 10_000n))),
     isMismatch,
     'rejects when the from argument differs from nulthAccount',
   )
@@ -297,7 +301,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   const { signer } = await prepareNulthSigner(tightVault, baseManifest, 'x402', 'testnet', 100_000)
 
   await assert.rejects(
-    () => signer.signAuthEntry(transferPreimage(USDC, NULTH, OTHER_PAYEE, 10_000n)),
+    () => signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n)),
     (err: unknown) => err instanceof NulthPolicyError && err.code === 'auth_entry_mismatch',
   )
 
@@ -308,3 +312,107 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   assert.equal(decoded.proof.publicInputs.amountStroops, '10000')
   console.log('✓ a rejected sign attempt leaves daily spend unchanged')
 }
+
+// --- usdcToStroops validation tests ---
+
+function manifestWithPrice(amount: string): RouteDockManifest {
+  const pricing = { ...baseManifest.pricing! }
+  pricing.x402 = { ...baseManifest.pricing!.x402!, amount }
+  return { ...baseManifest, pricing }
+}
+
+const INVALID_AMOUNTS = ['-5', '-1.5', '', '1.123456789', '0.00000009']
+
+for (const amount of INVALID_AMOUNTS) {
+  assert.throws(
+    () => createPolicyState({ dailyCapUsdc: amount, allowedPayees: [PAYEE], witnessSecret: 'witness' }),
+    RangeError,
+  )
+  assert.throws(
+    () => paymentContextFromManifest(
+      { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount } } },
+      'x402',
+      100_000,
+    ),
+    RangeError,
+  )
+}
+console.log('✓ invalid amounts throw RangeError')
+
+{
+  const policy = createPolicyState({ dailyCapUsdc: '1.00', allowedPayees: [PAYEE], witnessSecret: 'witness' })
+  assert.equal(policy.dailyCapStroops, 10_000_000n)
+}
+{
+  const ctx = paymentContextFromManifest(
+    { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount: '0.001' } } },
+    'x402',
+    100_000,
+  )
+  assert.equal(ctx.amountStroops, 10_000n)
+}
+console.log('✓ valid amounts produce correct stroops')
+
+await assert.rejects(
+  () => prepareNulthSigner(vault, manifestWithPrice('-1'), 'x402', 'testnet', 100_000),
+  RangeError,
+)
+console.log('✓ prepareNulthSigner rejects negative price')
+
+// --- per-mode payee override tests ---
+
+{
+  const manifestWithOverride: RouteDockManifest = {
+    ...baseManifest,
+    payee: PAYEE,
+    pricing: {
+      ...baseManifest.pricing!,
+      x402: { ...baseManifest.pricing!.x402!, payee: PAYEE_B },
+      'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet', payee: PAYEE_B },
+    },
+  }
+
+  // allowlisting the override address signs (with correct preimage for PAYEE_B)
+  {
+    const vaultWithOverride = { ...vault, allowedPayees: [PAYEE_B] }
+    const { signer } = await prepareNulthSigner(vaultWithOverride, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n))
+    console.log('✓ allowlisting override address signs')
+  }
+
+  // allowlisting only the top-level payee rejects (preimage targets override payee but vault doesn't allow it)
+  {
+    const vaultDefault = { ...vault, allowedPayees: [PAYEE] }
+    const { signer } = await prepareNulthSigner(vaultDefault, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await assert.rejects(
+      () => signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n)),
+      (err: unknown) => err instanceof NulthPolicyError && (err as NulthPolicyError).code === 'payee_not_allowed',
+    )
+    console.log('✓ allowlisting only top-level payee rejects')
+  }
+
+  // paymentContextFromManifest returns override when set
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'mpp-charge'))
+  }
+
+  // paymentContextFromManifest returns top-level payee when no override
+  const manifestNoOverride: RouteDockManifest = {
+    ...baseManifest,
+    pricing: { ...baseManifest.pricing!, 'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' } },
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'mpp-charge'))
+  }
+}
+console.log('✓ per-mode payee override works correctly')
