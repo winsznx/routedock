@@ -9,7 +9,7 @@ import { mock, describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest } from '../../types.js'
-import { RouteDockManifestError } from '../../errors.js'
+import { RouteDockManifestError, RouteDockPolicyRejectError } from '../../errors.js'
 
 // ── Scripted mppx layer ──────────────────────────────────────────────────────
 
@@ -334,10 +334,90 @@ describe('MppChargeClient — signs once per pay()', () => {
     })
     await assert.rejects(
       () => client.pay('https://provider.test/price', buildManifest()),
-      (err: unknown) =>
-        err instanceof RouteDockManifestError && /MPP charge failed: HTTP 402/.test(err.message),
+      (err: unknown) => err instanceof Error && /MPP charge failed: HTTP 402/.test(err.message),
     )
     assert.equal(createCredentialCalls, 1)
     assert.equal(rawFetchAuthHeaders.length, 1)
+  })
+
+  it('reports the amount actually signed, not the manifest price', async () => {
+    mppxScript = { challenge: matchingChallenge({ amount: '5000' }), fetchStatus: 200 }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    const result = await client.pay('https://provider.test/price', buildManifest())
+    assert.equal(result.amount, '0.0005')
+  })
+})
+
+// ── #389: bind the unsigned challenge to the signed manifest ─────────────────
+
+describe('MppChargeClient — challenge validation', () => {
+  it('passes onChallenge to Mppx.create and accepts a matching challenge', async () => {
+    mppxScript = { challenge: matchingChallenge(), fetchStatus: 200 }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    const result = await client.pay('https://provider.test/price', buildManifest())
+    assert.equal(result.mode, 'mpp-charge')
+    assert.equal(createCredentialCalls, 1)
+  })
+
+  it('rejects an inflated amount without creating a credential', async () => {
+    mppxScript = { challenge: matchingChallenge({ amount: '8000000000' }), fetchStatus: 200 }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    await assert.rejects(
+      () => client.pay('https://provider.test/price', buildManifest()),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'challenge_amount_exceeds_manifest')
+        return true
+      },
+    )
+    assert.equal(createCredentialCalls, 0)
+  })
+
+  it('rejects a swapped recipient without creating a credential', async () => {
+    mppxScript = {
+      challenge: matchingChallenge({ recipient: Keypair.random().publicKey() }),
+      fetchStatus: 200,
+    }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    await assert.rejects(
+      () => client.pay('https://provider.test/price', buildManifest()),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'challenge_payee_mismatch')
+        return true
+      },
+    )
+    assert.equal(createCredentialCalls, 0)
+  })
+
+  it('rejects a swapped currency without creating a credential', async () => {
+    mppxScript = { challenge: matchingChallenge({ currency: PAYEE.publicKey() }), fetchStatus: 200 }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    await assert.rejects(
+      () => client.pay('https://provider.test/price', buildManifest()),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'challenge_asset_mismatch')
+        return true
+      },
+    )
+    assert.equal(createCredentialCalls, 0)
+  })
+
+  it('rejects a mismatched methodDetails.network without creating a credential', async () => {
+    mppxScript = {
+      challenge: matchingChallenge({ methodDetails: { network: 'stellar:pubnet' } }),
+      fetchStatus: 200,
+    }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    await assert.rejects(
+      () => client.pay('https://provider.test/price', buildManifest()),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockPolicyRejectError)
+        assert.equal(err.reason, 'challenge_network_mismatch')
+        return true
+      },
+    )
+    assert.equal(createCredentialCalls, 0)
   })
 })

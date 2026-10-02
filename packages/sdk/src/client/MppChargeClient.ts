@@ -4,10 +4,13 @@ import { Mppx } from 'mppx/client'
 import type { RouteDockManifest, PaymentResult } from '../types.js'
 import {
   RouteDockManifestError,
+  RouteDockPolicyRejectError,
   httpStatusToError,
   wrapFetchError,
 } from '../errors.js'
+import { stroopsToUsdc } from '../internal/usdc.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
+import { checkChargeChallenge, type Caip2Network } from './challenge.js'
 
 export class MppChargeClient {
   constructor(
@@ -22,7 +25,11 @@ export class MppChargeClient {
       throw new RouteDockManifestError('manifest.pricing.mpp-charge missing')
     }
 
+    const caip2: Caip2Network =
+      this.network === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet'
+
     let txHash: string | null = null
+    let signedAmount: string | undefined
     // The credential is created at most once per pay() call. Every retry after
     // the first reuses it, so the provider's idempotency store can replay the
     // cached settlement instead of charging a second time.
@@ -41,7 +48,17 @@ export class MppChargeClient {
           },
         }),
       ],
-      onChallenge: async (_challenge, { createCredential }) => {
+      onChallenge: async (challenge, { createCredential }) => {
+        // Bind the unsigned challenge to the signed manifest before signing.
+        const request = challenge.request
+        const rejection = checkChargeChallenge(request, manifest, caip2)
+        if (rejection) throw rejection
+
+        const amount = request['amount']
+        if (typeof amount !== 'string') {
+          throw new RouteDockPolicyRejectError('challenge_amount_invalid')
+        }
+        signedAmount = stroopsToUsdc(BigInt(amount))
         credential ??= await createCredential()
         return credential
       },
@@ -77,7 +94,13 @@ export class MppChargeClient {
           { cause },
         )
       }
-      return { data, txHash, mode: 'mpp-charge', amount: pricing.amount, timestamp: Date.now() }
+      return {
+        data,
+        txHash,
+        mode: 'mpp-charge',
+        amount: signedAmount ?? pricing.amount,
+        timestamp: Date.now(),
+      }
     }, this.retryPolicy)
   }
 }

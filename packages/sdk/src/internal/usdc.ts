@@ -5,8 +5,8 @@
  * @routedock/routedock already depends on @routedock/nulth-sdk, so re-exporting
  * (rather than defining a parallel helper) keeps a single source of truth.
  */
-import { usdcToStroops, USDC_DECIMALS } from '@routedock/nulth-sdk'
-export { usdcToStroops, USDC_DECIMALS }
+import { usdcToStroops, stroopsToUsdc, USDC_DECIMALS } from '@routedock/nulth-sdk'
+export { usdcToStroops, stroopsToUsdc, USDC_DECIMALS }
 
 /** Canonical Circle USDC issuers keyed by Stellar network. */
 export const USDC_ISSUERS = {
