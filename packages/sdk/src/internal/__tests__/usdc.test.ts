@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { usdcToStroops, usdcToUnits, USDC_DECIMALS } from '../usdc.js'
+import { usdcToStroops, stroopsToUsdc, usdcToUnits, USDC_DECIMALS } from '../usdc.js'
 
 /**
  * Shared acceptance table for the USDC → stroops converter. Mirrors the table
@@ -54,5 +54,28 @@ describe('usdcToStroops (canonical converter)', () => {
     for (const [input, expected] of VALID) {
       assert.equal(usdcToUnits(input), expected)
     }
+  })
+})
+
+describe('stroopsToUsdc (inverse converter)', () => {
+  it('round-trips canonical decimal amounts exactly', () => {
+    for (const canonical of ['0.0001', '1', '123.4567891', '0.005', '900719925.4740991']) {
+      assert.equal(
+        stroopsToUsdc(usdcToStroops(canonical)),
+        canonical,
+        `stroopsToUsdc(usdcToStroops(${JSON.stringify(canonical)}))`,
+      )
+    }
+  })
+
+  it('outputs canonical strings with no trailing zeros', () => {
+    assert.equal(stroopsToUsdc(10_000_000n), '1')
+    assert.equal(stroopsToUsdc(1_000n), '0.0001')
+    assert.equal(stroopsToUsdc(50_000n), '0.005')
+    assert.equal(stroopsToUsdc(0n), '0')
+  })
+
+  it('rejects negative stroops', () => {
+    assert.throws(() => stroopsToUsdc(-1n), RangeError)
   })
 })

@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { stellar } from '@stellar/mpp/charge/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
-import { resolvePayee } from './payee.js'
+import { resolvePayee } from '../internal/payee.js'
 import { extractPayerAddress } from './payer.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import {

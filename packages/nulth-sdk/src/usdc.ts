@@ -39,3 +39,25 @@ export function usdcToStroops(amount: string): bigint {
   }
   return units
 }
+
+/**
+ * Inverse of {@link usdcToStroops}: format exact stroops (10^-7 USDC) as a
+ * canonical decimal USDC string, with no trailing zeros.
+ *
+ * `stroopsToUsdc(usdcToStroops(x)) === x` holds for canonical inputs (the form
+ * this function outputs). Used to report the amount actually signed by a
+ * payment client, which may be less than the manifest price.
+ *
+ * Throws RangeError on negative units (there is no such thing as a negative
+ * transfer amount).
+ */
+export function stroopsToUsdc(units: bigint): string {
+  if (units < 0n) {
+    throw new RangeError(`Invalid USDC stroops: "${units.toString()}" is negative`)
+  }
+  const whole = units / USDC_SCALE
+  const frac = units % USDC_SCALE
+  if (frac === 0n) return whole.toString()
+  const fracStr = frac.toString().padStart(USDC_DECIMALS, '0').replace(/0+$/, '')
+  return `${whole.toString()}.${fracStr}`
+}
