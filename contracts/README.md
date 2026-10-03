@@ -26,10 +26,28 @@ The RouteDock agent vault is a Soroban smart contract account built on top of
 ```bash
 stellar contract build
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/agent_vault.wasm \
+  --wasm target/wasm32v1-none/release/agent_vault.wasm \
   --source $DEPLOYER_KEY \
-  --network testnet
+  --network testnet \
+  -- \
+  --admin <ADMIN_G_ADDRESS> \
+  --agent_pk <AGENT_ED25519_PUBKEY_64_HEX> \
+  --daily_cap 250000000 \
+  --allowlist '{"<PAYEE_G_ADDRESS>":"250000000"}' \
+  --expiry_ledger <ABSOLUTE_LEDGER_SEQUENCE> \
+  --lifetime_cap 0
 ```
+
+#### Constructor Arguments & Units
+
+Deploying the vault passes configuration arguments atomically to `__constructor`:
+
+- `--admin`: Stellar G-address of the vault admin (can adjust caps, rotate keys, transfer admin, freeze/unfreeze, upgrade).
+- `--agent_pk`: 32-byte Ed25519 public key of the agent as 64 hex characters.
+- `--daily_cap`: Daily USDC spend limit in stroops (1 USDC = 10,000,000 stroops; `250000000` = 25 USDC).
+- `--allowlist`: JSON map of payee address to daily sub-cap in stroops (e.g. `'{"<PAYEE_G_ADDRESS>":"250000000"}'`).
+- `--expiry_ledger`: Absolute ledger sequence at which session expires (compared against `env.ledger().sequence()`; not a duration).
+- `--lifetime_cap`: Lifetime USDC spend limit in stroops (`0` = unlimited).
 
 > **⚠️ SECURITY WARNING:** The underlying `stellar-experimental/one-way-channel` contract
 > is **unaudited**. RouteDock wraps it with safe defaults and a durable server-side

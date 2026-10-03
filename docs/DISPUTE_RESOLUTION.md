@@ -314,12 +314,14 @@ async function claimRefund(channelId: string, agentSecret: string, network: 'tes
 | Error class | `retryable` | When thrown |
 |---|---|---|
 | `RouteDockNetworkError` | `true` | Fetch timeout, connection reset, DNS failure |
-| `RouteDockChannelStateError` | `false` | 4xx from provider, RPC simulation error, missing `closeTxHash` |
-| `RouteDockDisputeError` | `false` | `request_refund`, `settleWithLatestVoucher`, or `getDisputeStatus` RPC failure |
+| `RouteDockChannelStateError` | `false` | 4xx from provider, RPC simulation error, missing `closeTxHash`, `getDisputeStatus` RPC failure (simulation error, empty result, or any other RPC error) |
+| `RouteDockDisputeError` | `false` | `request_refund` or `settleWithLatestVoucher` failure |
 | `RouteDockSignatureError` | `false` | Ed25519 signing failed (key corruption or wrong commitment key) |
-| `RouteDockRefundWindowError` | `false` | Window not yet open or already expired when the operation requires a specific state |
+| `RouteDockRefundWindowError` | `false` | Exported from the SDK but not currently thrown by it |
 
 Errors with `retryable: true` are automatically retried by the SDK according to the `RetryPolicy` passed to `RouteDockClientConfig`. Errors with `retryable: false` require the caller to decide — they represent either a protocol disagreement or a state that requires manual resolution.
+
+Callers of `getDisputeStatus()` should catch `RouteDockChannelStateError`, which the SDK throws for every failure of that method.
 
 ---
 

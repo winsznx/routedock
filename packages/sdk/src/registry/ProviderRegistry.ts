@@ -31,6 +31,11 @@ export interface ProviderRegistryConfig {
      * defaults to 'mainnet'.
      */
     network?: 'testnet' | 'mainnet'
+    /**
+     * Per-account timeout for on-chain account loads, in milliseconds.
+     * Defaults to 10000 ms.
+     */
+    timeoutMs?: number
   }
 }
 
@@ -63,6 +68,7 @@ export class ProviderRegistry {
     this.onChain = new OnChainRegistry({
       horizonUrl: config.onChain.horizonUrl,
       knownAccounts: config.onChain.knownAccounts,
+      ...(config.onChain.timeoutMs !== undefined ? { timeoutMs: config.onChain.timeoutMs } : {}),
     })
   }
 
@@ -80,6 +86,7 @@ export class ProviderRegistry {
         .from('providers')
         .select('*')
         .eq('verified', true)
+        .eq('network', this.network)
         .limit(100)
 
       if (error) return []

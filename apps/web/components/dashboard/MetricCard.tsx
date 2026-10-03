@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 interface MetricCardProps {
   label: string
-  value: string | number
+  value: ReactNode
   sublabel?: string | undefined
   icon?: ReactNode | undefined
   live?: boolean | undefined

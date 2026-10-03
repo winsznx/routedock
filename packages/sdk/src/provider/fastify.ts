@@ -157,26 +157,34 @@ function buildExpressShims(
 /**
  * Run an Express-style handler against a Fastify request/reply pair.
  *
- * We hijack the reply so Fastify doesn't try to serialise the response a
- * second time — the shim writes directly to the underlying ServerResponse.
+ * If the handler writes a response directly (e.g. 402 challenge, error, or
+ * session DELETE), we hijack the reply so Fastify does not try to serialise
+ * a second response. If the handler calls next() without responding (settled
+ * payment pass-through), we do not hijack, allowing Fastify to execute the
+ * downstream route handler.
  */
 function runExpressHandler(
   handler: RequestHandler,
   fastifyRequest: FastifyRequest,
   fastifyReply: FastifyReply,
 ): Promise<void> {
-  fastifyReply.hijack()
+  const rawRes = fastifyReply.raw
   const { req, res } = buildExpressShims(
     fastifyRequest.raw,
-    fastifyReply.raw,
+    rawRes,
     fastifyRequest,
     fastifyReply,
   )
   return new Promise<void>((resolve, reject) => {
-    handler(req, res, (err?: unknown) => {
-      if (err != null) reject(err)
-      else resolve()
-    })
+    let settled = false
+    const finish = (err?: unknown) => {
+      if (settled) return
+      settled = true
+      if (err != null) return reject(err)
+      if (rawRes.writableEnded || rawRes.headersSent) fastifyReply.hijack()
+      resolve()
+    }
+    Promise.resolve(handler(req, res, (err?: unknown) => finish(err))).then(() => finish(), finish)
   })
 }
 

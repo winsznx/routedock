@@ -66,4 +66,30 @@ describe('provider-a worker payment path & routes', () => {
       'Challenge header must specify payment requirements',
     )
   })
+
+  it('GET /health returns 503 misconfigured when STELLAR_PAYEE_SECRET is unset', async () => {
+    const badEnv = { ...mockEnv, STELLAR_PAYEE_SECRET: undefined } as unknown as Env
+    const req = new Request('http://localhost/health')
+    const res = await worker.fetch(req, badEnv, mockCtx)
+
+    assert.equal(res.status, 503)
+    const body = (await res.json()) as { status: string; missing?: string[] }
+    assert.equal(body.status, 'misconfigured')
+    assert.ok(body.missing?.includes('STELLAR_PAYEE_SECRET'))
+  })
+
+  it('GET /health returns 503 misconfigured on mainnet with USDC_ASSET_CONTRACT unset', async () => {
+    const badEnv = {
+      ...mockEnv,
+      STELLAR_NETWORK: 'mainnet',
+      USDC_ASSET_CONTRACT: undefined,
+    } as unknown as Env
+    const req = new Request('http://localhost/health')
+    const res = await worker.fetch(req, badEnv, mockCtx)
+
+    assert.equal(res.status, 503)
+    const body = (await res.json()) as { status: string; missing?: string[] }
+    assert.equal(body.status, 'misconfigured')
+    assert.ok(body.missing?.includes('USDC_ASSET_CONTRACT'))
+  })
 })

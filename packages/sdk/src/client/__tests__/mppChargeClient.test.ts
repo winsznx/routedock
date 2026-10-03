@@ -9,6 +9,7 @@ import { mock, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest } from '../../types.js'
+import { RouteDockManifestError } from '../../errors.js'
 
 // ── Scripted mppx layer ──────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ interface MppxScript {
   fetchStatus?: number
   /** If true, mppx.fetch rejects with a network error */
   fetchRejects?: boolean
+  /** If true, mppx.fetch returns a 200 non-JSON response */
+  fetchNonJson?: boolean
   /** If set, onProgress fires with this hash (simulating settlement) */
   paidHash?: string
   /** If true, onProgress fires with a paid event */
@@ -31,6 +34,12 @@ const fakeMppx = {
   fetch: async (): Promise<Response> => {
     if (mppxScript.fetchRejects) {
       throw new TypeError('fetch failed')
+    }
+    if (mppxScript.fetchNonJson) {
+      return new Response('<html>proxy error</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      })
     }
     const status = mppxScript.fetchStatus ?? 200
     if (status === 200) {
@@ -188,6 +197,20 @@ describe('MppChargeClient — HTTP errors', () => {
       () => client.pay('https://provider.test/price', buildManifest()),
       (err: unknown) =>
         err instanceof Error && /MPP charge failed: HTTP 400/.test(err.message),
+    )
+  })
+
+  it('throws RouteDockManifestError when 200 response body is not JSON', async () => {
+    mppxScript = { fetchNonJson: true }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    await assert.rejects(
+      () => client.pay('https://provider.test/price', buildManifest()),
+      (err: unknown) => {
+        assert.ok(err instanceof RouteDockManifestError)
+        assert.match(err.message, /Failed to parse JSON from response \(HTTP 200\)/)
+        assert.ok(err.cause instanceof SyntaxError)
+        return true
+      },
     )
   })
 })

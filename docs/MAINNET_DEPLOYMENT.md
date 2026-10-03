@@ -106,7 +106,7 @@ Call `client.preflight(manifest)` explicitly to validate a manifest's asset trus
 
 ### Mandatory `USDC_ASSET_CONTRACT` on Mainnet
 
-> ⚠️ **MANDATORY CONFIGURATION:** `USDC_ASSET_CONTRACT` is **required** on mainnet for both providers and the agent. In `@routedock/routedock`, `resolveAssetContract` throws an error if `USDC_ASSET_CONTRACT` is missing on mainnet because only testnet has a default fallback contract address.
+> ⚠️ **MANDATORY CONFIGURATION:** `USDC_ASSET_CONTRACT` is **required** on mainnet for both providers and the agent. `resolveAssetContract` in `apps/provider-a/src/worker.ts` and `apps/provider-b/src/config.ts` throws an error if `USDC_ASSET_CONTRACT` is missing on mainnet, because only testnet has a default fallback contract address — each provider refuses to serve on mainnet without it, and `/health` returns 503 naming `USDC_ASSET_CONTRACT` as missing.
 
 Obtain or deploy the Stellar Asset Contract (SAC) wrapper ID for mainnet USDC and record it as `USDC_ASSET_CONTRACT`.
 
@@ -120,18 +120,30 @@ Build and deploy from `contracts/agent-vault`:
 cd contracts/agent-vault
 stellar contract build
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/agent_vault.wasm \
+  --wasm target/wasm32v1-none/release/agent_vault.wasm \
   --source <MAINNET_DEPLOYER_ALIAS> \
-  --network mainnet
+  --network mainnet \
+  -- \
+  --admin <ADMIN_G_ADDRESS> \
+  --agent_pk <AGENT_ED25519_PUBKEY_64_HEX> \
+  --daily_cap 250000000 \
+  --allowlist '{"<PAYEE_G_ADDRESS>":"250000000"}' \
+  --expiry_ledger <ABSOLUTE_LEDGER_SEQUENCE> \
+  --lifetime_cap 0
 ```
 
 Record the output as `AGENT_VAULT_CONTRACT_ID`.
 
-Apply stricter production policy inputs:
+### Constructor Parameter Units & Stricter Production Policy
 
-- **Daily cap:** set conservative cap (example `25` USDC/day).
-- **Allowlist:** only production provider payee accounts.
-- **Expiry:** short session key lifetime (example 1-6 hours by ledger window).
+Deploy-time arguments configure the vault atomically in `__constructor`:
+
+- **`--admin`**: Vault administrator Stellar G-address holding exclusive authorization for admin entrypoints (`set_daily_cap`, `add_to_allowlist`, `remove_from_allowlist`, `set_expiry`, `set_agent_pubkey`, `freeze`/`unfreeze`, `upgrade`, `transfer_admin`).
+- **`--agent_pk`**: Agent's 32-byte Ed25519 public key as 64 hex characters used to authorize payments via `__check_auth`.
+- **`--daily_cap`**: Daily spend cap in USDC stroops, where 1 USDC = 10,000,000 stroops (`250000000` = 25 USDC/day conservative cap).
+- **`--allowlist`**: Map of payee address to daily sub-cap in stroops (JSON object format, e.g. `'{"<PAYEE_G_ADDRESS>":"250000000"}'`). Restrict to production provider payee accounts.
+- **`--expiry_ledger`**: Absolute ledger sequence (compared against `env.ledger().sequence()`, **not** a relative duration). Set a short session key lifetime (e.g. current ledger + 720 for ~1 hour, or 4,320 for ~6 hours).
+- **`--lifetime_cap`**: Total USDC stroops the vault may ever spend over its lifetime. Set to `0` for unlimited.
 
 Example environment snippet for agent runtime:
 

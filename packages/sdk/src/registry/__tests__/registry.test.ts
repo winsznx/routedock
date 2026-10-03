@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { Horizon } from '@stellar/stellar-sdk'
 import { OnChainRegistry } from '../OnChainRegistry.js'
 import { ProviderRegistry } from '../ProviderRegistry.js'
 
@@ -153,21 +154,149 @@ describe('OnChainRegistry.listProviders — multi-account', () => {
 })
 
 // ---------------------------------------------------------------------------
+// OnChainRegistry Tests — timeout and concurrency
+// ---------------------------------------------------------------------------
+
+/** A Horizon that accepts the connection and never answers. */
+function stalled(): Promise<never> {
+  return new Promise<never>(() => {})
+}
+
+function fakeAccount(endpoint: string) {
+  return { data_attr: { routedock_endpoint: endpoint } }
+}
+
+describe('OnChainRegistry.listProviders — timeout', () => {
+  it(
+    'resolves to [] within the timeout budget when the only account stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given a Horizon that never answers
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['SLOW'],
+        timeoutMs: 50,
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 1000, `expected < 1000ms, took ${elapsed}ms`)
+    },
+  )
+
+  it(
+    'returns the healthy account when another account stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given one stalled account and one healthy account
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', (accountId: string) =>
+        accountId === 'SLOW' ? stalled() : Promise.resolve(fakeAccount('https://healthy.example.com')),
+      )
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['SLOW', 'HEALTHY'],
+        timeoutMs: 50,
+      })
+
+      // #when
+      const providers = await registry.listProviders()
+
+      // #then
+      assert.equal(providers.length, 1)
+      assert.equal(providers[0]!.account, 'HEALTHY')
+      assert.equal(providers[0]!.endpoint, 'https://healthy.example.com')
+    },
+  )
+
+  it(
+    'times out three stalled accounts in a single concurrent window',
+    { timeout: 5000 },
+    async (t) => {
+      // #given three accounts that all stall
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['S1', 'S2', 'S3'],
+        timeoutMs: 300,
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then — a sequential loop would need at least 900ms
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 700, `expected concurrent loads (< 700ms), took ${elapsed}ms`)
+    },
+  )
+
+  it(
+    'returns results in knownAccounts order even when loads finish out of order',
+    { timeout: 5000 },
+    async (t) => {
+      // #given the first account is the slowest to answer
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', async (accountId: string) => {
+        if (accountId === 'A') await new Promise((resolve) => setTimeout(resolve, 30))
+        return fakeAccount(`https://${accountId.toLowerCase()}.example.com`)
+      })
+      const registry = new OnChainRegistry({
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['A', 'B', 'C'],
+        timeoutMs: 1000,
+      })
+
+      // #when
+      const providers = await registry.listProviders()
+
+      // #then
+      assert.deepEqual(
+        providers.map((p) => p.account),
+        ['A', 'B', 'C'],
+      )
+    },
+  )
+})
+
+// ---------------------------------------------------------------------------
 // ProviderRegistry helpers
 // ---------------------------------------------------------------------------
 
 function makeSupabaseMock(rows: object[] | null, error: object | null = null) {
   return {
-    from: () => ({
-      // Mirrors the real query: .select('*').eq('verified', true).limit(100)
-      select: () => {
-        const query = {
-          eq: () => query,
-          limit: () => Promise.resolve({ data: rows, error }),
-        }
-        return query
-      },
-    }),
+    from: () => {
+      const filters: Record<string, unknown> = {}
+      return {
+        // Mirrors the real query: .select('*').eq('verified', true).eq('network', ...).limit(100)
+        select: () => {
+          const query = {
+            eq: (column: string, value: unknown) => {
+              filters[column] = value
+              return query
+            },
+            limit: () => {
+              const data = error
+                ? null
+                : rows
+                  ? rows.filter((r) =>
+                      Object.entries(filters).every(
+                        ([column, value]) => (r as Record<string, unknown>)[column] === value,
+                      ),
+                    )
+                  : rows
+              return Promise.resolve({ data, error })
+            },
+          }
+          return query
+        },
+      }
+    },
   } as unknown as ConstructorParameters<typeof ProviderRegistry>[0]['supabase']
 }
 
@@ -175,10 +304,15 @@ class TestProviderRegistry extends ProviderRegistry {
   constructor(
     supabase: ReturnType<typeof makeSupabaseMock> | undefined,
     mockHorizon: ReturnType<typeof makeHorizonMock>,
+    network?: 'testnet' | 'mainnet',
   ) {
     super({
       ...(supabase ? { supabase: supabase as any } : {}),
-      onChain: { horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts: ['ACCT9'] },
+      onChain: {
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        knownAccounts: ['ACCT9'],
+        ...(network ? { network } : {}),
+      },
     })
     // @ts-expect-error — override private field for testing
     this.onChain = new TestOnChainRegistry(mockHorizon, ['ACCT9'])
@@ -243,5 +377,91 @@ describe('ProviderRegistry.listProviders — on-chain fallback', () => {
     const providers = await registry.listProviders()
     assert.equal(providers.length, 1)
     assert.equal(providers[0]!.source, 'onchain')
+  })
+
+  it(
+    'forwards onChain.timeoutMs so listProviders resolves when Horizon stalls',
+    { timeout: 5000 },
+    async (t) => {
+      // #given a stalled Horizon and a registry configured with a 50ms timeout
+      t.mock.method(Horizon.Server.prototype, 'loadAccount', () => stalled())
+      const registry = new ProviderRegistry({
+        onChain: {
+          horizonUrl: 'https://horizon-testnet.stellar.org',
+          knownAccounts: ['SLOW'],
+          timeoutMs: 50,
+        },
+      })
+
+      // #when
+      const started = Date.now()
+      const providers = await registry.listProviders()
+      const elapsed = Date.now() - started
+
+      // #then
+      assert.deepEqual(providers, [])
+      assert.ok(elapsed < 1000, `expected < 1000ms, took ${elapsed}ms`)
+    },
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Network filtering
+// ---------------------------------------------------------------------------
+
+function makeRow(network: 'testnet' | 'mainnet', name: string): object {
+  return {
+    id: `${name}-id`,
+    name,
+    description: `${name} description`,
+    base_url: `https://${name.toLowerCase()}.example.com`,
+    modes: ['x402'],
+    tags: [network],
+    network,
+    payee: `GPAYEE-${network}`,
+    manifest: {},
+    verified: true,
+    registered_at: new Date().toISOString(),
+  }
+}
+
+describe('ProviderRegistry.listProviders — network filtering', () => {
+  it('returns only rows matching the configured network when both networks are present', async () => {
+    const mainnetRow = makeRow('mainnet', 'Mainnet Provider')
+    const testnetRow = makeRow('testnet', 'Testnet Provider')
+    const rows = [mainnetRow, testnetRow]
+
+    const mainnetRegistry = new TestProviderRegistry(
+      makeSupabaseMock(rows),
+      emptyOnChain,
+      'mainnet',
+    )
+    const mainnetProviders = await mainnetRegistry.listProviders()
+    assert.equal(mainnetProviders.length, 1)
+    assert.equal(mainnetProviders[0]!.network, 'mainnet')
+    assert.equal(mainnetProviders[0]!.name, 'Mainnet Provider')
+
+    const testnetRegistry = new TestProviderRegistry(
+      makeSupabaseMock(rows),
+      emptyOnChain,
+      'testnet',
+    )
+    const testnetProviders = await testnetRegistry.listProviders()
+    assert.equal(testnetProviders.length, 1)
+    assert.equal(testnetProviders[0]!.network, 'testnet')
+    assert.equal(testnetProviders[0]!.name, 'Testnet Provider')
+  })
+
+  it('falls through to on-chain when Supabase only holds rows for the other network', async () => {
+    const testnetRow = makeRow('testnet', 'Testnet Provider')
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock([testnetRow]),
+      oneOnChain,
+      'mainnet',
+    )
+    const providers = await registry.listProviders()
+    assert.equal(providers.length, 1)
+    assert.equal(providers[0]!.source, 'onchain')
+    assert.equal(providers[0]!.network, 'mainnet')
   })
 })

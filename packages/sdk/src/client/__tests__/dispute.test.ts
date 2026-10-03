@@ -285,3 +285,33 @@ describe('dispute error types', () => {
     assert.ok(new RouteDockDisputeError('x') instanceof Error)
   })
 })
+
+// ── close() ────────────────────────────────────────────────────────────────────
+
+describe('close() — response handling', () => {
+  it('throws RouteDockChannelStateError when close response is not valid JSON', async () => {
+    rpc.simulateTransaction = () => ({
+      result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
+    })
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response('<html>proxy error</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    try {
+      const handle = await openHandle()
+      await assert.rejects(
+        () => handle.close(),
+        (err: unknown) => {
+          assert.ok(err instanceof RouteDockChannelStateError)
+          assert.match(err.message, /Channel close response was not valid JSON \(HTTP 200\)/)
+          assert.ok(err.cause instanceof SyntaxError)
+          return true
+        },
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})

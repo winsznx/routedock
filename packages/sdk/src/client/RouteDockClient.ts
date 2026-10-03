@@ -1,5 +1,5 @@
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
-import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertManifestValid, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
+import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertManifestValid, assertEndpointActive, type ModeSelectOptions, type RouteDockLogger } from './ModeRouter.js'
 import { X402Client } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
@@ -7,7 +7,7 @@ import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './N
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
-import { usdcToStroops } from '../internal/usdc.js'
+import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
@@ -27,8 +27,60 @@ export interface SpendCap {
    * Both limits are enforced independently — hitting an endpoint cap does
    * not prevent spend on other endpoints, but all spend still counts toward
    * the global cap.
+   *
+   * Keys are normalized to `new URL(key).origin` when the client is
+   * constructed (lowercased host, no trailing slash, no default port), so
+   * "https://API.example.com/", "https://api.example.com" and
+   * "https://api.example.com:443" are all equivalent. A key that isn't a
+   * valid URL, that includes a path/query/hash, or that normalizes to the
+   * same origin as another key throws at construction time.
    */
   endpointCaps?: Record<string, string>
+}
+
+/**
+ * Normalizes `spendCap.endpointCaps` keys to their URL origin so the exact
+ * string-match lookup in `_checkAndReserveSpend` (against `new URL(url).origin`)
+ * can't be silently defeated by a trailing slash, a path, a mismatched case,
+ * or an explicit default port. Throws a typed config error rather than
+ * dropping the cap, since a cap that silently never applies is worse than
+ * one that fails loudly at startup.
+ */
+function normalizeEndpointCaps(
+  endpointCaps: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!endpointCaps) return undefined
+
+  const normalized: Record<string, string> = {}
+  for (const [key, value] of Object.entries(endpointCaps)) {
+    let url: URL
+    try {
+      url = new URL(key)
+    } catch {
+      throw new RouteDockManifestError(
+        `spendCap.endpointCaps key "${key}" is not a valid URL — use an origin such as "https://api.example.com"`,
+      )
+    }
+    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+      throw new RouteDockManifestError(
+        `spendCap.endpointCaps key "${key}" must be an origin only (no path, query, or hash) — use "${url.origin}"`,
+      )
+    }
+    const origin = url.origin
+    if (Object.prototype.hasOwnProperty.call(normalized, origin)) {
+      throw new RouteDockManifestError(
+        `spendCap.endpointCaps has two keys that both normalize to origin "${origin}" — remove the duplicate`,
+      )
+    }
+    normalized[origin] = value
+  }
+  return normalized
+}
+
+/** Returns a copy of `spendCap` with `endpointCaps` keys normalized to their origin. */
+function normalizeSpendCap(spendCap: SpendCap): SpendCap {
+  const endpointCaps = normalizeEndpointCaps(spendCap.endpointCaps)
+  return endpointCaps === undefined ? spendCap : { ...spendCap, endpointCaps }
 }
 
 export type VaultConfig = NulthVaultConfig
@@ -98,10 +150,7 @@ export const usdcToMicros = usdcToStroops
  * Used by the trustline preflight to produce exact remediation commands.
  */
 const ASSET_ISSUERS: Record<string, Record<string, string>> = {
-  USDC: {
-    testnet: 'GBQY2K7IZDSK5QN3OF6ZSOLQ6CWAH5Q5JXEG5Q3S4OD5B7LYO24B6B6L',
-    mainnet: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-  },
+  USDC: USDC_ISSUERS,
 }
 
 function getAssetIssuer(asset: string, network: string): string {
@@ -165,7 +214,7 @@ export class RouteDockClient {
     this.horizonUrl = config.horizonUrl ?? (this.network === 'testnet'
       ? 'https://horizon-testnet.stellar.org'
       : 'https://horizon.stellar.org')
-    this.spendCap = config.spendCap
+    this.spendCap = config.spendCap ? normalizeSpendCap(config.spendCap) : undefined
     this.retryPolicy = config.retryPolicy
     // Only warn about non-durability when a spend cap is actually configured.
     this.spendStore = config.spendStore ?? new InMemorySpendStore({ warn: !!config.spendCap })
@@ -202,6 +251,7 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     this._assertNetwork(manifest, baseUrl)
+    assertEndpointActive(manifest, url, this.logger)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
   }
@@ -263,19 +313,20 @@ export class RouteDockClient {
     try {
       const account = await server.loadAccount(this.keypair.publicKey())
       const balances = account.balances as unknown[]
+      const expectedIssuer = getAssetIssuer(manifest.asset, this.network)
       const hasTrustline = balances.some(
         (b) =>
           typeof b === 'object' &&
           b !== null &&
           'asset_code' in b &&
-          (b as Record<string, unknown>).asset_code === manifest.asset,
+          (b as Record<string, unknown>).asset_code === manifest.asset &&
+          (!expectedIssuer || (b as Record<string, unknown>).asset_issuer === expectedIssuer),
       )
       if (!hasTrustline) {
-        const issuer = getAssetIssuer(manifest.asset, this.network)
-        const remediation = issuer
-          ? `Run: stellar tx new --source ${this.keypair.publicKey()} --network ${this.network} change-trust --asset ${manifest.asset}:${issuer} --limit 100000`
+        const remediation = expectedIssuer
+          ? `Run: stellar tx new --source ${this.keypair.publicKey()} --network ${this.network} change-trust --asset ${manifest.asset}:${expectedIssuer} --limit 100000`
           : `Establish a trustline for ${manifest.asset} with the appropriate issuer on ${this.network}`
-        throw new RouteDockTrustlineError(manifest.asset, issuer || 'unknown', remediation)
+        throw new RouteDockTrustlineError(manifest.asset, expectedIssuer || 'unknown', remediation)
       }
       RouteDockClient._trustlineCache.set(cacheKey, {
         exists: true,
@@ -300,6 +351,7 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     this._assertNetwork(manifest, baseUrl)
+    assertEndpointActive(manifest, url, this.logger)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
     await this._checkTrustline(manifest)
@@ -426,6 +478,7 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     this._assertNetwork(manifest, baseUrl)
+    assertEndpointActive(manifest, url, this.logger)
 
     const mode = options?.mode ?? 'mpp-session'
     if (!manifest.modes.includes(mode)) {

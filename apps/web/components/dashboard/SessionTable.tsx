@@ -1,22 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { getSupabaseBrowserClient, type Session } from '@/lib/supabase'
+import { getSupabaseBrowserClient, SESSION_COLUMNS, type Session } from '@/lib/supabase'
 import { AddressDisplay } from '@/components/shared/AddressDisplay'
 import { ModeBadge } from '@/components/shared/ModeBadge'
+import { RelativeTime } from '@/components/shared/RelativeTime'
 import { TxHashLink } from '@/components/shared/TxHashLink'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-
-function timeAgo(date: string): string {
-  const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000)
-  if (seconds < 60) return `${seconds}s ago`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
 
 type StatusVariant = 'success' | 'warning' | 'neutral'
 
@@ -32,15 +23,23 @@ interface SessionTableProps {
 
 export function SessionTable({ initialSessions = [] }: SessionTableProps) {
   const [sessions, setSessions] = useState<Session[]>(initialSessions)
+  const [refreshFailed, setRefreshFailed] = useState(false)
 
   const refreshSessions = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('public_sessions')
-      .select('*')
+      .select(SESSION_COLUMNS)
       .order('opened_at', { ascending: false })
       .limit(50)
 
+    if (error) {
+      // Keep the rows already on screen instead of blanking the table.
+      console.warn('[sessions] failed to refresh public_sessions:', error.message)
+      setRefreshFailed(true)
+      return
+    }
+    setRefreshFailed(false)
     if (data) setSessions(data as Session[])
   }, [])
 
@@ -58,6 +57,11 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
       <div className="px-5 py-4 border-b border-[var(--border-default)]">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">Sessions</h2>
       </div>
+      {refreshFailed && (
+        <p className="px-5 py-2 text-xs text-[var(--status-error)] border-b border-[var(--border-default)]">
+          {"Couldn't refresh sessions. Showing the last loaded data."}
+        </p>
+      )}
       <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
@@ -105,10 +109,10 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
                   className="hover:bg-[var(--bg-subtle)] transition-colors"
                 >
                   <td className="px-4 py-3">
-                    <AddressDisplay address={session.channel_id} />
+                    <AddressDisplay address={session.channel_id} network={session.network} accessibleLabel="channel" />
                   </td>
                   <td className="px-4 py-3">
-                    <AddressDisplay address={session.payer} />
+                    <AddressDisplay address={session.payer} network={session.network} accessibleLabel="payer" />
                   </td>
                   <td className="px-4 py-3">
                     <ModeBadge mode="mpp-session" />
@@ -147,7 +151,7 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right text-xs text-[var(--text-muted)]">
-                    {timeAgo(session.opened_at)}
+                    <RelativeTime date={session.opened_at} />
                   </td>
                 </tr>
               ))

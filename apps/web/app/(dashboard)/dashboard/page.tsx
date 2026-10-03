@@ -1,18 +1,20 @@
 import type { Metadata } from 'next'
+import { networkLabel } from '@/lib/explorer'
 
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
   title: 'Dashboard',
-  description: 'Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar testnet.',
+  description: `Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar ${networkLabel()}.`,
 }
 
-import { getSupabaseServerClient } from '@/lib/supabase'
+import { getSupabaseServerClient, SESSION_COLUMNS } from '@/lib/supabase'
 import { aggregateSessions } from '@/lib/aggregateSessions'
 import { DashboardHeader } from '@/components/layout/DashboardHeader'
 import { MetricCard } from '@/components/dashboard/MetricCard'
 import { SessionTable } from '@/components/dashboard/SessionTable'
 import { TxFeed } from '@/components/dashboard/TxFeed'
+import { RelativeTime } from '@/components/shared/RelativeTime'
 import { VoucherChart } from '@/components/dashboard/VoucherChart'
 import type { Session, TxLogEntry } from '@/lib/supabase'
 
@@ -22,7 +24,7 @@ async function fetchDashboardData() {
   const [sessionsRes, txLogRes] = await Promise.all([
     supabase
       .from('public_sessions')
-      .select('*')
+      .select(SESSION_COLUMNS)
       .order('opened_at', { ascending: false })
       .limit(50),
     supabase
@@ -53,15 +55,6 @@ async function fetchDashboardData() {
     lastSettlement,
     hasError: Boolean(sessionsRes.error || txLogRes.error),
   }
-}
-
-function timeAgo(date: string): string {
-  const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000)
-  if (seconds < 60) return `${seconds}s ago`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ago`
 }
 
 export default async function DashboardPage() {
@@ -102,7 +95,7 @@ export default async function DashboardPage() {
           {lastSettlement?.settlement_tx_hash ? (
             <MetricCard
               label="Last Settlement"
-              value={timeAgo(lastSettlement.updated_at)}
+              value={<RelativeTime date={lastSettlement.updated_at} />}
               sublabel={`${lastSettlement.settlement_tx_hash.slice(0, 8)}...`}
             />
           ) : (

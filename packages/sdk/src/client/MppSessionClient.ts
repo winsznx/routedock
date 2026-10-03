@@ -7,7 +7,9 @@
  * @stellar/mpp library handles the 402 challenge-response cycle.
  */
 import { Keypair, Networks } from '@stellar/stellar-sdk'
+import { STELLAR_PUBNET, STELLAR_TESTNET } from '@stellar/mpp'
 import { stellar } from '@stellar/mpp/channel/client'
+import { Challenge } from 'mppx'
 import { Mppx } from 'mppx/client'
 import type {
   RouteDockManifest,
@@ -18,7 +20,7 @@ import type {
   DisputeStatus,
   SessionOptions,
   SessionEvent,
-  SessionTimeoutPayload,
+  SessionEventPayloadMap,
 } from '../types.js'
 import { DEFAULT_MAX_SESSION_DURATION_MS } from '../types.js'
 import {
@@ -30,8 +32,14 @@ import {
   wrapFetchError,
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
+import { usdcToStroops } from '../internal/usdc.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
+const STREAM_CLEANUP_TIMEOUT_MS = 3_000
+
+/** Internal listener shape: every event's payload, unioned. The public on()
+ * signature narrows this per event through SessionEventPayloadMap. */
+type SessionListener = (payload: SessionEventPayloadMap[SessionEvent]) => void
 
 /** WebSocket-readyState values (mirrors the WHATWG WebSocket constants). */
 const WS_CONNECTING = 0
@@ -99,7 +107,38 @@ function defaultWebSocketFactory(
 /** The subset of the mppx client used by the WebSocket transport. */
 interface WsMppxLike {
   rawFetch: typeof globalThis.fetch
-  createCredential: (response: Response) => Promise<string>
+  createCredential: (
+    response: Response,
+    context?: { cumulativeAmount: string },
+  ) => Promise<string>
+}
+
+/**
+ * Validates a provider challenge, reserves the next cumulative amount, and hands
+ * it to `create` as an explicit context. Passed into the WebSocket transport,
+ * which runs outside the openSession closure and its reservation state.
+ */
+type GuardedCredentialCreator = (
+  challenge: Challenge.Challenge,
+  create: (cumulativeAmount: string) => Promise<string>,
+) => Promise<string>
+
+/** Parses a base-10 integer string; null when malformed (never throws). */
+function parseIntegerString(value: string): bigint | null {
+  return /^\d+$/.test(value) ? BigInt(value) : null
+}
+
+/**
+ * Client-side cumulative store key — mirrors the entry @stellar/mpp's channel
+ * client writes, so a session can seed its baseline from the same entry.
+ */
+function clientCumulativeStoreKey(networkId: string, channel: string): string {
+  return `stellar:channel:client:${networkId}:${channel}:cumulative`
+}
+
+/** Mirrors @stellar/mpp's resolveNetworkId for the store key (default testnet). */
+function resolveStoreNetworkId(network: string | undefined): string {
+  return network === STELLAR_PUBNET ? STELLAR_PUBNET : STELLAR_TESTNET
 }
 
 export class MppSessionClient {
@@ -141,10 +180,162 @@ export class MppSessionClient {
     let currentCumulative = 0n
     let vouchersIssued = 0
 
+    // ── Per-voucher challenge guard ─────────────────────────────────────────
+    // The provider authors the 402 challenge and the channel client signs the
+    // cumulative amount it contains, so an unchecked challenge lets a provider
+    // name a cumulative just under the channel deposit and drain it with one
+    // voucher. Every challenge is validated against the signed manifest here,
+    // and the signed value is always this client's own arithmetic.
+    let rateStroops: bigint
+    try {
+      rateStroops = usdcToStroops(pricing.rate)
+    } catch (err) {
+      throw new RouteDockManifestError(
+        `manifest.pricing.${mode}.rate is not a valid USDC amount: "${pricing.rate}"`,
+        { cause: err },
+      )
+    }
+
+    const store = options?.store
+    // Next cumulative this client is willing to sign. null until the first
+    // challenge seeds it (from the store when one is configured).
+    let reservedCumulative: bigint | null = null
+    // Memoized first-challenge store read, so concurrent vouchers share one
+    // round-trip and cannot both seed from a stale baseline.
+    let storeSeed: Promise<bigint> | undefined
+
+    const seedFromStore = (networkId: string, channel: string): Promise<bigint> => {
+      storeSeed ??= Promise.resolve(
+        store!.get(clientCumulativeStoreKey(networkId, channel)),
+      ).then((stored) => {
+        if (stored && typeof stored === 'object' && 'amount' in stored) {
+          const raw = (stored as { amount: unknown }).amount
+          const amount = typeof raw === 'string' ? parseIntegerString(raw) : null
+          if (amount === null) {
+            throw new RouteDockChannelStateError(
+              `Stored cumulative for channel ${channel} is not an integer string: ${JSON.stringify(raw)}`,
+            )
+          }
+          return amount
+        }
+        return 0n
+      })
+      return storeSeed
+    }
+
+    /**
+     * Validates a provider challenge and reserves the next cumulative amount.
+     * Throws RouteDockChannelStateError before anything can be signed. The
+     * reservation is advanced synchronously once validation settles, so
+     * concurrent vouchers each get a distinct value.
+     */
+    const reserveNextCumulative = async (challenge: Challenge.Challenge): Promise<bigint> => {
+      // challenge.request is an untyped record on the generic Challenge type,
+      // so every field is read defensively rather than trusted.
+      const request = challenge.request
+
+      const channelValue = request['channel']
+      if (typeof channelValue !== 'string' || channelValue !== channelFactory) {
+        throw new RouteDockChannelStateError(
+          `Challenge names channel ${String(channelValue)}, but the manifest channel_factory is ${channelFactory}`,
+        )
+      }
+
+      const amountValue = request['amount']
+      const amount = typeof amountValue === 'string' ? parseIntegerString(amountValue) : null
+      if (amount === null) {
+        throw new RouteDockChannelStateError(
+          `Challenge request.amount is not a base-10 integer string: ${JSON.stringify(amountValue)}`,
+        )
+      }
+      if (amount !== rateStroops) {
+        throw new RouteDockChannelStateError(
+          `Challenge request.amount ${amount} does not match the manifest rate ${rateStroops} stroops per voucher`,
+        )
+      }
+
+      const methodDetailsValue = request['methodDetails']
+      const methodDetails =
+        methodDetailsValue !== null && typeof methodDetailsValue === 'object'
+          ? (methodDetailsValue as Record<string, unknown>)
+          : undefined
+
+      let serverReported = 0n
+      if (methodDetails && 'cumulativeAmount' in methodDetails) {
+        const rawCumulative = methodDetails['cumulativeAmount']
+        const parsed =
+          typeof rawCumulative === 'string' ? parseIntegerString(rawCumulative) : null
+        if (parsed === null) {
+          throw new RouteDockChannelStateError(
+            `Challenge methodDetails.cumulativeAmount is not a base-10 integer string: ${JSON.stringify(rawCumulative)}`,
+          )
+        }
+        serverReported = parsed
+      }
+
+      let baseline = reservedCumulative
+      if (baseline === null) {
+        if (store) {
+          const challengedNetwork = methodDetails?.['network']
+          const seeded = await seedFromStore(
+            resolveStoreNetworkId(
+              typeof challengedNetwork === 'string' ? challengedNetwork : undefined,
+            ),
+            channelValue,
+          )
+          // Another concurrent voucher may have seeded while this one awaited.
+          baseline = reservedCumulative ?? seeded
+        } else if (serverReported === 0n) {
+          baseline = 0n
+        } else {
+          throw new RouteDockChannelStateError(
+            `Challenge reports cumulative ${serverReported} for a channel this client has no baseline for. ` +
+              'Pass a `store` in SessionOptions so the signed cumulative survives restarts, or close the channel before reusing it.',
+          )
+        }
+      }
+
+      if (serverReported > baseline) {
+        throw new RouteDockChannelStateError(
+          `Challenge reports cumulative ${serverReported}, above the locally reserved baseline ${baseline}`,
+        )
+      }
+
+      const next = baseline + rateStroops
+      reservedCumulative = next
+      return next
+    }
+
+    /**
+     * Releases a reservation whose credential was never created, so the next
+     * voucher re-uses the value instead of paying a gap. Only the most recent
+     * reservation can be released — an earlier one has been superseded, and
+     * re-issuing it would duplicate a cumulative.
+     */
+    const releaseReservation = (reserved: bigint): void => {
+      if (reservedCumulative === reserved) {
+        reservedCumulative = reserved - rateStroops
+      }
+    }
+
+    const createGuardedCredential: GuardedCredentialCreator = async (challenge, create) => {
+      const next = await reserveNextCumulative(challenge)
+      try {
+        return await create(next.toString())
+      } catch (err) {
+        releaseReservation(next)
+        throw err
+      }
+    }
+
     // Bound before the handle literal so the transport can be selected inside
     // the SessionHandle (whose `this` is the handle, not this client).
-    const streamWs = (u: string, m: WsMppxLike): AsyncIterable<unknown> =>
-      this.streamWebSocket(u, m)
+    const streamWs = (
+      u: string,
+      m: WsMppxLike,
+      createCredential: GuardedCredentialCreator,
+      onSigned: () => void,
+    ): AsyncIterable<unknown> => this.streamWebSocket(u, m, createCredential, onSigned)
 
     const mppx = Mppx.create({
       polyfill: false,
@@ -152,6 +343,7 @@ export class MppSessionClient {
         stellar.channel({
           commitmentKey,
           sourceAccount: this.keypair.publicKey(),
+          ...(store ? { store } : {}),
           onProgress(event) {
             if (event.type === 'signed') {
               currentCumulative = BigInt(event.cumulativeAmount)
@@ -159,6 +351,12 @@ export class MppSessionClient {
           },
         }),
       ],
+      // mppx runs onChallenge on the HTTP path only (createCredential skips it),
+      // so the WebSocket path runs the same guard inside streamWebSocket.
+      onChallenge: (challenge, helpers) =>
+        createGuardedCredential(challenge, (cumulativeAmount) =>
+          helpers.createCredential({ cumulativeAmount }),
+        ),
     })
 
     const retryPolicy = this.retryPolicy
@@ -169,16 +367,26 @@ export class MppSessionClient {
     // stranded indefinitely. The timer is cleared as soon as the session is
     // closed manually so a normal lifecycle never triggers the guard.
     const maxDurationMs = options?.maxDurationMs ?? DEFAULT_MAX_SESSION_DURATION_MS
-    const listeners = new Map<SessionEvent, Set<(payload: SessionTimeoutPayload) => void>>()
+    const listeners = new Map<SessionEvent, Set<SessionListener>>()
     let timeoutId: ReturnType<typeof setTimeout> | undefined
     let closed = false
 
-    const emit = (event: SessionEvent, payload: SessionTimeoutPayload): void => {
+    const emit = <E extends SessionEvent>(
+      event: E,
+      payload: SessionEventPayloadMap[E],
+    ): void => {
       const set = listeners.get(event)
       if (!set) return
       for (const listener of set) {
         try {
-          listener(payload)
+          const returned: unknown = listener(payload)
+          // A listener may be declared async despite the void signature; its
+          // rejection would otherwise surface as an unhandled rejection.
+          if (returned && typeof (returned as PromiseLike<unknown>).then === 'function') {
+            void Promise.resolve(returned).catch(() => {
+              /* async listener rejected — swallowed, like a synchronous throw */
+            })
+          }
         } catch {
           // A misbehaving listener must not break session teardown.
         }
@@ -204,10 +412,9 @@ export class MppSessionClient {
       openTxHash: null,
 
       /**
-       * Live session snapshot. Both counters are closure state written during
-       * stream(): vouchersIssued is incremented before each yield and
-       * currentCumulative is updated by the channel client's onProgress when a
-       * voucher is signed, so a stats() call immediately after a yield always
+       * Live session snapshot. vouchersIssued increments once per signed voucher
+       * and currentCumulative is updated by the channel client's onProgress when
+       * a voucher is signed, so a stats() call immediately after a yield always
        * reflects everything consumed so far.
        */
       stats() {
@@ -222,12 +429,23 @@ export class MppSessionClient {
       },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        // Check the local daily spend cap before issuing a voucher over either
+        // transport. The WebSocket path signs a credential before the HTTP probe
+        // becomes a live stream, so it must run before any network request.
+        const checkSpend = (): Promise<void> => {
+          if (!onSpend) return Promise.resolve()
+          return onSpend(pricing.rate)
+        }
+
         if (mode === 'mpp-session-ws') {
           // WebSocket transport: one connection per stream() call, with one
-          // voucher negotiated over HTTP before the upgrade. Each connection
-          // counts as one voucher issued.
-          for await (const item of streamWs(url, mppx)) {
+          // voucher negotiated over HTTP before the upgrade. Each signed
+          // connection counts as one voucher issued.
+          await checkSpend()
+          const onSigned = (): void => {
             vouchersIssued++
+          }
+          for await (const item of streamWs(url, mppx, createGuardedCredential, onSigned)) {
             yield item
           }
           return
@@ -235,13 +453,31 @@ export class MppSessionClient {
 
         const concurrency = Math.max(1, options?.concurrency ?? 1)
 
+        // close() flips this guard, whether the caller invoked it or the
+        // maxDurationMs lifetime guard fired it. Once set, the stream must stop
+        // issuing vouchers: every doFetch() signs a new cumulative via
+        // mppx.fetch, and a value signed after close() would sit above the
+        // cumulative close() is committing on-chain. Throws
+        // RouteDockChannelStateError('session closed') so the consumer can tell
+        // why the stream ended.
+        const assertOpen = (): void => {
+          if (closed) {
+            throw new RouteDockChannelStateError('session closed')
+          }
+        }
+
+        const abortController = new AbortController()
+
         // Shared fetch-one helper — retries on transient errors.
         const doFetch = (): Promise<unknown> =>
           withRetry(async () => {
             let resp: Response
             try {
-              resp = await mppx.fetch(url)
+              resp = await mppx.fetch(url, { signal: abortController.signal })
             } catch (err) {
+              if (abortController.signal.aborted) {
+                throw err
+              }
               throw wrapFetchError(err, 'Voucher request')
             }
             if (!resp.ok) {
@@ -256,24 +492,32 @@ export class MppSessionClient {
                 `Voucher request failed: HTTP ${resp.status}`,
               )
             }
-            return resp.json()
+            try {
+              return await resp.json()
+            } catch (cause) {
+              throw new RouteDockChannelStateError(
+                `Voucher response was not valid JSON (HTTP ${resp.status})`,
+                { cause },
+              )
+            }
           }, retryPolicy)
-
-        // Check the local daily spend cap before issuing each voucher.
-        const checkSpend = (): Promise<void> => {
-          if (!onSpend) return Promise.resolve()
-          return onSpend(pricing.rate)
-        }
 
         if (concurrency === 1) {
           // Default: strictly sequential.
           // The next voucher is not issued until the provider returns HTTP 200
           // for the current one, preventing out-of-order sequence numbers.
-          while (true) {
-            await checkSpend()
-            const data = await doFetch()
-            vouchersIssued++
-            yield data
+          try {
+            while (true) {
+              // A closed session must not run checkSpend() or issue another
+              // voucher, even if the consumer keeps pulling the iterator.
+              assertOpen()
+              await checkSpend()
+              const data = await doFetch()
+              vouchersIssued++
+              yield data
+            }
+          } finally {
+            abortController.abort()
           }
         } else {
           // Pipelined: maintain a sliding window of `concurrency` in-flight
@@ -281,18 +525,47 @@ export class MppSessionClient {
           // sequence integrity. The caller opts in knowing the provider supports
           // concurrent vouchers.
           const queue: Array<Promise<unknown>> = []
-          for (let i = 0; i < concurrency; i++) {
-            await checkSpend()
-            queue.push(doFetch())
-          }
+          try {
+            for (let i = 0; i < concurrency; i++) {
+              // Stop filling the window as soon as the session is closed.
+              assertOpen()
+              await checkSpend()
+              const p = doFetch()
+              p.catch(() => {})
+              queue.push(p)
+            }
 
-          while (true) {
-            const data = await queue.shift()!
-            // Replenish the window immediately after draining one slot.
-            await checkSpend()
-            queue.push(doFetch())
-            vouchersIssued++
-            yield data
+            while (true) {
+              // Checked before the shift and the refill below, so a closed
+              // session neither yields nor queues a new doFetch().
+              assertOpen()
+              const data = await queue.shift()!
+              // Replenish the window immediately after draining one slot.
+              await checkSpend()
+              const p = doFetch()
+              p.catch(() => {})
+              queue.push(p)
+              vouchersIssued++
+              yield data
+            }
+          } finally {
+            abortController.abort()
+            // Bound cleanup so hanging requests cannot stall consumer loop indefinitely
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([
+                Promise.allSettled(queue),
+                new Promise((resolve) => {
+                  timer = setTimeout(resolve, STREAM_CLEANUP_TIMEOUT_MS)
+                  timer.unref?.()
+                }),
+              ])
+            } finally {
+              if (timer) {
+                clearTimeout(timer)
+              }
+            }
+            queue.length = 0
           }
         }
       },
@@ -390,7 +663,15 @@ export class MppSessionClient {
             )
           }
 
-          const body = (await closeResp.json()) as { closeTxHash?: string }
+          let body: { closeTxHash?: string }
+          try {
+            body = (await closeResp.json()) as { closeTxHash?: string }
+          } catch (cause) {
+            throw new RouteDockChannelStateError(
+              `Channel close response was not valid JSON (HTTP ${closeResp.status})`,
+              { cause },
+            )
+          }
           const closeTxHash = body.closeTxHash ?? null
           if (!closeTxHash) {
             throw new RouteDockChannelStateError(
@@ -534,18 +815,21 @@ export class MppSessionClient {
         }
       },
 
-      on(
-        event: SessionEvent,
-        listener: (payload: SessionTimeoutPayload) => void,
+      on<E extends SessionEvent>(
+        event: E,
+        listener: (payload: SessionEventPayloadMap[E]) => void,
       ): () => void {
         let set = listeners.get(event)
         if (!set) {
           set = new Set()
           listeners.set(event, set)
         }
-        set.add(listener)
+        // Safe by construction: on() only stores a listener under its own
+        // event, and emit() only ever calls it with that event's payload.
+        const stored = listener as SessionListener
+        set.add(stored)
         return () => {
-          set?.delete(listener)
+          set?.delete(stored)
         }
       },
     }
@@ -556,10 +840,17 @@ export class MppSessionClient {
       timeoutId = setTimeout(() => {
         if (closed) return
         emit('session:timeout', { maxDurationMs })
-        // Best-effort auto-close; errors are surfaced to listeners via the
-        // event, not thrown into the timer callback (no one would catch them).
-        void handle.close().catch(() => {
-          /* auto-close failed — channel may need manual recovery via refund */
+        // Best-effort auto-close. A rejection cannot be thrown into a timer
+        // callback (nothing would catch it), so it is surfaced as a
+        // 'session:close-failed' event and a warning — the caller has no other
+        // way to learn the collateral is still locked.
+        void handle.close().catch((error: unknown) => {
+          emit('session:close-failed', { maxDurationMs, error })
+          console.warn(
+            `RouteDock: maxDuration auto-close failed after ${maxDurationMs}ms — ` +
+              'the channel may still hold collateral; retry close() or call requestRefund().',
+            error,
+          )
         })
       }, maxDurationMs)
       // Don't keep a Node process alive solely for this safety timer.
@@ -586,6 +877,8 @@ export class MppSessionClient {
   private async *streamWebSocket(
     url: string,
     mppx: WsMppxLike,
+    createCredential: GuardedCredentialCreator,
+    onSigned?: () => void,
   ): AsyncIterable<unknown> {
     // ── 1 + 2: channel establishment + voucher negotiation over HTTP ────────
     const request: RequestInit = { method: 'GET' }
@@ -610,7 +903,13 @@ export class MppSessionClient {
 
     let credential: string
     try {
-      credential = await mppx.createCredential(probe)
+      // mppx.createCredential does not run onChallenge, so the WebSocket path
+      // validates the probe challenge with the same guard before signing — an
+      // inflated challenge must never reach the commitment key.
+      credential = await createCredential(Challenge.fromResponse(probe), (cumulativeAmount) =>
+        mppx.createCredential(probe, { cumulativeAmount }),
+      )
+      onSigned?.()
     } catch (err) {
       throw wrapFetchError(err, 'Voucher credential')
     }

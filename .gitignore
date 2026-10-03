@@ -10,6 +10,7 @@ dist/
 .npmrc
 
 *.wasm
+!contracts/agent-vault/testdata/*.wasm
 target/
 
 .DS_Store

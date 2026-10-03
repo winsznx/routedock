@@ -18,10 +18,15 @@ import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from './payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
-import { channelAuthorizer, withTypedChannelErrors } from './mppCompatibility.js'
+import {
+  channelAuthorizer,
+  onVerifiedCredential,
+  withTypedChannelErrors,
+  type ChannelVerifyCredential,
+} from './mppCompatibility.js'
 import type { Method } from 'mppx'
-import { type ChannelStore, type OrphanedSessionInfo, isVoucherStoreValue } from './MppSessionHandler.js'
-import { base64ToUtf8, hexToBytes, parsePaymentCredential } from './encoding.js'
+import { type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
+import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -388,9 +393,6 @@ interface DeleteContext {
   req: { json(): Promise<unknown> }
   json: (data: unknown) => Response
 }
-interface AuthContext {
-  req: { header(name: string): string | undefined }
-}
 interface SignalContext {
   req: { raw: { signal?: AbortSignal } }
 }
@@ -407,11 +409,15 @@ interface MppSessionHandlerState {
   mppx: unknown
   /** Handle a DELETE channel-close request; returns the HTTP response. */
   handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response>
-  /** Extract payer + latest signature from a Payment authorization header. */
-  extractPayer(c: AuthContext): { payer: string | null; signature: string | null }
-  recordVerifiedCredential(credential: { payer: string | null; signature: string | null }): void
   /** Arm the connection-closed orphan guard (idempotent). */
   armAbortGuard(c: SignalContext): void
+}
+
+/** The last verified voucher: amount, its signature, and the payer it named. */
+interface VerifiedVoucherRecord {
+  amount: bigint
+  signature: string
+  payer: string | null
 }
 
 function createMppSessionHandlerState(
@@ -420,14 +426,15 @@ function createMppSessionHandlerState(
 ): MppSessionHandlerState {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
-  const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
+  const voucherRecordKey = `routedock:session:voucher:${sessionPricing.channelFactory}`
 
   const innerStore = opts.sessionStore ?? Store.memory()
-  let lastCumulativeAmount = 0n
+  // The last voucher mppx actually verified — amount, its signature, and the
+  // payer it named. Only `commit` (called after a successful verify) may set
+  // this; nothing derived from an unverified header may reach it.
+  let record: VerifiedVoucherRecord | null = null
   let voucherCount = 0
   let sessionOpened = false
-  let lastSignatureHex = ''
-  let sessionPayerAddress: string | null = null
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let settledCleanly = false
   let abortListenerArmed = false
@@ -451,19 +458,42 @@ function createMppSessionHandlerState(
     if (typeof maybeUnref.unref === 'function') maybeUnref.unref()
   }
 
+  // `record` lives only in this instance's memory. A Durable Object (or any
+  // other host that can evict and recreate this closure between requests)
+  // loses it even though `commit` persisted it to `innerStore` — so any path
+  // that reads `record` must first try to reload it from the store. Never
+  // overwrites an in-memory record that is already set.
+  async function loadPersistedRecord(): Promise<VerifiedVoucherRecord | null> {
+    if (record) return record
+    try {
+      const stored = (await innerStore.get(voucherRecordKey)) as
+        | { amount?: string; signature?: string; payer?: string | null }
+        | undefined
+      if (!stored || typeof stored.amount !== 'string' || typeof stored.signature !== 'string') {
+        return null
+      }
+      record = { amount: BigInt(stored.amount), signature: stored.signature, payer: stored.payer ?? null }
+    } catch {
+      // Corrupt or unreadable persisted record — proceed as though there is none.
+      return null
+    }
+    return record
+  }
+
   // Flag an open-but-unsettled session for the reconciler. Idempotent.
   async function flagOrphan(reason: 'connection-closed' | 'idle-timeout'): Promise<void> {
+    await loadPersistedRecord()
     if (!sessionOpened || settledCleanly) return
     sessionOpened = false
     abortListenerArmed = false
     clearIdleTimer()
 
-    const cumulativeAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
+    const cumulativeAmount = record ? (Number(record.amount) / 1e7).toFixed(7) : '0.0000000'
     if (opts.onOrphaned) {
       try {
         await opts.onOrphaned(sessionPricing.channelFactory, {
           cumulativeAmount,
-          lastSignature: lastSignatureHex,
+          lastSignature: record?.signature ?? '',
           voucherCount,
           reason,
         })
@@ -475,36 +505,7 @@ function createMppSessionHandlerState(
 
   const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
-    async put(key: string, value: unknown) {
-      await innerStore.put(key, value)
-      if (key === cumulativeKey && isVoucherStoreValue(value)) {
-        lastCumulativeAmount = BigInt(value.amount)
-        voucherCount++
-        // Voucher activity — this session is alive again.
-        settledCleanly = false
-        armIdleTimer()
-
-        if (!sessionOpened) {
-          sessionOpened = true
-          if (opts.onSessionOpen) {
-            Promise.resolve()
-              .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, sessionPayerAddress))
-              .catch((err) => {
-                console.error('[mpp-session] onSessionOpen callback error:', err)
-                opts.onCallbackError?.(err, 'onSessionOpen')
-              })
-          }
-        }
-
-        if (opts.onVoucher) {
-          const humanAmount = (Number(lastCumulativeAmount) / 1e7).toFixed(7)
-          Promise.resolve().then(() => opts.onVoucher!(sessionPricing.channelFactory, voucherCount, humanAmount, lastSignatureHex)).catch(err => {
-            console.error('[mpp-session] onVoucher callback error:', err)
-            opts.onCallbackError?.(err, 'onVoucher')
-          })
-        }
-      }
-    },
+    async put(key: string, value: unknown) { return innerStore.put(key, value) },
     async delete(key: string) { return innerStore.delete(key) },
     async update(key: string, fn: (prev: unknown) => unknown) {
       const storeWithUpdate = innerStore as Partial<ChannelStore>
@@ -515,17 +516,74 @@ function createMppSessionHandlerState(
     },
   }
 
+  // Called only after mppx has verified a credential — never before. Commits
+  // the verified amount/signature/payer as the new record, then runs the
+  // bookkeeping (voucher count, idle timer, onSessionOpen/onVoucher) that used
+  // to run inside the store's `put`, before the caller knew verification had
+  // actually succeeded.
+  async function commit(credential: ChannelVerifyCredential): Promise<void> {
+    await loadPersistedRecord()
+    const payload = credential.payload
+    if (typeof payload?.amount !== 'string' || typeof payload.signature !== 'string') return
+    let amount: bigint
+    try {
+      amount = BigInt(payload.amount)
+    } catch {
+      return
+    }
+    // A late/duplicate commit can't roll the signature back to an earlier amount.
+    if (record && amount < record.amount) return
+
+    const payer = record?.payer ?? extractPayerAddress(credential.source)
+    record = { amount, signature: payload.signature, payer }
+    await innerStore.put(voucherRecordKey, {
+      amount: record.amount.toString(),
+      signature: record.signature,
+      payer: record.payer,
+    })
+
+    voucherCount++
+    // Voucher activity — this session is alive again.
+    settledCleanly = false
+    armIdleTimer()
+
+    if (!sessionOpened) {
+      sessionOpened = true
+      if (opts.onSessionOpen) {
+        Promise.resolve()
+          .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
+          .catch((err) => {
+            console.error('[mpp-session] onSessionOpen callback error:', err)
+            opts.onCallbackError?.(err, 'onSessionOpen')
+          })
+      }
+    }
+
+    if (opts.onVoucher) {
+      const humanAmount = (Number(record.amount) / 1e7).toFixed(7)
+      Promise.resolve().then(() => opts.onVoucher!(sessionPricing.channelFactory, voucherCount, humanAmount, record!.signature)).catch(err => {
+        console.error('[mpp-session] onVoucher callback error:', err)
+        opts.onCallbackError?.(err, 'onVoucher')
+      })
+    }
+  }
+
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
-      withTypedChannelErrors(mppChannel({
-        channel: sessionPricing.channelFactory,
-        commitmentKey: opts.commitmentPublicKey!,
-        network: networkId,
-        store: wrappedStore,
-        sourceAccount: payeeKeypair.publicKey(),
-        feePayer: channelAuthorizer(payeeKeypair),
-      }) as Method.AnyServer),
+      withTypedChannelErrors(
+        onVerifiedCredential(
+          mppChannel({
+            channel: sessionPricing.channelFactory,
+            commitmentKey: opts.commitmentPublicKey!,
+            network: networkId,
+            store: wrappedStore,
+            sourceAccount: payeeKeypair.publicKey(),
+            feePayer: channelAuthorizer(payeeKeypair),
+          }) as Method.AnyServer,
+          commit,
+        ),
+      ),
     ],
   })
 
@@ -533,6 +591,7 @@ function createMppSessionHandlerState(
     mppx,
 
     async handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response> {
+      await loadPersistedRecord()
       let body: { amount?: string; signature?: string } | undefined
       try {
         body = await c.req.json() as { amount?: string; signature?: string }
@@ -547,21 +606,21 @@ function createMppSessionHandlerState(
         })
       }
       const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+      const recordAmount = record?.amount ?? 0n
       let closeAmount: bigint
       let closeSig: string
-      if (bodyAmount > lastCumulativeAmount) {
+      if (bodyAmount > recordAmount) {
         closeAmount = bodyAmount
-        closeSig = body?.signature ?? lastSignatureHex
+        closeSig = body?.signature ?? record?.signature ?? ''
       } else {
-        closeAmount = lastCumulativeAmount
-        // Prefer the provider's own tracked signature. Fall back to the
-        // client's only when it signs the same amount and the provider never
-        // captured one (voucher reached the mppx store without a Payment
-        // credential) — otherwise a close for a genuinely tracked amount
-        // no-ops and the session is never flagged for recovery.
+        closeAmount = recordAmount
+        // Prefer the provider's own verified-voucher signature. Fall back to
+        // the client's only when it signs the same amount and the provider
+        // never verified one — otherwise a close for a genuinely tracked
+        // amount no-ops and the session is never flagged for recovery.
         closeSig =
-          lastSignatureHex ||
-          (bodyAmount === lastCumulativeAmount ? body?.signature ?? '' : '')
+          record?.signature ||
+          (bodyAmount === recordAmount ? body?.signature ?? '' : '')
       }
 
       if (closeAmount > 0n && closeSig) {
@@ -580,9 +639,11 @@ function createMppSessionHandlerState(
         settledCleanly = true
         clearIdleTimer()
 
+        const closePayer = record?.payer ?? null
+
         if (opts.onSettled) {
           const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
-          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, sessionPayerAddress)).catch(err => {
+          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, closePayer)).catch(err => {
             console.error(`[mpp-session] onSettled callback error:`, err)
             opts.onCallbackError?.(err, 'onSettled')
           })
@@ -590,29 +651,14 @@ function createMppSessionHandlerState(
 
         sessionOpened = false
         voucherCount = 0
-        lastCumulativeAmount = 0n
-        sessionPayerAddress = null
+        record = null
+        await innerStore.delete(voucherRecordKey)
         abortListenerArmed = false
 
         return c.json({ closeTxHash })
       }
 
       return c.json({ closeTxHash: null, message: 'no vouchers received' })
-    },
-
-    extractPayer(c: AuthContext): { payer: string | null; signature: string | null } {
-      const authHeader = c.req.header('authorization')
-      const cred = authHeader ? parsePaymentCredential(authHeader) : null
-      const payload = cred?.payload
-      return {
-        payer: extractPayerAddress(cred?.source ?? payload?.sender ?? payload?.from),
-        signature: typeof payload?.signature === 'string' ? payload.signature : null,
-      }
-    },
-
-    recordVerifiedCredential(credential): void {
-      if (credential.signature) lastSignatureHex = credential.signature
-      if (credential.payer && !sessionPayerAddress) sessionPayerAddress = credential.payer
     },
 
     armAbortGuard(c: SignalContext): void {
@@ -644,11 +690,12 @@ function createMppSessionHonoHandler(
       if (c.req.method === 'DELETE') {
         const verified = await (
           state.mppx as unknown as {
-            channel: (o: { amount: string; description?: string }) => (
+            stellar: { channel: (o: { amount: string; description?: string }) => (
               r: globalThis.Request,
             ) => Promise<{ status: number; challenge?: globalThis.Response }>
+            }
           }
-        ).channel({ amount: sessionPricing.rate, description: opts.manifest.name })(c.req.raw.clone())
+        ).stellar.channel({ amount: sessionPricing.rate, description: opts.manifest.name })(c.req.raw.clone())
         if (verified.status === 402) {
           const challenge = verified.challenge!
           const headers: Record<string, string> = {}
@@ -664,19 +711,18 @@ function createMppSessionHonoHandler(
         return state.handleDelete(c as unknown as DeleteContext, config.mode)
       }
 
-      const credential = state.extractPayer(c as unknown as AuthContext)
-
       const result = await (
         state.mppx as unknown as {
-          channel: (o: { amount: string; description?: string }) => (
+          stellar: { channel: (o: { amount: string; description?: string }) => (
             r: globalThis.Request,
           ) => Promise<{
             status: number
             challenge?: globalThis.Response
             withReceipt?: (r: globalThis.Response) => globalThis.Response
           }>
+          }
         }
-      ).channel({
+      ).stellar.channel({
         amount: sessionPricing.rate,
         description: opts.manifest.name,
       })(c.req.raw)
@@ -687,9 +733,6 @@ function createMppSessionHonoHandler(
         challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
         return new Response(await challenge.text(), { status: 402, headers })
       }
-
-      // Only attribute the payer after mppx has verified the credential.
-      state.recordVerifiedCredential(credential)
 
       state.armAbortGuard(c as unknown as SignalContext)
 

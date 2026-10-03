@@ -1,5 +1,6 @@
 import { ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { explorerUrl } from '@/lib/explorer'
 
 function truncateHash(hash: string): string {
   if (hash.length <= 14) return hash
@@ -12,13 +13,10 @@ interface TxHashLinkProps {
   className?: string
 }
 
-export function TxHashLink({ hash, network = 'testnet', className }: TxHashLinkProps) {
-  const explorerBase =
-    process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ?? `https://stellar.expert/explorer/${network}`
-
+export function TxHashLink({ hash, network, className }: TxHashLinkProps) {
   return (
     <a
-      href={`${explorerBase}/tx/${hash}`}
+      href={explorerUrl(network, 'tx', hash)}
       target="_blank"
       rel="noopener noreferrer"
       className={cn(

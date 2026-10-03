@@ -1,4 +1,5 @@
 import type { Env } from './env.js'
+import { findConfigProblems } from './config.js'
 
 export { ChannelSession } from './ChannelSession.js'
 
@@ -16,17 +17,26 @@ export default {
 
     if (url.pathname === '/health') {
       const addr = env.STELLAR_PAYEE_ADDRESS
-      return Response.json({
-        status: 'ok',
-        network: env.STELLAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet',
-        payee: addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : 'not configured',
-        registry: env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY ? 'connected' : 'not configured',
-        channel: env.CHANNEL_CONTRACT_ID ? 'configured' : 'not configured',
-      })
+      const missing = findConfigProblems(env)
+      return Response.json(
+        {
+          status: missing.length > 0 ? 'misconfigured' : 'ok',
+          network: env.STELLAR_NETWORK === 'mainnet' ? 'mainnet' : 'testnet',
+          payee: addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : 'not configured',
+          registry: env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY ? 'connected' : 'not configured',
+          channel: env.CHANNEL_CONTRACT_ID ? 'configured' : 'not configured',
+          ...(missing.length > 0 ? { missing } : {}),
+        },
+        { status: missing.length > 0 ? 503 : 200 },
+      )
     }
 
-    if (!env.CHANNEL_CONTRACT_ID) {
-      return Response.json({ error: 'Provider misconfigured: CHANNEL_CONTRACT_ID unset' }, { status: 500 })
+    const missing = findConfigProblems(env)
+    if (missing.length > 0 || !env.CHANNEL_CONTRACT_ID) {
+      return Response.json(
+        { error: `Provider misconfigured: ${missing.join(', ')} unset`, missing },
+        { status: 500 },
+      )
     }
 
     const id = env.CHANNEL_SESSION.idFromName(env.CHANNEL_CONTRACT_ID)
@@ -43,10 +53,26 @@ export default {
     env: Env,
     _ctx?: unknown,
   ): Promise<void> {
-    if (!env.CHANNEL_CONTRACT_ID || !env.CHANNEL_SESSION) return
+    if (!env.CHANNEL_CONTRACT_ID || !env.CHANNEL_SESSION) {
+      console.warn('[reconcile] Skipped: CHANNEL_CONTRACT_ID or the CHANNEL_SESSION binding is not set')
+      return
+    }
     const id = env.CHANNEL_SESSION.idFromName(env.CHANNEL_CONTRACT_ID)
     const stub = env.CHANNEL_SESSION.get(id)
-    await stub.reconcileSessions()
+    const stats = await stub.reconcileSessions()
+
+    if (!stats) {
+      console.warn('[reconcile] Skipped: SUPABASE_URL, SUPABASE_SERVICE_KEY or STELLAR_PAYEE_SECRET is not set')
+      return
+    }
+
+    console.log(
+      `[reconcile] orphaned=${stats.orphanedCount} recovered=${stats.recoveredCount} ` +
+        `skipped=${stats.skippedCount} failed=${stats.failedCount}`,
+    )
+    for (const { channelId, reason } of stats.errors) {
+      console.error(`[reconcile] close failed for ${channelId}: ${reason}`)
+    }
   },
 }
 

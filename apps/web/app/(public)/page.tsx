@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 
-import { Zap, Repeat2, Waves, GitBranch, Timer, Shield } from 'lucide-react'
+import { Zap, Repeat2, Waves, Radio, GitBranch, Timer, Shield } from 'lucide-react'
 import { getSupabaseServerClient } from '@/lib/supabase'
 import type { TxLogEntry } from '@/lib/supabase'
 import { PublicNav } from '@/components/layout/PublicNav'
@@ -13,13 +13,21 @@ import { FadeInUp } from '@/components/landing/FadeInUp'
 async function fetchInitialFeed(): Promise<TxLogEntry[]> {
   try {
     const supabase = getSupabaseServerClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('tx_log')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(5)
+
+    if (error) {
+      console.error('[landing] failed to load tx_log:', error.message)
+    }
     return (data ?? []) as TxLogEntry[]
-  } catch {
+  } catch (err) {
+    console.error(
+      '[landing] failed to load tx_log:',
+      err instanceof Error ? err.message : String(err),
+    )
     return []
   }
 }
@@ -54,13 +62,13 @@ export default async function LandingPage() {
           <h1 className="text-[1.75rem] leading-[1.15] sm:text-5xl md:text-7xl font-bold sm:leading-[1.08] tracking-tight mb-6">
             One interface.
             <br />
-            Three payment modes.
+            Four payment modes.
             <br />
             <span className="text-[var(--accent)]">Zero hardcoding.</span>
           </h1>
 
           <p className="mx-auto max-w-2xl text-sm sm:text-lg text-[var(--text-secondary)] mb-8 sm:mb-10 leading-relaxed px-1">
-            x402, MPP charge, and MPP session — unified behind{' '}
+            x402, MPP charge, MPP session, and MPP session over WebSocket — unified behind{' '}
             <code className="font-mono text-[var(--text-primary)] bg-white/5 rounded px-1 py-0.5 text-xs sm:text-sm">
               client.pay(url)
             </code>
@@ -157,7 +165,7 @@ export default async function LandingPage() {
             </p>
           </FadeInUp>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <FadeInUp delay={0}>
               <ModeCard
                 mode="x402"
@@ -185,6 +193,15 @@ export default async function LandingPage() {
                 stats="0.0001 USDC/voucher · 2 on-chain txs total"
               />
             </FadeInUp>
+            <FadeInUp delay={0.18}>
+              <ModeCard
+                mode="mpp-session-ws"
+                title="Pay per stream"
+                description="The same channel as MPP session, streamed over a single WebSocket connection. One voucher is signed before the upgrade and covers every message on the socket — frames are not billed one by one. Ideal for realtime feeds."
+                icon={<Radio className="h-5 w-5" />}
+                stats="0.0001 USDC/voucher · 1 WebSocket, 2 on-chain txs"
+              />
+            </FadeInUp>
           </div>
         </div>
       </section>
@@ -208,7 +225,7 @@ export default async function LandingPage() {
                 icon: <GitBranch className="h-5 w-5" />,
                 title: 'Provider adds middleware + serves routedock.json',
                 detail:
-                  'One Express middleware call. The SDK validates the manifest at startup. Providers declare their modes, pricing, and payee address once.',
+                  'One middleware call for Hono on Cloudflare Workers, Express, or Fastify. Adapters sign and serve the manifest, and clients validate before paying. Providers declare their modes, pricing, and payee address once.',
               },
               {
                 step: '02',

@@ -33,15 +33,25 @@ function CustomTooltip(props: TooltipContentProps) {
 
 export function VoucherChart() {
   const [data, setData] = useState<ChartPoint[]>([])
+  const [loadFailed, setLoadFailed] = useState(false)
 
   const fetchData = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
-    const { data: rows } = await supabase
+    const { data: rows, error } = await supabase
       .from('public_sessions')
       .select('opened_at, voucher_count')
       .not('voucher_count', 'eq', 0)
       .order('opened_at', { ascending: true })
       .limit(500)
+
+    if (error) {
+      // Keep whatever is already on screen: a single failed poll must not wipe a
+      // chart that had loaded.
+      console.warn('[voucher-chart] failed to load public_sessions:', error.message)
+      setLoadFailed(true)
+      return
+    }
+    setLoadFailed(false)
 
     if (!rows || rows.length === 0) {
       setData([])
@@ -83,7 +93,13 @@ export function VoucherChart() {
           Voucher Accumulation
         </h2>
         <div className="flex items-center justify-center h-40">
-          <p className="text-sm text-[var(--text-muted)]">No session data yet</p>
+          {loadFailed ? (
+            <p className="text-sm text-[var(--status-error)]">
+              {"Couldn't load session data"}
+            </p>
+          ) : (
+            <p className="text-sm text-[var(--text-muted)]">No session data yet</p>
+          )}
         </div>
       </div>
     )
@@ -94,6 +110,11 @@ export function VoucherChart() {
       <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-6">
         Voucher Accumulation
       </h2>
+      {loadFailed && (
+        <p className="mb-3 text-xs text-[var(--status-error)]">
+          {"Couldn't refresh session data. Showing the last loaded points."}
+        </p>
+      )}
       <ResponsiveContainer width="100%" height={200}>
         <AreaChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
           <defs>

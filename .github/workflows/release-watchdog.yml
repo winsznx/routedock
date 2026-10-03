@@ -21,6 +21,7 @@ jobs:
       - name: Fail if the most recent Release run did not succeed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?per_page=1&status=completed")
           conclusion=$(echo "$run" | jq -r '.workflow_runs[0].conclusion // "none"')

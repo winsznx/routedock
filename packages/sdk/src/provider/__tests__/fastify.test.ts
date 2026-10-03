@@ -5,6 +5,7 @@ import Fastify from 'fastify'
 import { Keypair } from '@stellar/stellar-sdk'
 import { routedockFastify } from '../fastify.js'
 import type { RouteDockManifest } from '../../types.js'
+import type { SeenTxStore } from '../SeenTxStore.js'
 
 // Generate fresh keypairs — avoids hardcoding secrets while keeping tests self-contained
 const payeeKeypair = Keypair.random()
@@ -52,6 +53,7 @@ async function makeServer(
   overrides: Partial<typeof BASE_OPTS & {
     modes: ('x402' | 'mpp-charge' | 'mpp-session')[]
     pricing: Record<string, unknown>
+    seenTxStore: SeenTxStore
   }> = {},
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const fastify = Fastify()
@@ -139,6 +141,30 @@ describe('routedockFastify — x402 flow', () => {
       await close()
     }
   })
+
+  it('passes through to route handler on settled payment (idempotency cache hit)', async () => {
+    const stubStore: SeenTxStore = {
+      get: () => ({ txHash: 'abc', headers: { 'X-Payment-Response': 'cached' } }),
+      set: () => {},
+    }
+    const { url, close } = await makeServer({
+      modes: ['x402'],
+      pricing: { x402: '0.001' },
+      seenTxStore: stubStore,
+    })
+    try {
+      const res = await fetch(`${url}/price`, {
+        headers: { 'x-payment': 'settled-payment' },
+        signal: AbortSignal.timeout(3000),
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('x-payment-response'), 'cached')
+      const body = (await res.json()) as { price: string }
+      assert.equal(body.price, '42')
+    } finally {
+      await close()
+    }
+  })
 })
 
 describe('routedockFastify — mpp-charge flow', () => {
@@ -147,6 +173,30 @@ describe('routedockFastify — mpp-charge flow', () => {
     try {
       const res = await fetch(`${url}/price`)
       assert.equal(res.status, 402)
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes through to route handler on settled payment (idempotency cache hit)', async () => {
+    const stubStore: SeenTxStore = {
+      get: () => ({ txHash: 'abc', headers: { 'payment-receipt': 'cached' } }),
+      set: () => {},
+    }
+    const { url, close } = await makeServer({
+      modes: ['mpp-charge'],
+      pricing: { 'mpp-charge': '0.0008' },
+      seenTxStore: stubStore,
+    })
+    try {
+      const res = await fetch(`${url}/price`, {
+        headers: { authorization: 'Payment test' },
+        signal: AbortSignal.timeout(3000),
+      })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('payment-receipt'), 'cached')
+      const body = (await res.json()) as { price: string }
+      assert.equal(body.price, '42')
     } finally {
       await close()
     }

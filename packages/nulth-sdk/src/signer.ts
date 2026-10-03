@@ -1,5 +1,6 @@
 import type { SignAuthEntry } from '@stellar/stellar-sdk/contract'
 import {
+  assertAuthEntryMatchesContext,
   authDigestFromEntry,
   commitAllowlist,
   commitDailyCap,
@@ -41,6 +42,8 @@ export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner
           'Nulth paymentContext must be set before signing — call setNulthPaymentContext()',
         )
       }
+
+      assertAuthEntryMatchesContext(authEntry, nulthAccount, ctx)
 
       const proof = client.buildPaymentAuthProof({
         authEntry,

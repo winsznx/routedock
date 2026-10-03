@@ -71,7 +71,7 @@ export interface NulthClientConfig {
 }
 
 export class NulthPolicyError extends Error {
-  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired'
+  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired' | 'auth_entry_mismatch'
 
   constructor(code: NulthPolicyError['code'], message: string) {
     super(message)

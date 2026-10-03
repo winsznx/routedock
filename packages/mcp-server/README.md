@@ -81,9 +81,11 @@ sends a voucher and waits for the provider's response.
 
 **Parameters:**
 - `channel_id` (required): The `channel_id` returned by `open_session`
-- `max_messages` (optional): Maximum number of messages to pull in this call (default 1)
+- `max_messages` (optional): Maximum number of messages to pull in this call (1 to 50, default 1)
 
-**Returns:** The pulled messages
+**Returns:** The pulled messages. If a voucher fails partway through the batch (local spend cap
+reached, provider 4xx/5xx), the call still returns `isError: true` with the messages that were
+already paid for, plus `count` and `stats`, instead of discarding the batch.
 
 ### close_session
 

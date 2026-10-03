@@ -74,7 +74,11 @@ export async function reconcileAbandonedSessions(
       .from('sessions')
       .select('channel_id, channel_contract, cumulative_amount, last_signature, settlement_tx_hash')
       .eq('status', 'closing')
+      .eq('network', opts.network)
+      .eq('payee', payeeKeypair.publicKey())
       .is('settlement_tx_hash', null)
+      .not('last_signature', 'is', null)
+      .order('updated_at', { ascending: true })
       .limit(100)
 
     if (error) {

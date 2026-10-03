@@ -13,6 +13,7 @@
 
 import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
+import { MAX_STREAM_MESSAGES } from './tools.js'
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -219,6 +220,11 @@ export interface StreamSessionArgs {
 
 /**
  * Pull up to max_messages items from the async iterator exposed by an open session.
+ *
+ * A voucher failure mid-batch (cap reached, provider 4xx/5xx) must not discard
+ * messages that were already paid for: the handler catches the rejection and
+ * returns the partial batch together with the session stats instead of letting
+ * the dispatcher replace the whole result with a bare error.
  */
 export async function handleStreamSession(
   args: StreamSessionArgs,
@@ -235,14 +241,51 @@ export async function handleStreamSession(
     )
   }
 
-  const limit = Math.max(1, max_messages ?? 1)
+  if (
+    max_messages !== undefined &&
+    (!Number.isInteger(max_messages) || max_messages < 1 || max_messages > MAX_STREAM_MESSAGES)
+  ) {
+    return err(
+      `max_messages must be an integer between 1 and ${MAX_STREAM_MESSAGES} (received ${max_messages})`,
+    )
+  }
+
+  const limit = max_messages ?? 1
   const messages: unknown[] = []
   const iterator = session.stream()[Symbol.asyncIterator]()
 
-  for (let i = 0; i < limit; i++) {
-    const { value, done } = await iterator.next()
-    if (done) break
-    messages.push(value)
+  try {
+    for (let i = 0; i < limit; i++) {
+      const { value, done } = await iterator.next()
+      if (done) break
+      messages.push(value)
+    }
+  } catch (error) {
+    // Return the already-paid messages rather than losing them. Do not rethrow:
+    // the dispatcher's catch would drop the batch and the spend it represents.
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+              channel_id,
+              count: messages.length,
+              messages,
+              stats: session.stats(),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    }
+  } finally {
+    // Close the generator created for this call so it does not linger.
+    await iterator.return?.()
   }
 
   return ok({

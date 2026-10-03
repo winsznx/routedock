@@ -7,11 +7,12 @@ function makeSupabaseMock(rows: any[]) {
   const store = [...rows]
   return {
     from: (_table: string) => ({
-      // Chainable so it mirrors the reconciler's real query:
-      // .select(...).eq('status','closing').is('settlement_tx_hash', null).limit(100)
+      // Chainable so it mirrors the reconciler's scoped, ordered query.
       select: (_cols?: string) => {
         const filters: Array<(r: any) => boolean> = []
         let cap = Infinity
+        let orderField: string | undefined
+        let ascending = true
         const query = {
           eq: (field: string, val: unknown) => {
             filters.push(r => r[field] === val)
@@ -21,15 +22,33 @@ function makeSupabaseMock(rows: any[]) {
             filters.push(r => (r[field] ?? null) === val)
             return query
           },
+          not: (field: string, operator: string, val: unknown) => {
+            if (operator !== 'is') throw new Error(`unsupported operator: ${operator}`)
+            filters.push(r => (r[field] ?? null) !== val)
+            return query
+          },
+          order: (field: string, options: { ascending: boolean }) => {
+            orderField = field
+            ascending = options.ascending
+            return query
+          },
           limit: (n: number) => {
             cap = n
             return query
           },
-          then: (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
-            Promise.resolve({
-              data: store.filter(r => filters.every(f => f(r))).slice(0, cap),
+          then: (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) => {
+            const data = store.filter(r => filters.every(f => f(r)))
+            if (orderField) {
+              const direction = ascending ? 1 : -1
+              data.sort((left, right) =>
+                direction * String(left[orderField!]).localeCompare(String(right[orderField!])),
+              )
+            }
+            return Promise.resolve({
+              data: data.slice(0, cap),
               error: null,
-            }).then(onOk, onErr),
+            }).then(onOk, onErr)
+          },
         }
         return query
       },

@@ -15,8 +15,9 @@ export interface DashboardAggregates {
  * Assumptions this function encodes (and tests should pin):
  * - `status === 'open'`  means the channel is live
  * - `voucher_count` may be null/undefined — treated as 0
- * - `cumulative_amount` may be null/undefined — treated as 0
- * - `cumulative_amount` is in USDC (decimal), not stroops
+ * - `cumulative_amount` is a decimal USDC *string* (see `SESSION_COLUMNS`), not a
+ *   number and not stroops. A row whose amount cannot be parsed is logged and
+ *   skipped, so one bad row cannot take the whole dashboard down.
  * - `lastSettlement` is the first closed session with a settlement_tx_hash in
  *   the array; the caller is responsible for ordering (newest-first by opened_at)
  */
@@ -27,7 +28,17 @@ export function aggregateSessions(sessions: Session[]): DashboardAggregates {
 
   const totalSettledStroops = sessions
     .filter((s) => s.status === 'closed')
-    .reduce((sum, s) => sum + usdcToStroops(String(s.cumulative_amount ?? 0)), BigInt(0))
+    .reduce((sum, s) => {
+      const raw = s.cumulative_amount ?? '0'
+      try {
+        return sum + usdcToStroops(raw)
+      } catch {
+        console.error(
+          `[aggregateSessions] skipping session ${s.id}: unparseable cumulative_amount ${JSON.stringify(raw)}`,
+        )
+        return sum
+      }
+    }, BigInt(0))
 
   const totalSettled = Number(totalSettledStroops) / 10 ** USDC_DECIMALS
 

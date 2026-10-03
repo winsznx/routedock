@@ -145,15 +145,26 @@ app.use('/stream', routedock({
 
 ## React Integration
 
+> **Warning:** These hooks create a RouteDockClient in the browser, so the wallet secret and any commitmentSecret are readable by anyone who loads the page.
+>
+> Next.js inlines every `NEXT_PUBLIC_*` variable into the client bundle at build time, so never put a Stellar secret in one.
+>
+> Only use these hooks with a dedicated, low-balance testnet key, and spendCap does not protect a key that has leaked.
+>
+> For production or mainnet, keep RouteDockClient on the server (a route handler or server action) and read the key from a non-public variable such as `AGENT_SECRET`, as the Agent Usage section does.
+
 `@routedock/sdk/react` provides hooks for client construction, payments, sessions, and live tx log subscription. Wrap your app with `RouteDockProvider`:
 
 ```tsx
 import { RouteDockProvider, useRouteDockClient } from '@routedock/sdk/react'
 import { createClient } from '@supabase/supabase-js'
 
+// Dedicated throwaway testnet key. Never a funded or mainnet key.
+const THROWAWAY_TESTNET_SECRET = 'S...'
+
 function App({ children }: { children: React.ReactNode }) {
   const client = useRouteDockClient({
-    wallet: process.env.NEXT_PUBLIC_AGENT_SECRET!,
+    wallet: THROWAWAY_TESTNET_SECRET,
     network: 'testnet',
     spendCap: { daily: '1.00', asset: 'USDC' },
   })
@@ -166,6 +177,24 @@ function App({ children }: { children: React.ReactNode }) {
       {children}
     </RouteDockProvider>
   )
+}
+```
+
+### Paying from the server
+
+```ts
+// app/api/price/route.ts (runs on the server only)
+import { RouteDockClient } from '@routedock/sdk/client'
+
+const client = new RouteDockClient({
+  wallet: process.env.AGENT_SECRET!,
+  network: 'testnet',
+  spendCap: { daily: '1.00', asset: 'USDC' },
+})
+
+export async function POST() {
+  const result = await client.pay('https://provider.example.com/price')
+  return Response.json({ mode: result.mode, txHash: result.txHash, data: result.data })
 }
 ```
 

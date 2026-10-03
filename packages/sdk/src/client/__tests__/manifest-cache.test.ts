@@ -124,6 +124,58 @@ function startManifestServer(
   }
 }
 
+// ── Cache-Control: no-store disables caching (RFC 9111) ──────────────────────
+
+{
+  const server = await startManifestServer({ 'Cache-Control': 'no-store' })
+  try {
+    await fetchManifest(server.baseUrl)
+    await fetchManifest(server.baseUrl)
+    assert.equal(server.hits.count, 2, 'no-store must never serve from cache')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Cache-Control: no-cache disables caching (no revalidation path exists) ──
+
+{
+  const server = await startManifestServer({ 'Cache-Control': 'no-cache' })
+  try {
+    await fetchManifest(server.baseUrl)
+    await fetchManifest(server.baseUrl)
+    assert.equal(server.hits.count, 2, 'no-cache must never serve from cache')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── no-store wins over a max-age on the same header ──────────────────────────
+
+{
+  const server = await startManifestServer({ 'Cache-Control': 'no-store, max-age=300' })
+  try {
+    await fetchManifest(server.baseUrl)
+    await fetchManifest(server.baseUrl)
+    assert.equal(server.hits.count, 2, 'no-store must take precedence over max-age')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── no-store/no-cache directive matching is case-insensitive ────────────────
+
+{
+  const server = await startManifestServer({ 'Cache-Control': 'No-Store' })
+  try {
+    await fetchManifest(server.baseUrl)
+    await fetchManifest(server.baseUrl)
+    assert.equal(server.hits.count, 2, 'directive matching must be case-insensitive')
+  } finally {
+    await server.close()
+  }
+}
+
 // ── Expires header is honored for per-entry TTL ──────────────────────────────
 
 {
