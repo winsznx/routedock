@@ -35,7 +35,8 @@ stellar contract deploy \
   --daily_cap 250000000 \
   --allowlist '{"<PAYEE_G_ADDRESS>":"250000000"}' \
   --expiry_ledger <ABSOLUTE_LEDGER_SEQUENCE> \
-  --lifetime_cap 0
+  --lifetime_cap 0 \
+  --asset <USDC_SAC_CONTRACT_ID>
 ```
 
 #### Constructor Arguments & Units
@@ -48,6 +49,7 @@ Deploying the vault passes configuration arguments atomically to `__constructor`
 - `--allowlist`: JSON map of payee address to daily sub-cap in stroops (e.g. `'{"<PAYEE_G_ADDRESS>":"250000000"}'`).
 - `--expiry_ledger`: Absolute ledger sequence at which session expires (compared against `env.ledger().sequence()`; not a duration).
 - `--lifetime_cap`: Lifetime USDC spend limit in stroops (`0` = unlimited).
+- `--asset`: SAC contract ID of the spend asset (e.g. USDC). Only `transfer` calls on this asset with the vault as payer are authorized; the admin can rotate it with `set_asset`. Upgraded vaults must call `set_asset` before payments resume (fail-closed).
 
 > **⚠️ SECURITY WARNING:** The underlying `stellar-experimental/one-way-channel` contract
 > is **unaudited**. RouteDock wraps it with safe defaults and a durable server-side

@@ -18,6 +18,7 @@ const LIST_KEY: Symbol = symbol_short!("allwlist");
 const EXPIRY_KEY: Symbol = symbol_short!("expiry");
 const INIT_KEY: Symbol = symbol_short!("init");
 const FROZEN_KEY: Symbol = symbol_short!("frozen");
+const ASSET_KEY: Symbol = symbol_short!("asset");
 
 // Global day-spend key: (SPEND_PREFIX, day_bucket) where day_bucket = seq / 17280
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
@@ -59,6 +60,8 @@ pub enum Error {
     UnauthorizedFunction = 11,
     MalformedAuthContext = 12,
     InvalidCap = 13,
+    AssetNotAllowed = 14,
+    PayerNotVault = 15,
 }
 
 fn validate_cap(env: &Env, cap: i128) {
@@ -75,7 +78,8 @@ pub struct AgentVault;
 #[contractimpl]
 impl AgentVault {
     /// One-time constructor executed atomically upon contract deployment.
-    /// `lifetime_cap`: total USDC (stroops) the vault may ever spend; 0 = unlimited.
+    /// `lifetime_cap`: total units of the configured asset the vault may ever spend; 0 = unlimited.
+    /// `asset`: the SAC token contract whose transfers this vault authorizes.
     pub fn __constructor(
         env: Env,
         admin: Address,
@@ -84,6 +88,7 @@ impl AgentVault {
         allowlist: Map<Address, i128>,
         expiry_ledger: u32,
         lifetime_cap: i128,
+        asset: Address,
     ) {
         validate_cap(&env, daily_cap);
         for (_, sub_cap) in allowlist.iter() {
@@ -97,6 +102,7 @@ impl AgentVault {
         storage.set(&EXPIRY_KEY, &expiry_ledger);
         storage.set(&LIFETIME_CAP_KEY, &lifetime_cap);
         storage.set(&LIFETIME_SPEND_KEY, &0_i128);
+        storage.set(&ASSET_KEY, &asset);
         storage.set(&INIT_KEY, &true);
         // Extend instance storage TTL to outlive any realistic session expiry
         env.storage().instance().extend_ttl(2_000_000, 2_000_000);
@@ -338,6 +344,31 @@ impl AgentVault {
     pub fn agent_pubkey(env: Env) -> BytesN<32> {
         env.storage().instance().get(&AGENT_KEY).unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
+
+    /// Return the configured asset contract used for capped payments.
+    pub fn asset(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&ASSET_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::AssetNotAllowed))
+    }
+
+    /// Update the configured asset contract. Admin only.
+    pub fn set_asset(env: Env, new_asset: Address) {
+        let storage = env.storage().instance();
+        let admin: Address = storage
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        let old_asset: Address = storage
+            .get(&ASSET_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::AssetNotAllowed));
+        storage.set(&ASSET_KEY, &new_asset);
+        env.events().publish(
+            (Symbol::new(&env, "asset_updated"),),
+            (old_asset, new_asset),
+        );
+    }
 }
 
 // ── CustomAccountInterface ────────────────────────────────────────────────────
@@ -397,6 +428,7 @@ impl CustomAccountInterface for AgentVault {
         // ── Load policy state ────────────────────────────────────────────────
         let daily_cap: i128 = storage.get(&CAP_KEY).unwrap_or(i128::MAX);
         let lifetime_cap: i128 = storage.get(&LIFETIME_CAP_KEY).unwrap_or(0);
+        let asset: Address = storage.get(&ASSET_KEY).ok_or(Error::AssetNotAllowed)?;
         let mut lifetime_spend: i128 = storage
             .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
             .unwrap_or(0);
@@ -450,7 +482,12 @@ impl CustomAccountInterface for AgentVault {
                             i128::try_from_val(&env, &value)
                                 .map_err(|_| Error::MalformedAuthContext)
                         })?;
-                    let asset: Address = ctx.contract.clone();
+                    if ctx.contract != asset {
+                        return Err(Error::AssetNotAllowed);
+                    }
+                    if from != env.current_contract_address() {
+                        return Err(Error::PayerNotVault);
+                    }
 
                     // Reject non-positive amounts: a negative amount would
                     // deflate the day/payee/lifetime spend counters via
@@ -503,7 +540,7 @@ impl CustomAccountInterface for AgentVault {
                     // data:   (amount, asset, daily_cumulative)
                     env.events().publish(
                         (Symbol::new(&env, EVT_PAYMENT_AUTHORIZED), from, to),
-                        (amount, asset, day_spend),
+                        (amount, asset.clone(), day_spend),
                     );
                 }
                 // Any non-transfer contract call (SAC approve, burn, …) or
@@ -578,16 +615,21 @@ mod tests {
         let allowlist = Map::from_array(env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(env)),
         );
         let client = AgentVaultClient::new(env, &vault_id);
 
         (client, agent_sk, vault_id, provider_a)
     }
 
-    fn transfer_context(env: &Env, to: &Address, amount: i128) -> Context {
-        let token = Address::generate(env);
-        let from = Address::generate(env);
+    fn transfer_context(env: &Env, vault_id: &Address, to: &Address, amount: i128) -> Context {
+        let token: Address = env.as_contract(vault_id, || {
+            env.storage()
+                .instance()
+                .get(&ASSET_KEY)
+                .expect("test vault must have a configured asset")
+        });
+        let from = vault_id.clone();
         Context::Contract(ContractContext {
             contract: token,
             fn_name: symbol_short!("transfer"),
@@ -637,7 +679,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -706,7 +748,7 @@ mod tests {
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
         let contexts =
-            Vec::from_array(&env, [transfer_context(&env, &provider_a, 6_000_000)]);
+            Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 6_000_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -730,7 +772,7 @@ mod tests {
         let unlisted = Address::generate(&env);
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &unlisted, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &unlisted, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -756,7 +798,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -780,7 +822,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 5_000_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -803,7 +845,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_001)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 5_000_001)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -828,7 +870,7 @@ mod tests {
         // First transfer: 2_000_000
         let payload1 = BytesN::<32>::random(&env);
         let sig1 = sign_payload(&env, &agent_sk, &payload1);
-        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
         let result1 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload1,
@@ -840,7 +882,7 @@ mod tests {
         // Second transfer: 3_000_000 (total = 5_000_000)
         let payload2 = BytesN::<32>::random(&env);
         let sig2 = sign_payload(&env, &agent_sk, &payload2);
-        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 3_000_000)]);
         let result2 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload2,
@@ -860,7 +902,7 @@ mod tests {
         // First transfer: 3_000_000
         let payload1 = BytesN::<32>::random(&env);
         let sig1 = sign_payload(&env, &agent_sk, &payload1);
-        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 3_000_000)]);
         let result1 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload1,
@@ -872,7 +914,7 @@ mod tests {
         // Second transfer: 2_500_000 (total would be 5_500_000 > cap)
         let payload2 = BytesN::<32>::random(&env);
         let sig2 = sign_payload(&env, &agent_sk, &payload2);
-        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_500_000)]);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_500_000)]);
         let result2 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload2,
@@ -906,14 +948,14 @@ mod tests {
         );
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
 
         // Test payment to each allowlisted address
         for provider in [provider_a, provider_b, provider_c] {
             let payload = BytesN::<32>::random(&env);
             let sig = sign_payload(&env, &agent_sk, &payload);
-            let contexts = Vec::from_array(&env, [transfer_context(&env, &provider, 100_000)]);
+            let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider, 100_000)]);
 
             let result = env.try_invoke_contract_check_auth::<Error>(
                 &vault_id,
@@ -937,7 +979,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -960,7 +1002,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -985,7 +1027,7 @@ mod tests {
         // First large transfer: 4_000_000_000_000_000 (i128 near limit)
         let payload1 = BytesN::<32>::random(&env);
         let sig1 = sign_payload(&env, &agent_sk, &payload1);
-        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000_000_000_000)]);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000_000_000_000)]);
         let result1 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload1,
@@ -1011,13 +1053,13 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128, Address::generate(&env)),
         );
 
         // Day 0 (sequence 0): spend 4_000_000
         let payload1 = BytesN::<32>::random(&env);
         let sig1 = sign_payload(&env, &agent_sk, &payload1);
-        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000)]);
         let result1 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload1,
@@ -1029,7 +1071,7 @@ mod tests {
         // Still in Day 0: attempt to spend 2_000_000 more (total 6_000_000 > cap) — should fail
         let payload2 = BytesN::<32>::random(&env);
         let sig2 = sign_payload(&env, &agent_sk, &payload2);
-        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let contexts2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
         let result2 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload2,
@@ -1049,7 +1091,7 @@ mod tests {
         // This should succeed because we're in a new day bucket (bucket 1)
         let payload3 = BytesN::<32>::random(&env);
         let sig3 = sign_payload(&env, &agent_sk, &payload3);
-        let contexts3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let contexts3 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000)]);
         let result3 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload3,
@@ -1070,8 +1112,10 @@ mod tests {
         let env = Env::default();
         let (_, agent_sk, vault_id, provider_a) = setup(&env);
 
-        let token = Address::generate(&env);
-        let from = Address::generate(&env);
+        let token: Address = env.as_contract(&vault_id, || {
+            env.storage().instance().get(&ASSET_KEY).unwrap()
+        });
+        let from = vault_id.clone();
         let amount: i128 = 100_000;
         let ctx = Context::Contract(ContractContext {
             contract: token.clone(),
@@ -1126,12 +1170,12 @@ mod tests {
 
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1_000_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).unwrap();
 
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).unwrap();
 
         let events = env.events().all();
@@ -1161,7 +1205,7 @@ mod tests {
         let unlisted = Address::generate(&env);
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &unlisted, 100_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &unlisted, 100_000)]);
         let _ = env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
 
         let events = env.events().all();
@@ -1190,7 +1234,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1253,6 +1297,7 @@ mod tests {
                 allowlist,
                 10_000_u32,
                 0_i128,
+                Address::generate(env),
             ),
         );
         let client = AgentVaultClient::new(env, &vault_id);
@@ -1407,13 +1452,13 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
 
         // 2_000_000 is within global cap but exceeds sub-cap of 1_000_000
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -1447,13 +1492,13 @@ mod tests {
         );
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
 
         // Pay 2_000_000 to provider_a (hits their sub-cap exactly)
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
             "provider_a at sub-cap should succeed"
@@ -1462,7 +1507,7 @@ mod tests {
         // Pay 2_000_000 to provider_b (their budget is independent — should still pass)
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_b, 2_000_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_b, 2_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).is_ok(),
             "provider_b sub-cap is independent and should succeed"
@@ -1471,7 +1516,7 @@ mod tests {
         // A further payment to provider_a now exceeds their sub-cap
         let p3 = BytesN::<32>::random(&env);
         let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1)]);
         assert_eq!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
                 .unwrap_err()
@@ -1493,13 +1538,13 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128, Address::generate(&env)),
         );
 
         // Day 0: spend exactly the sub-cap
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
             "first payment should succeed"
@@ -1508,7 +1553,7 @@ mod tests {
         // Day 0: any further spend exceeds sub-cap
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1)]);
         assert_eq!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
                 .unwrap_err()
@@ -1521,7 +1566,7 @@ mod tests {
         env.ledger().set_sequence_number(17_280);
         let p3 = BytesN::<32>::random(&env);
         let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3).is_ok(),
             "payment in new day bucket should succeed after per-payee reset"
@@ -1542,7 +1587,7 @@ mod tests {
         let allowlist = Map::from_array(env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, lifetime_cap),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, lifetime_cap, Address::generate(env)),
         );
         let client = AgentVaultClient::new(env, &vault_id);
         (client, agent_sk, vault_id, provider_a)
@@ -1558,7 +1603,7 @@ mod tests {
         // Day 0: spend 5_000_000 (at daily cap)
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 5_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
                 .is_ok(),
@@ -1569,7 +1614,7 @@ mod tests {
         env.ledger().set_sequence_number(17_280);
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 5_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
                 .is_ok(),
@@ -1587,7 +1632,7 @@ mod tests {
         // 4_000_000 > lifetime_cap of 3_000_000 (but <= daily_cap 5_000_000)
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000)]);
 
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
@@ -1606,7 +1651,7 @@ mod tests {
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 3_000_000)]);
 
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
@@ -1623,7 +1668,7 @@ mod tests {
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_001)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 3_000_001)]);
 
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
@@ -1644,7 +1689,7 @@ mod tests {
         // Day 0: spend 5_000_000 (lifetime_spend = 5_000_000)
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 5_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
                 .is_ok(),
@@ -1655,7 +1700,7 @@ mod tests {
         env.ledger().set_sequence_number(17_280);
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000)]);
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2);
         assert_eq!(
@@ -1667,7 +1712,7 @@ mod tests {
         // Day 1: try 3_000_000 — total = 8_000_000, exactly at lifetime cap → ok
         let p3 = BytesN::<32>::random(&env);
         let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 3_000_000)]);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 3_000_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
                 .is_ok(),
@@ -1685,7 +1730,7 @@ mod tests {
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_500_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1_500_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
             .unwrap();
 
@@ -1705,7 +1750,7 @@ mod tests {
         // Attempt over-daily-cap payment (rejected)
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 6_000_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 6_000_000)]);
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
         assert_eq!(result.unwrap_err().unwrap(), Error::DailyCapExceeded);
@@ -1726,7 +1771,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1779,7 +1824,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1830,7 +1875,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1848,7 +1893,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1877,7 +1922,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1917,7 +1962,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1936,7 +1981,7 @@ mod tests {
         // Attempt a transfer, should fail
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -1961,7 +2006,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1992,7 +2037,7 @@ mod tests {
         // Attempt a transfer, should succeed
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -2012,7 +2057,7 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2040,7 +2085,7 @@ mod tests {
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk.clone(), 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk.clone(), 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2091,7 +2136,7 @@ mod tests {
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, -100)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, -100)]);
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
         assert_eq!(
@@ -2115,7 +2160,7 @@ mod tests {
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 0)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 0)]);
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c);
         assert_eq!(
@@ -2134,7 +2179,7 @@ mod tests {
         // Legitimate payment of 4_000_000 (cap = 5_000_000)
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
-        let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let c1 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 4_000_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
             .unwrap();
 
@@ -2147,7 +2192,7 @@ mod tests {
         // Hostile "transfer" with a negative amount — must be rejected, not deflate.
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, -4_000_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, -4_000_000)]);
         let result =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2);
         assert_eq!(
@@ -2165,7 +2210,7 @@ mod tests {
         // The cap is still respected: 2_000_000 more would exceed the 5_000_000 daily cap.
         let p3 = BytesN::<32>::random(&env);
         let s3 = sign_payload(&env, &agent_sk, &p3);
-        let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
+        let c3 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 2_000_000)]);
         let result3 =
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3);
         assert_eq!(
@@ -2184,7 +2229,7 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2215,7 +2260,7 @@ mod tests {
         // Make one successful payment so lifetime spend is non-zero before the upgrade.
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_500_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 1_500_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
             .unwrap();
         assert_eq!(client.get_lifetime_spend(), 1_500_000, "sanity: spend recorded before upgrade");
@@ -2279,7 +2324,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2287,7 +2332,7 @@ mod tests {
         env.ledger().set_sequence_number(10_001);
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
         assert_eq!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
                 .unwrap_err()
@@ -2322,7 +2367,7 @@ mod tests {
         // Now the same payment (still signed by the agent key) succeeds again.
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
-        let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let c2 = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
                 .is_ok(),
@@ -2339,7 +2384,7 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2366,7 +2411,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2386,7 +2431,7 @@ mod tests {
         // A payment signed with the NEW key succeeds.
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &new_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
         assert!(
             env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).is_ok(),
             "payment signed with the rotated key should succeed"
@@ -2404,7 +2449,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), old_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin.clone(), old_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2424,7 +2469,7 @@ mod tests {
         // A payment signed with the OLD key must fail (rejected signature).
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &old_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let c = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
         env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).unwrap();
     }
 
@@ -2437,7 +2482,7 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2464,7 +2509,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2474,7 +2519,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let signature = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &payee, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &payee, 100_000)]);
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id, &payload, signature.into_val(&env), &contexts,
         );
@@ -2491,7 +2536,7 @@ mod tests {
         let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2517,7 +2562,7 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 9_000_000_i128),
+            (admin.clone(), agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 9_000_000_i128, Address::generate(&env)),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
         env.mock_all_auths();
@@ -2678,7 +2723,7 @@ mod tests {
         let sig = sign_payload(&env, &agent_sk, &payload);
         let contexts = Vec::from_array(
             &env,
-            [transfer_context(&env, &provider_a, 100_000), approve_context(&env, 1_000_000)],
+            [transfer_context(&env, &vault_id, &provider_a, 100_000), approve_context(&env, 1_000_000)],
         );
 
         let result = env.try_invoke_contract_check_auth::<Error>(
@@ -2703,7 +2748,7 @@ mod tests {
 
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &vault_id, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -2724,7 +2769,7 @@ mod tests {
 
         env.register(
             AgentVault,
-            (admin, agent_pk, -1_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, -1_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
     }
 
@@ -2739,7 +2784,7 @@ mod tests {
 
         env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128, Address::generate(&env)),
         );
     }
 
@@ -2759,8 +2804,7 @@ mod tests {
                 5_000_000_i128,
                 allowlist.clone(),
                 12_345_u32,
-                10_000_000_i128,
-            ),
+                10_000_000_i128, Address::generate(&env),),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2786,8 +2830,7 @@ mod tests {
                 5_000_000_i128,
                 allowlist,
                 10_000_u32,
-                0_i128,
-            ),
+                0_i128, Address::generate(&env),),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2842,6 +2885,78 @@ mod tests {
 
         // Zero cap succeeds
         assert!(client.try_add_to_allowlist(&new_payee, &0_i128).is_ok());
+    }
+
+    #[test]
+    fn test_asset_is_initialized_and_admin_can_rotate_it() {
+        let env = Env::default();
+        let (client, _, vault_id, _) = setup(&env);
+        let configured: Address = env.as_contract(&vault_id, || {
+            env.storage().instance().get(&ASSET_KEY).unwrap()
+        });
+        assert_eq!(client.asset(), configured);
+
+        let replacement = Address::generate(&env);
+        env.mock_all_auths();
+        client.set_asset(&replacement);
+        assert_eq!(client.asset(), replacement);
+    }
+
+    #[test]
+    fn test_missing_or_wrong_asset_and_payer_are_rejected_before_counters_change() {
+        let env = Env::default();
+        let (_, agent_sk, vault_id, provider_a) = setup(&env);
+        let payload = BytesN::<32>::random(&env);
+        let signature = sign_payload(&env, &agent_sk, &payload);
+        let wrong_asset = Address::generate(&env);
+        let valid_asset: Address = env.as_contract(&vault_id, || {
+            env.storage().instance().get(&ASSET_KEY).unwrap()
+        });
+
+        let wrong_asset_context = Context::Contract(ContractContext {
+            contract: wrong_asset,
+            fn_name: symbol_short!("transfer"),
+            args: (vault_id.clone(), provider_a.clone(), 100_000_i128).into_val(&env),
+        });
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            signature.clone().into_val(&env),
+            &Vec::from_array(&env, [wrong_asset_context]),
+        );
+        assert_eq!(result.unwrap_err().unwrap(), Error::AssetNotAllowed);
+        assert_eq!(read_spend_counters(&env, &vault_id, &provider_a), (0, 0, 0));
+
+        let wrong_payer_context = Context::Contract(ContractContext {
+            contract: valid_asset,
+            fn_name: symbol_short!("transfer"),
+            args: (Address::generate(&env), provider_a.clone(), 100_000_i128).into_val(&env),
+        });
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            signature.into_val(&env),
+            &Vec::from_array(&env, [wrong_payer_context]),
+        );
+        assert_eq!(result.unwrap_err().unwrap(), Error::PayerNotVault);
+        assert_eq!(read_spend_counters(&env, &vault_id, &provider_a), (0, 0, 0));
+
+        env.as_contract(&vault_id, || env.storage().instance().remove(&ASSET_KEY));
+        let context = Context::Contract(ContractContext {
+            contract: Address::generate(&env),
+            fn_name: symbol_short!("transfer"),
+            args: (vault_id.clone(), provider_a, 100_000_i128).into_val(&env),
+        });
+        let missing_asset_result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sign_payload(&env, &agent_sk, &payload).into_val(&env),
+            &Vec::from_array(&env, [context]),
+        );
+        assert_eq!(
+            missing_asset_result.unwrap_err().unwrap(),
+            Error::AssetNotAllowed
+        );
     }
 }
 

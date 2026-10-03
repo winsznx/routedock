@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 4,
     "nonce": 1
   },
   "auth": [
@@ -12,11 +12,11 @@
         {
           "function": {
             "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "function_name": "set_agent_pubkey",
               "args": [
                 {
-                  "bytes": "77a44ebd5a7dece7cf79116b4742113133d2be52859dfad96bca352914766bf8"
+                  "bytes": "3e6b263c039e39438ef7a0ed8616fb6efca7b1cd8f34e6cfb055ad3b9b5963cb"
                 }
               ]
             }
@@ -25,6 +25,7 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
@@ -105,7 +106,7 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -116,7 +117,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {
@@ -138,7 +139,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "77a44ebd5a7dece7cf79116b4742113133d2be52859dfad96bca352914766bf8"
+                          "bytes": "3e6b263c039e39438ef7a0ed8616fb6efca7b1cd8f34e6cfb055ad3b9b5963cb"
                         }
                       },
                       {
@@ -159,6 +160,14 @@
                               }
                             }
                           ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "asset"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                         }
                       },
                       {
