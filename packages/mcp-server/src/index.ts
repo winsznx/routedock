@@ -8,7 +8,6 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { RouteDockClient, FileSpendStore } from '@routedock/routedock'
-import type { SessionHandle } from '@routedock/routedock'
 import { createClient } from '@supabase/supabase-js'
 import { TOOLS } from './tools.js'
 import {
@@ -16,6 +15,7 @@ import {
   handleOpenSession,
   handleStreamSession,
   handleCloseSession,
+  closeAllSessions,
   handleCheckBalance,
   handleListProviders,
   type HandlerDeps,
@@ -73,12 +73,11 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 }
 
-// Sessions opened via open_session, keyed by channelId, so a later
-// close_session/stream_session call in the same server process can find the
-// live handle again. If the process restarts, in-flight sessions are not
-// recoverable here — the SDK's own maxDurationMs guard still auto-closes the
-// underlying channel on-chain so collateral is never stranded indefinitely.
-const openSessions = new Map<string, SessionHandle>()
+// Sessions opened via open_session are kept in-process so later tools can find
+// the live handle. The SDK's lifetime guard cannot survive a process restart;
+// clean shutdown therefore settles live sessions, while an unclean exit must
+// be recovered through the provider's close or requestRefund path.
+const openSessions = new Map<string, import('./handlers.js').OpenSessionEntry>()
 
 // Shared dependency bundle passed into every handler
 const deps: HandlerDeps = {
@@ -156,6 +155,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
   const transport = new StdioServerTransport()
+  let shuttingDown = false
+  const shutdown = async (reason: string): Promise<void> => {
+    if (shuttingDown) return
+    shuttingDown = true
+    const results = await closeAllSessions(openSessions)
+    const failed = results.filter((result) => !result.success)
+    if (failed.length === 0) {
+      console.error(`[shutdown] ${reason}: settled ${results.length} session(s)`)
+      process.exit(0)
+    }
+    console.error(`[shutdown] ${reason}: ${failed.length} session(s) failed to close`, failed)
+    process.exit(1)
+  }
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      void shutdown(signal).catch((error) => {
+        console.error(`[shutdown] ${signal} failed:`, error)
+        process.exit(1)
+      })
+    })
+  }
+  process.stdin.once('end', () => {
+    void shutdown('stdin end').catch((error) => {
+      console.error('[shutdown] stdin end failed:', error)
+      process.exit(1)
+    })
+  })
+  process.stdin.once('close', () => {
+    void shutdown('stdin close').catch((error) => {
+      console.error('[shutdown] stdin close failed:', error)
+      process.exit(1)
+    })
+  })
+
   await server.connect(transport)
   console.error('@routedock/mcp-server running on stdio')
 }

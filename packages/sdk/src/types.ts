@@ -2,7 +2,7 @@
  * TypeScript types for the RouteDock manifest format.
  * Derived from packages/sdk/src/schemas/routedock.schema.json (draft-07).
  *
- * Section 5 of ROUTEDOCK_MASTER.md is the canonical specification.
+ * See docs/MANIFEST.md, Section "Manifest properties", for the canonical specification.
  */
 import type { Store } from 'mppx'
 
@@ -447,4 +447,3 @@ export {
 
 /** Dispute status of a channel */
 export type DisputeStatus = 'open' | 'in-refund-window' | 'refundable' | 'settled'
-
