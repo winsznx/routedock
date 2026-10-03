@@ -148,6 +148,9 @@ export class MppSessionClient {
     private readonly network: 'testnet' | 'mainnet',
     private readonly retryPolicy?: RetryPolicy,
     private readonly webSocketFactory: WebSocketFactory = defaultWebSocketFactory,
+    private readonly rpcUrl = network === 'testnet'
+      ? 'https://soroban-testnet.stellar.org'
+      : 'https://soroban.stellar.org',
   ) {}
 
   async openSession(
@@ -399,6 +402,7 @@ export class MppSessionClient {
     }
 
     const network = this.network
+    const rpcUrl = this.rpcUrl
 
     const handle: SessionHandle = {
       channelId: channelFactory,
@@ -574,9 +578,6 @@ export class MppSessionClient {
 
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
           await import('@stellar/stellar-sdk')
-        const rpcUrl = network === 'testnet'
-          ? 'https://soroban-testnet.stellar.org'
-          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
         const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
@@ -691,9 +692,6 @@ export class MppSessionClient {
 
       async requestRefund(): Promise<string> {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = network === 'testnet'
-          ? 'https://soroban-testnet.stellar.org'
-          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
         const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
@@ -731,9 +729,6 @@ export class MppSessionClient {
 
       async settleWithLatestVoucher(): Promise<string> {
         const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = network === 'testnet'
-          ? 'https://soroban-testnet.stellar.org'
-          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
         const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
@@ -785,9 +780,6 @@ export class MppSessionClient {
 
       async getDisputeStatus(): Promise<DisputeStatus> {
         const { rpc: rpcMod, Contract, TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk')
-        const rpcUrl = network === 'testnet'
-          ? 'https://soroban-testnet.stellar.org'
-          : 'https://soroban.stellar.org'
         const server = new rpcMod.Server(rpcUrl)
         const contract = new Contract(channelFactory)
         const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET

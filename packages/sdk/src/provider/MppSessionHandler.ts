@@ -264,6 +264,31 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       if (req.method === 'DELETE') {
         await loadPersistedRecord()
         const body = req.body as { amount?: string; signature?: string } | undefined
+        if (body?.amount !== undefined && (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount))) {
+          res.status(400).json({ error: 'amount must be a non-negative integer string' })
+          return
+        }
+
+        // DELETE is a state-changing operation. Run the same MPP channel
+        // verification as voucher requests before allowing a close.
+        const verificationRequest = MppxRequest.fromNodeListener(req, res)
+        const verified = await (mppx as unknown as {
+          stellar: { channel: (o: { amount: string; description?: string }) =>
+            (r: globalThis.Request) => Promise<{ status: number; challenge?: globalThis.Response }>
+          }
+        }).stellar.channel({ amount: rateHuman, description: opts.manifest.name })(verificationRequest)
+        if (verified.status === 402) {
+          const challenge = verified.challenge!
+          res.status(402)
+          challenge.headers.forEach((v: string, k: string) => res.setHeader(k, v))
+          res.send(await challenge.text())
+          return
+        }
+        if (verified.status >= 400) {
+          res.status(verified.status).json({ error: 'Payment verification failed' })
+          return
+        }
+
         const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
         const recordAmount = record?.amount ?? 0n
         let closeAmount: bigint
@@ -357,13 +382,14 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       const fetchReq = MppxRequest.fromNodeListener(req, res)
 
       const result = await (mppx as unknown as {
-        channel: (o: { amount: string; description?: string }) =>
+        stellar: { channel: (o: { amount: string; description?: string }) =>
           (r: globalThis.Request) => Promise<{
             status: number
             challenge?: globalThis.Response
             withReceipt?: (r: globalThis.Response) => globalThis.Response
           }>
-      }).channel({
+        }
+      }).stellar.channel({
         amount: rateHuman,
         description: opts.manifest.name,
       })(fetchReq)
