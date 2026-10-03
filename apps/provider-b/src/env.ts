@@ -12,4 +12,6 @@ export interface Env {
   SUPABASE_SERVICE_KEY?: string
   /** Public origin recorded on settlement, e.g. https://api-b.routedock.xyz */
   PUBLIC_BASE_URL?: string
+  /** Minutes before an open session is considered stale during reconciliation. */
+  SESSION_STALE_AFTER_MINUTES?: string
 }
