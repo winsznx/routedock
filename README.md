@@ -263,7 +263,7 @@ The Supabase `providers` table indexes manifests with `pg_trgm` trigram search â
 ```ts
 import { routedock } from '@routedock/routedock/provider'
 
-app.use('/price', routedock({
+app.use(routedock({
   modes: ['x402', 'mpp-charge'],
   pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
   asset: 'USDC',
@@ -274,6 +274,8 @@ app.use('/price', routedock({
   facilitatorApiKey: process.env.OPENZEPPELIN_API_KEY, // mainnet only
   manifest,
 }))
+
+app.get('/price', (_req, res) => res.json({ price: '42' }))
 ```
 
 ### Hono (Cloudflare Workers, Bun, Deno Deploy)
@@ -284,7 +286,7 @@ import { routedockHono } from '@routedock/sdk/provider/hono'
 
 const app = new Hono()
 
-app.use('/price', routedockHono({
+app.use('*', routedockHono({
   modes: ['x402', 'mpp-charge'],
   pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
   asset: 'USDC',
@@ -296,10 +298,14 @@ app.use('/price', routedockHono({
   manifest,
 }))
 
+app.get('/price', (c) => c.json({ price: '42' }))
+
 export default app
 ```
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
+
+Mount the middleware at the app root. Clients fetch `/.well-known/routedock.json` from the provider origin, and the middleware only serves it when the request reaches it at that exact path.
 
 ### Testing your settlement callbacks
 
