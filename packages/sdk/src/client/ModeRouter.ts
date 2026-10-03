@@ -253,7 +253,7 @@ export interface ModeSelectOptions {
   transport?: 'sse' | 'websocket'
   /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
   optimize?: 'cost'
-  /** Optional maximum acceptable per-request amount for cost-based selection. */
+  /** Maximum acceptable per-request amount, also enforced with default selection. */
   budget_per_request?: string
   /**
    * Override mode selection and use this specific mode.
@@ -418,6 +418,32 @@ function selectFromModes(
     }
   }
 
+  // A budget is an upper bound even when cost optimization was not requested.
+  // Preserve the default preference order among modes that fit the ceiling.
+  if (options.budget_per_request !== undefined) {
+    let budgetStroops: bigint
+    try {
+      budgetStroops = usdcToStroops(options.budget_per_request)
+    } catch {
+      throw new RouteDockPolicyRejectError('invalid_budget_per_request')
+    }
+
+    for (const mode of ['mpp-charge', 'x402'] as const) {
+      if (!modes.includes(mode)) continue
+      const amount = manifest.pricing[mode]?.amount
+      if (typeof amount !== 'string') continue
+      try {
+        if (usdcToStroops(amount) <= budgetStroops) {
+          return { mode }
+        }
+      } catch {
+        // Invalid manifest pricing cannot satisfy a caller's upper bound.
+      }
+    }
+
+    throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
+  }
+
   if (modes.includes('mpp-charge')) return { mode: 'mpp-charge' }
   if (modes.includes('x402')) return { mode: 'x402' }
   return undefined
@@ -521,4 +547,3 @@ export function rankProvidersByLatency(
     return 0
   })
 }
-

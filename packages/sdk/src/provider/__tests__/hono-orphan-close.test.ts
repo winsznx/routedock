@@ -55,6 +55,32 @@ mock.module('@stellar/mpp/channel/server', {
   },
 })
 
+mock.module('mppx/server', {
+  namedExports: {
+    Expires: {},
+    Store: {},
+    Request: {},
+    Response: {},
+    Transport: {},
+    NodeListener: {},
+    stripe: {},
+    tempo: {},
+    Mppx: {
+      create: () => ({
+        stellar: { channel: () => async (request: Request) => {
+          if (!request.headers.has('authorization')) {
+            return {
+              status: 402,
+              challenge: new Response('Payment Required', { status: 402 }),
+            }
+          }
+          return { status: 200 }
+        } },
+      }),
+    },
+  },
+})
+
 // hono.ts now commits voucher state only after mppCompatibility's
 // onVerifiedCredential confirms mppx's verify succeeded — a direct store.put
 // (the old way this test fed in a voucher) no longer opens the session or
@@ -139,11 +165,22 @@ describe('routedockHono — orphan recovery on failed channel close', () => {
     assert.ok(capturedCommit, 'onVerifiedCredential mock should have captured commit')
     await capturedCommit!({ payload: { amount: '1', signature: 'deadbeef' } })
 
-    // DELETE with a mocked close broadcast that always fails → 500, and the
-    // orphan state must remain armed (settledCleanly must NOT be set).
-    const res = await app.request('/price', {
+    // An unauthenticated DELETE must not reach channel close.
+    const unauthenticated = await app.request('/price', {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: '1', signature: 'deadbeef' }),
+    })
+    assert.equal(unauthenticated.status, 402)
+
+    // An authenticated DELETE with a mocked close broadcast that always fails
+    // returns 500, and the orphan state must remain armed.
+    const res = await app.request('/price', {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Payment test-credential',
+      },
       body: JSON.stringify({ amount: '1', signature: 'deadbeef' }),
     })
     assert.equal(res.status, 500)

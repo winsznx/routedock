@@ -408,7 +408,7 @@ interface MppSessionHandlerState {
   /** mppx server instance (channel method) used for voucher verification. */
   mppx: unknown
   /** Handle a DELETE channel-close request; returns the HTTP response. */
-  handleDelete(c: DeleteContext): Promise<Response>
+  handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response>
   /** Arm the connection-closed orphan guard (idempotent). */
   armAbortGuard(c: SignalContext): void
 }
@@ -423,7 +423,6 @@ interface VerifiedVoucherRecord {
 function createMppSessionHandlerState(
   opts: RouteDockHonoOptions,
   sessionPricing: { rate: string; channelFactory: string },
-  reportMode: 'mpp-session' | 'mpp-session-ws',
 ): MppSessionHandlerState {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
@@ -591,7 +590,7 @@ function createMppSessionHandlerState(
   return {
     mppx,
 
-    async handleDelete(c: DeleteContext): Promise<Response> {
+    async handleDelete(c: DeleteContext, reportMode: 'mpp-session' | 'mpp-session-ws'): Promise<Response> {
       await loadPersistedRecord()
       let body: { amount?: string; signature?: string } | undefined
       try {
@@ -600,6 +599,12 @@ function createMppSessionHandlerState(
         // empty or non-JSON body
       }
 
+      if (body?.amount !== undefined && (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount))) {
+        return new Response(JSON.stringify({ error: 'amount must be a non-negative integer string' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
       const recordAmount = record?.amount ?? 0n
       let closeAmount: bigint
@@ -683,20 +688,41 @@ function createMppSessionHonoHandler(
   return async (c, next) => {
     try {
       if (c.req.method === 'DELETE') {
-        return state.handleDelete(c as unknown as DeleteContext)
+        const verified = await (
+          state.mppx as unknown as {
+            stellar: { channel: (o: { amount: string; description?: string }) => (
+              r: globalThis.Request,
+            ) => Promise<{ status: number; challenge?: globalThis.Response }>
+            }
+          }
+        ).stellar.channel({ amount: sessionPricing.rate, description: opts.manifest.name })(c.req.raw.clone())
+        if (verified.status === 402) {
+          const challenge = verified.challenge!
+          const headers: Record<string, string> = {}
+          challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
+          return new Response(await challenge.text(), { status: 402, headers })
+        }
+        if (verified.status >= 400) {
+          return new Response(JSON.stringify({ error: 'Payment verification failed' }), {
+            status: verified.status,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        return state.handleDelete(c as unknown as DeleteContext, config.mode)
       }
 
       const result = await (
         state.mppx as unknown as {
-          channel: (o: { amount: string; description?: string }) => (
+          stellar: { channel: (o: { amount: string; description?: string }) => (
             r: globalThis.Request,
           ) => Promise<{
             status: number
             challenge?: globalThis.Response
             withReceipt?: (r: globalThis.Response) => globalThis.Response
           }>
+          }
         }
-      ).channel({
+      ).stellar.channel({
         amount: sessionPricing.rate,
         description: opts.manifest.name,
       })(c.req.raw)
@@ -758,6 +784,7 @@ function isWebSocketUpgradeRequest(c: {
  */
 export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const handlers: MiddlewareHandler[] = []
+  const sessionHandlers = new Map<'mpp-session' | 'mpp-session-ws', MiddlewareHandler>()
   const signedManifest = signManifest(opts.manifest, opts.payeeSecretKey)
 
   if (opts.modes.includes('x402') && opts.pricing.x402) {
@@ -780,11 +807,16 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
       throw new Error('routedockHono: mpp-session/mpp-session-ws mode requires commitmentPublicKey')
     }
     const sessionPricing = opts.pricing[primarySessionMode]!
-    const sharedState = createMppSessionHandlerState(opts, sessionPricing, primarySessionMode)
     for (const mode of sessionModes) {
-      handlers.push(
-        createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState),
-      )
+      if (opts.pricing[mode]!.channelFactory !== sessionPricing.channelFactory) {
+        throw new Error('routedockHono: mpp-session and mpp-session-ws must use the same channelFactory')
+      }
+    }
+    const sharedState = createMppSessionHandlerState(opts, sessionPricing)
+    for (const mode of sessionModes) {
+      const handler = createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState)
+      sessionHandlers.set(mode, handler)
+      handlers.push(handler)
     }
   }
 
@@ -803,8 +835,11 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     )
     const prefersX402 = c.req.header('x-preferred-mode') === 'x402'
 
-    const handler =
-      hasX402Header || prefersX402 ? handlers[0] : handlers[handlers.length - 1]
+    const isUpgrade = isWebSocketUpgradeRequest(c)
+    const sessionHandler = sessionHandlers.get(isUpgrade ? 'mpp-session-ws' : 'mpp-session')
+    const handler = hasX402Header || prefersX402
+      ? handlers[0]
+      : sessionHandler ?? handlers[handlers.length - 1]
 
     if (!handler) {
       await next()
