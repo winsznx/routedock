@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 GlobalRegistrator.register()
@@ -11,20 +11,28 @@ import { RouteDockClient } from '../../client/RouteDockClient.js'
 import { RouteDockProvider } from '../context.js'
 import { useTxLog } from '../useTxLog.js'
 
-function fakeSupabase(rows: unknown[]): SupabaseClient {
+function fakeSupabase(rows: unknown[], error: { message: string } | null = null) {
+  const queryCalls: Array<[string, string]> = []
+  let realtimeHandler: ((payload: { new: unknown }) => void) | undefined
   const channel = {
-    on() { return this },
+    on(_event: string, _filter: unknown, handler: (payload: { new: unknown }) => void) {
+      realtimeHandler = handler
+      return this
+    },
     subscribe() { return this },
   }
-  return {
+  const client = {
     from() {
       return {
         select() { return this },
         order() { return this },
         limit() { return this },
-        eq() { return this },
-        then(resolve: (v: { data: unknown[] }) => void) {
-          resolve({ data: rows })
+        eq(field: string, value: string) {
+          queryCalls.push([field, value])
+          return this
+        },
+        then(resolve: (v: { data: unknown[] | null; error: { message: string } | null }) => void) {
+          return Promise.resolve({ data: error ? null : rows, error }).then(resolve)
         },
       } as unknown as ReturnType<SupabaseClient['from']>
     },
@@ -35,6 +43,12 @@ function fakeSupabase(rows: unknown[]): SupabaseClient {
       return Promise.resolve('ok')
     },
   } as unknown as SupabaseClient
+
+  return {
+    client,
+    queryCalls,
+    emit(row: unknown) { realtimeHandler?.({ new: row }) },
+  }
 }
 
 describe('useTxLog', () => {
@@ -47,12 +61,50 @@ describe('useTxLog', () => {
       { id: '1', tx_hash: 'h1', mode: 'x402', amount: '0.001', channel_id: null, created_at: 'now' },
     ]
     const supabase = fakeSupabase(rows)
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(RouteDockProvider, { client, supabase, children })
-
-    const { result } = renderHook(() => useTxLog({ limit: 10 }), { wrapper })
+    const { result } = renderHook(() => useTxLog({ limit: 10 }), { wrapper: ({ children }) =>
+      createElement(RouteDockProvider, { client, supabase: supabase.client, children }) })
 
     await waitFor(() => assert.equal(result.current.length, 1))
     assert.equal(result.current[0]?.tx_hash, 'h1')
+  })
+
+  it('applies the channel filter to the initial query and realtime inserts', async () => {
+    const client = new RouteDockClient({ wallet: Keypair.random().secret(), network: 'testnet' })
+    const supabase = fakeSupabase([])
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(RouteDockProvider, { client, supabase: supabase.client, children })
+    const { result } = renderHook(() => useTxLog({ channelId: 'chan_a' }), { wrapper })
+
+    await waitFor(() => assert.deepEqual(supabase.queryCalls, [['channel_id', 'chan_a']]))
+    supabase.emit({ id: 'wrong', channel_id: 'chan_b', tx_hash: 'wrong' })
+    supabase.emit({ id: 'right', channel_id: 'chan_a', tx_hash: 'right' })
+    await waitFor(() => assert.deepEqual(result.current.map((row) => row.id), ['right']))
+  })
+
+  it('supports the mpp-session-ws mode filter', async () => {
+    const client = new RouteDockClient({ wallet: Keypair.random().secret(), network: 'testnet' })
+    const supabase = fakeSupabase([])
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(RouteDockProvider, { client, supabase: supabase.client, children })
+    renderHook(() => useTxLog({ mode: 'mpp-session-ws' }), { wrapper })
+
+    await waitFor(() => assert.deepEqual(supabase.queryCalls, [['mode', 'mpp-session-ws']]))
+  })
+
+  it('logs an initial query error without throwing or replacing rows', async () => {
+    const client = new RouteDockClient({ wallet: Keypair.random().secret(), network: 'testnet' })
+    const supabase = fakeSupabase([], { message: 'boom' })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(RouteDockProvider, { client, supabase: supabase.client, children })
+    const error = mock.method(console, 'error')
+
+    try {
+      const { result } = renderHook(() => useTxLog(), { wrapper })
+      await waitFor(() => assert.equal(error.mock.callCount(), 1))
+      assert.deepEqual(result.current, [])
+      assert.equal(error.mock.calls[0]?.arguments[0], '[useTxLog] initial fetch failed:')
+    } finally {
+      error.mock.restore()
+    }
   })
 })
