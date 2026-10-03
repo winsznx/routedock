@@ -15,11 +15,7 @@ This MCP server implements the thesis that base payment infrastructure should be
 
 ## Installation
 
-```bash
-npm install -g @routedock/mcp-server
-```
-
-Or build from source:
+Build from source:
 
 ```bash
 cd packages/mcp-server
@@ -38,6 +34,9 @@ Create a `.env` file (e.g., `~/.routedock/.env`):
 STELLAR_SECRET="SDU5..."  # Use a dedicated low-balance testnet key for safety
 STELLAR_NETWORK="testnet"  # or "mainnet"
 ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
+
+# Optional: durable local spend ledger (defaults to ~/.routedock/spend.json)
+ROUTEDOCK_SPEND_STORE_PATH="~/.routedock/spend.json"
 
 # Optional (for session mode)
 COMMITMENT_SECRET="S..."  # Ed25519 secret for channel commitments
@@ -81,11 +80,9 @@ sends a voucher and waits for the provider's response.
 
 **Parameters:**
 - `channel_id` (required): The `channel_id` returned by `open_session`
-- `max_messages` (optional): Maximum number of messages to pull in this call (1 to 50, default 1)
+- `max_messages` (optional): Maximum number of messages to pull in this call (default 1)
 
-**Returns:** The pulled messages. If a voucher fails partway through the batch (local spend cap
-reached, provider 4xx/5xx), the call still returns `isError: true` with the messages that were
-already paid for, plus `count` and `stats`, instead of discarding the batch.
+**Returns:** The pulled messages
 
 ### close_session
 
@@ -129,7 +126,7 @@ Add this to your Claude Desktop config file:
   "mcpServers": {
     "routedock": {
       "command": "node",
-      "args": ["/path/to/@routedock/mcp-server/dist/index.js"],
+  "args": ["/absolute/path/to/routedock/packages/mcp-server/dist/index.js"],
       "env": {
         "ROUTEDOCK_ENV_FILE": "/absolute/path/to/your/.env"
       }
