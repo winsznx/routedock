@@ -1,5 +1,11 @@
 # @routedock/nulth-sdk
 
+## 0.2.1
+
+### Patch Changes
+
+- [#492](https://github.com/winsznx/routedock/pull/492) [`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Reject negative `amountStroops` and non-safe-integer or negative `ledgerSequence` in nulth policy enforcement with `RangeError`.
+
 ## 0.2.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @routedock/mcp-server
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [[`d6da43e`](https://github.com/winsznx/routedock/commit/d6da43e7eefb5a6488647c17240d356cac961da6), [`4c69763`](https://github.com/winsznx/routedock/commit/4c69763dde284c04d80592738f1fc2405d9c1cdc), [`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f), [`ddb2cbe`](https://github.com/winsznx/routedock/commit/ddb2cbe455e7b7940a402a9e49943cebbb191765), [`6d95ccd`](https://github.com/winsznx/routedock/commit/6d95ccd5804d48c114c5bf8a8edf36a365b3027e)]:
+  - @routedock/routedock@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
