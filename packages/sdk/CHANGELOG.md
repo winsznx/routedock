@@ -1,5 +1,26 @@
 # @routedock/routedock
 
+## 0.3.0
+
+### Minor Changes
+
+- [#527](https://github.com/winsznx/routedock/pull/527) [`4c69763`](https://github.com/winsznx/routedock/commit/4c69763dde284c04d80592738f1fc2405d9c1cdc) Thanks [@softnationz](https://github.com/softnationz)! - Multi-asset manifest support: adds optional `assets` array to manifests for fine-grained per-mode and per-endpoint asset scoping, runtime endpoint-aware asset selection in Express, Fastify, and Hono provider adapters, client trustline preflight against eligible assets, and strict validation rejecting mismatched primary assets.
+
+- [#517](https://github.com/winsznx/routedock/pull/517) [`6d95ccd`](https://github.com/winsznx/routedock/commit/6d95ccd5804d48c114c5bf8a8edf36a365b3027e) Thanks [@chykason77-blip](https://github.com/chykason77-blip)! - Scope settlement idempotency to the resource and bound replays. `paymentIdempotencyKey` now takes a `{ method, path, amount, payTo }` scope and hashes it with the payment header, so a payment settled for one route can never replay against another route even when one store is shared. The x402 and mpp-charge handlers now go through `checkSettlementReplay`, which replays a cached response at most `MAX_SETTLEMENT_REPLAYS` (1) times within `SETTLEMENT_REPLAY_WINDOW_MS` (60s) and responds 402 `Payment already used` beyond that.
+
+  `SeenTxStore.claimReplay` and `SettlementRecord.createdAt` are **optional**, so an existing custom `SeenTxStore` that implements only `get`/`set` keeps compiling and does not need a breaking release. Such a store keeps working: records carrying `createdAt` are limited by the 60s window, and a store that supplies neither a timestamp nor `claimReplay` replays exactly as it did before, so nothing that works today starts returning 402. Implement `claimReplay` and record `createdAt` to get the full one-replay, 60s bound. The Supabase implementation calls the new `claim_settlement_replay` function from `supabase/migrations/006_settlement_replay_limit.sql`. Custom adapters that call `paymentIdempotencyKey` directly must now pass a `{ method, path, amount, payTo }` scope: the function is exported from `@routedock/routedock/provider` and the second `scope` argument is required, so that call site stops compiling until it is updated. Adapters built on the SDK's own `x402Handler`/`MppChargeHandler` need no change.
+
+### Patch Changes
+
+- [#493](https://github.com/winsznx/routedock/pull/493) [`d6da43e`](https://github.com/winsznx/routedock/commit/d6da43e7eefb5a6488647c17240d356cac961da6) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Classify mppx signing and challenge failures as non-retryable `RouteDockSignatureError` instead of retryable `RouteDockNetworkError`.
+
+- [#492](https://github.com/winsznx/routedock/pull/492) [`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Reject negative `amountStroops` and non-safe-integer or negative `ledgerSequence` in nulth policy enforcement with `RangeError`.
+
+- [#536](https://github.com/winsznx/routedock/pull/536) [`ddb2cbe`](https://github.com/winsznx/routedock/commit/ddb2cbe455e7b7940a402a9e49943cebbb191765) Thanks [@vrse-vrde](https://github.com/vrse-vrde)! - Sign at most one payment per `pay()` call. `X402Client.pay` and `MppChargeClient.pay` used to wrap their whole payment flow in `withRetry`, so every retry sent a fresh unpaid probe, received a fresh 402 and signed a fresh payment — one `client.pay()` against a flaky route could settle up to `maxAttempts` on-chain payments while the spend cap recorded one. The unpaid probe is now retried on its own, the payment (x402 payload, mpp-charge credential) is created exactly once, and only the paid request is retried, resending the byte-identical headers so the provider's idempotency store can replay the cached settlement instead of charging again.
+
+- Updated dependencies [[`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f)]:
+  - @routedock/nulth-sdk@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes
