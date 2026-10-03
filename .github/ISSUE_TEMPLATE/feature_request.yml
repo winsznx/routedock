@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a change to RouteDock, its SDKs, the MCP server or a provider.
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you unable to do today, and what does that cost you? Describe the constraint rather than the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should RouteDock do instead? Sketch the API, config or workflow you want, even roughly.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the repository would this touch?
+      options:
+        - sdk
+        - nulth-sdk
+        - mcp-server
+        - apps/*
+        - contracts
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you ruled out, or an existing workaround you are using today.
+    validations:
+      required: false

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/winsznx/routedock/security/advisories/new
+    about: Report vulnerabilities privately through GitHub security advisories instead of a public issue.
+  - name: Security policy
+    url: https://github.com/winsznx/routedock/blob/main/SECURITY.md
+    about: Read how RouteDock handles vulnerability reports before you file one.
