@@ -20,6 +20,7 @@ function mockSession(): SessionHandle {
       return { closeTxHash: 'close-hash', totalPaid: '0.005', vouchersIssued: 5 }
     },
     async requestRefund() { return 'refund-hash' },
+    async claimRefund() { return 'claim-refund-hash' },
     async settleWithLatestVoucher() { return 'settle-hash' },
     async getDisputeStatus() { return 'open' },
     on() { return () => {} },

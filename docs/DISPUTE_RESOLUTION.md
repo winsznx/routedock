@@ -10,17 +10,18 @@ An MPP session uses a Soroban one-way-channel contract funded by the payer (agen
 
 If that normal path fails, the contract exposes a refund path:
 
-1. Agent calls `request_refund` on-chain → channel moves to `in-refund-window`.
+1. Agent calls `close_start` on-chain → channel moves to `in-refund-window`.
 2. Provider has `refund_waiting_period_ledgers` (~24 h on mainnet, minimum 17 280 ledgers) to call `settle_with_signature` with any voucher it holds.
 3. If the provider does not settle in time, the channel moves to `refundable`.
-4. Agent calls `claim_refund` on-chain → full remaining balance returned.
+4. Agent calls `refund` on-chain → full remaining balance returned.
 
 The SDK surfaces this through `SessionHandle`:
 
 ```ts
 interface SessionHandle {
   close(): Promise<SessionCloseResult>         // normal path
-  requestRefund(): Promise<string>             // starts refund window
+  requestRefund(): Promise<string>             // starts refund window via close_start
+  claimRefund(): Promise<string>               // claims balance via refund
   settleWithLatestVoucher(): Promise<string>   // provider-side counter-settle
   getDisputeStatus(): Promise<DisputeStatus>   // 'open' | 'in-refund-window' | 'refundable' | 'settled'
 }
