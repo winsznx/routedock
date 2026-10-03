@@ -5,7 +5,7 @@ import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
-import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
+import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockSignatureError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
@@ -334,7 +334,10 @@ export class RouteDockClient {
     await this._checkTrustline(manifest)
 
     if (this.vault?.mode === 'nulth') {
-      return this._payWithNulthVault(url, manifest, mode)
+      throw new RouteDockSignatureError(
+        'Nulth vault payments are not supported — Nulth signers return ZK proof bytes, ' +
+          'not ed25519 signatures. See https://github.com/winsznx/routedock/issues/356'
+      )
     }
 
     let amount: string

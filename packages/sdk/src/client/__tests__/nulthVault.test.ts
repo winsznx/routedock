@@ -4,17 +4,27 @@
 
 import assert from 'node:assert/strict'
 import { Address, Networks, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk'
+import { authorizeEntry } from '@stellar/stellar-sdk'
+import { createServer } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Keypair } from '@stellar/stellar-sdk'
 import {
   assertNulthVaultManifest,
   prepareNulthSigner,
+  createPolicyState,
+  paymentContextFromManifest,
+  NulthPolicyError,
+  decodeAuthSignature,
 } from '../NulthVault.js'
 import type { RouteDockManifest } from '../../types.js'
-import { RouteDockManifestError } from '../../errors.js'
-import { decodeAuthSignature, NulthPolicyError } from '../NulthVault.js'
+import { RouteDockManifestError, RouteDockSignatureError } from '../../errors.js'
+import { resolvePayee } from '../../provider/payee.js'
+import { RouteDockClient } from '../RouteDockClient.js'
+import { signManifest } from '../../manifest/sign.js'
 
 const NULTH = 'CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT'
 const PAYEE = 'GDHLJWBM6Z2Y4KF6Z4JAFIUUO2KAXAJ6MAIUK2XMGBQ7ZUUZ7HFPW2BK'
-const OTHER_PAYEE = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
+const PAYEE_B = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const USDC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 const OTHER_ASSET = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
 
@@ -163,7 +173,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
 
   // wrong `to` (payee)
   await assert.rejects(
-    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, NULTH, OTHER_PAYEE, 10_000n))),
+    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n))),
     isMismatch,
     'rejects when the preimage payee differs from paymentContext.payee',
   )
@@ -191,7 +201,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
 
   // wrong `from`
   await assert.rejects(
-    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, OTHER_PAYEE, PAYEE, 10_000n))),
+    () => freshSigner().then((s) => s.signAuthEntry(transferPreimage(USDC, PAYEE_B, PAYEE, 10_000n))),
     isMismatch,
     'rejects when the from argument differs from nulthAccount',
   )
@@ -297,7 +307,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   const { signer } = await prepareNulthSigner(tightVault, baseManifest, 'x402', 'testnet', 100_000)
 
   await assert.rejects(
-    () => signer.signAuthEntry(transferPreimage(USDC, NULTH, OTHER_PAYEE, 10_000n)),
+    () => signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n)),
     (err: unknown) => err instanceof NulthPolicyError && err.code === 'auth_entry_mismatch',
   )
 
@@ -307,4 +317,240 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   const decoded = decodeAuthSignature(result.signedAuthEntry)
   assert.equal(decoded.proof.publicInputs.amountStroops, '10000')
   console.log('✓ a rejected sign attempt leaves daily spend unchanged')
+}
+
+// --- usdcToStroops validation tests ---
+
+function manifestWithPrice(amount: string): RouteDockManifest {
+  const pricing = { ...baseManifest.pricing! }
+  pricing.x402 = { ...baseManifest.pricing!.x402!, amount }
+  return { ...baseManifest, pricing }
+}
+
+const INVALID_AMOUNTS = ['-5', '-1.5', '', '1.123456789', '0.00000009']
+
+for (const amount of INVALID_AMOUNTS) {
+  assert.throws(
+    () => createPolicyState({ dailyCapUsdc: amount, allowedPayees: [PAYEE], witnessSecret: 'witness' }),
+    RangeError,
+  )
+  assert.throws(
+    () => paymentContextFromManifest(
+      { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount } } },
+      'x402',
+      100_000,
+    ),
+    RangeError,
+  )
+}
+console.log('✓ invalid amounts throw RangeError')
+
+{
+  const policy = createPolicyState({ dailyCapUsdc: '1.00', allowedPayees: [PAYEE], witnessSecret: 'witness' })
+  assert.equal(policy.dailyCapStroops, 10_000_000n)
+}
+{
+  const ctx = paymentContextFromManifest(
+    { payee: PAYEE, asset_contract: baseManifest.asset_contract, pricing: { x402: { amount: '0.001' } } },
+    'x402',
+    100_000,
+  )
+  assert.equal(ctx.amountStroops, 10_000n)
+}
+console.log('✓ valid amounts produce correct stroops')
+
+await assert.rejects(
+  () => prepareNulthSigner(vault, manifestWithPrice('-1'), 'x402', 'testnet', 100_000),
+  RangeError,
+)
+console.log('✓ prepareNulthSigner rejects negative price')
+
+// --- per-mode payee override tests ---
+
+{
+  const manifestWithOverride: RouteDockManifest = {
+    ...baseManifest,
+    payee: PAYEE,
+    pricing: {
+      ...baseManifest.pricing!,
+      x402: { ...baseManifest.pricing!.x402!, payee: PAYEE_B },
+      'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet', payee: PAYEE_B },
+    },
+  }
+
+  // allowlisting the override address signs (with correct preimage for PAYEE_B)
+  {
+    const vaultWithOverride = { ...vault, allowedPayees: [PAYEE_B] }
+    const { signer } = await prepareNulthSigner(vaultWithOverride, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n))
+    console.log('✓ allowlisting override address signs')
+  }
+
+  // allowlisting only the top-level payee rejects (preimage targets override payee but vault doesn't allow it)
+  {
+    const vaultDefault = { ...vault, allowedPayees: [PAYEE] }
+    const { signer } = await prepareNulthSigner(vaultDefault, manifestWithOverride, 'x402', 'testnet', 100_000)
+    await assert.rejects(
+      () => signer.signAuthEntry(transferPreimage(USDC, NULTH, PAYEE_B, 10_000n)),
+      (err: unknown) => err instanceof NulthPolicyError && (err as NulthPolicyError).code === 'payee_not_allowed',
+    )
+    console.log('✓ allowlisting only top-level payee rejects')
+  }
+
+  // paymentContextFromManifest returns override when set
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestWithOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestWithOverride, 'mpp-charge'))
+  }
+
+  // paymentContextFromManifest returns top-level payee when no override
+  const manifestNoOverride: RouteDockManifest = {
+    ...baseManifest,
+    pricing: { ...baseManifest.pricing!, 'mpp-charge': { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' } },
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'x402', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'x402'))
+  }
+  {
+    const ctx = paymentContextFromManifest(manifestNoOverride, 'mpp-charge', 100_000)
+    assert.equal(ctx.payee, resolvePayee(manifestNoOverride, 'mpp-charge'))
+  }
+}
+console.log('✓ per-mode payee override works correctly')
+
+// --- RouteDockClient.pay() rejects Nulth vaults ---
+
+function startTestServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = createServer(handler)
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as { port: number }
+      resolve({
+        url: `http://127.0.0.1:${addr.port}`,
+        close: () => new Promise<void>((res) => server.close(() => res())),
+      })
+    })
+  })
+}
+
+function stubTrustlineCache(client: RouteDockClient): void {
+  const keypair = (client as any).keypair as Keypair
+  const network = (client as any).network as string
+  const cacheKey = `${network}:${keypair.publicKey()}:USDC`
+  ;(RouteDockClient as any)._trustlineCache.set(cacheKey, {
+    exists: true,
+    expiresAt: Date.now() + 300_000,
+  })
+}
+
+{
+  const signerKp = Keypair.random()
+  const manifest = signManifest({
+    routedock: '1.0',
+    name: 'Nulth Vault Test Provider',
+    description: 'Test',
+    modes: ['x402'],
+    network: 'testnet',
+    asset: 'USDC',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    payee: signerKp.publicKey(),
+    pricing: { x402: { amount: '0.001', per: 'request', facilitator: 'https://channels.openzeppelin.com/x402/testnet' } },
+    endpoints: { price: { method: 'GET', path: '/price' } },
+    tags: ['test'],
+    vault: 'nulth',
+    nulth_account: NULTH,
+  }, signerKp.secret())
+
+  const requests: string[] = []
+  const server = await startTestServer((req, res) => {
+    requests.push(req.url ?? '')
+    if (req.url === '/.well-known/routedock.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(manifest))
+    } else {
+      res.writeHead(404); res.end()
+    }
+  })
+
+  const client = new RouteDockClient({
+    wallet: Keypair.random(),
+    network: 'testnet',
+    expectedPayee: signerKp.publicKey(),
+    vault: { mode: 'nulth', nulthAccount: NULTH, witnessSecret: 'witness', allowedPayees: [PAYEE], dailyCapUsdc: '1.00' },
+  })
+  stubTrustlineCache(client)
+
+  await assert.rejects(
+    () => client.pay(server.url + '/price'),
+    (err: unknown) => err instanceof RouteDockSignatureError && /nulth/i.test(err.message) && /not supported/i.test(err.message),
+  )
+  assert.equal(requests.length, 1, 'server should only receive the manifest request')
+  assert.equal(requests[0], '/.well-known/routedock.json', 'only request should be the manifest')
+  await server.close()
+  console.log('✓ RouteDockClient.pay() rejects Nulth vaults')
+}
+
+// --- authorizeEntry rejects Nulth signer ---
+
+{
+  const vault = {
+    mode: 'nulth' as const,
+    nulthAccount: NULTH,
+    witnessSecret: 'witness',
+    allowedPayees: [PAYEE],
+    dailyCapUsdc: '1.00',
+  }
+  const signerResult = await prepareNulthSigner(vault, baseManifest, 'x402', 'testnet', 100_000)
+
+  let signerCalls = 0
+  const signWithNulth = async (preimage: import("@stellar/stellar-sdk").xdr.HashIdPreimage) => {
+    signerCalls++
+    const result = await signerResult.signer.signAuthEntry(preimage.toXDR('base64'))
+    return Buffer.from(result.signedAuthEntry, 'base64')
+  }
+
+  // Build a real Soroban authorization entry with transfer invocation
+  const invocation = new xdr.SorobanAuthorizedInvocation({
+    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+      new xdr.InvokeContractArgs({
+        contractAddress: Address.fromString(USDC).toScAddress(),
+        functionName: 'transfer',
+        args: [
+          nativeToScVal(NULTH, { type: 'address' }),
+          nativeToScVal(PAYEE, { type: 'address' }),
+          nativeToScVal(10_000n, { type: 'i128' }),
+        ],
+      }),
+    ),
+    subInvocations: [],
+  })
+  const entry = new xdr.SorobanAuthorizationEntry({
+    credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new xdr.SorobanAddressCredentials({
+        address: new Address(NULTH).toScAddress(),
+        nonce: xdr.Int64.fromString('1'),
+        signatureExpirationLedger: 300,
+        signature: xdr.ScVal.scvVoid(),
+      }),
+    ),
+    rootInvocation: invocation,
+  })
+
+  // This should reject because the Nulth signer validates the auth entry as a preimage
+  // and rejects it (it's not a base64-encoded auth entry), demonstrating that Nulth signers
+  // can't be used with authorizeEntry which passes preimages, not auth entries.
+  // See https://github.com/winsznx/routedock/issues/356
+  await assert.rejects(
+    () => authorizeEntry(entry, signWithNulth, 100_100, Networks.TESTNET),
+    /invalid version byte. expected 48, got 16/
+  )
+  assert.equal(signerCalls, 1)
+  console.log('✓ authorizeEntry rejects Nulth signer')
 }

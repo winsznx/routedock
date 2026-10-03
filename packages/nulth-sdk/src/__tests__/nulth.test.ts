@@ -12,6 +12,7 @@ import {
   createNulthSigner,
   createPolicyState,
   decodeAuthSignature,
+  paymentContextFromManifest,
   setNulthPaymentContext,
 } from '../index.js'
 import type { NulthClientConfig } from '../index.js'
@@ -438,4 +439,35 @@ console.log('✓ mainnet rejects the insecure mock prover at construction')
     )
   }
   console.log('✓ mainnet guard fails closed for missing/misspelled network and prover values')
+}
+
+// --- per-mode payee override tests ---
+
+{
+  const manifestNoOverride = {
+    payee: PAYEE_A,
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    pricing: {
+      x402: { amount: '0.001' },
+      'mpp-charge': { amount: '0.001' },
+    },
+  }
+  const manifestWithOverride = {
+    payee: PAYEE_A,
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    pricing: {
+      x402: { amount: '0.001', payee: PAYEE_B },
+      'mpp-charge': { amount: '0.001', payee: PAYEE_B },
+    },
+  }
+
+  // returns override when set
+  assert.equal(paymentContextFromManifest(manifestWithOverride, 'x402', 100_000).payee, PAYEE_B)
+  assert.equal(paymentContextFromManifest(manifestWithOverride, 'mpp-charge', 100_000).payee, PAYEE_B)
+
+  // returns top-level payee when no override
+  assert.equal(paymentContextFromManifest(manifestNoOverride, 'x402', 100_000).payee, PAYEE_A)
+  assert.equal(paymentContextFromManifest(manifestNoOverride, 'mpp-charge', 100_000).payee, PAYEE_A)
+
+  console.log('✓ nulth-sdk paymentContextFromManifest handles per-mode payee override')
 }
