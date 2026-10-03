@@ -15,8 +15,13 @@
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "tsx": "^4.22.4",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.58.0"
   },
   "dependencies": {
     "@changesets/cli": "^2.31.0"
