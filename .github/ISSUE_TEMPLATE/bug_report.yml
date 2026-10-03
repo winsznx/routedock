@@ -1,0 +1,104 @@
+name: Bug report
+description: Report a defect in RouteDock, its SDKs, the MCP server or a provider.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. RouteDock routes payments across four
+        modes on two networks, so the fields below are what a maintainer needs to triage
+        without asking you a follow-up question.
+
+        If this is a security vulnerability, close this form and use the private
+        security advisory link on the previous page instead.
+
+  - type: input
+    id: sdk_version
+    attributes:
+      label: "@routedock/routedock version"
+      description: The exact version you are running. Run `npm ls @routedock/routedock` or check your lockfile.
+      placeholder: 0.4.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Payment mode
+      description: Which routing mode is involved?
+      options:
+        - x402
+        - mpp-charge
+        - mpp-session
+        - mpp-session-ws
+        - not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      description: Which Stellar network is this against?
+      options:
+        - testnet
+        - pubnet
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node version
+      description: "Output of `node --version`. RouteDock requires Node >= 22 because wrangler 4 refuses to run on Node 20."
+      placeholder: v22.18.0
+    validations:
+      required: true
+
+  - type: input
+    id: provider_url
+    attributes:
+      label: Provider URL
+      description: The provider endpoint involved, or the word self-hosted if you run your own provider.
+      placeholder: https://provider.example.com
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. Include the command or HTTP request you ran and the arguments it took.
+      placeholder: |
+        1. pnpm --filter @routedock/routedock build
+        2. node -e "..."
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? A wrong payment amount, a raw exception and a silent no-op are all different bugs, so be specific.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Paste the relevant console output, stack trace or HTTP response. Remove any secret keys, tokens or seed phrases first.
+      render: text
+    validations:
+      required: false
