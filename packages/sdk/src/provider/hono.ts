@@ -805,7 +805,7 @@ function isWebSocketUpgradeRequest(c: {
  * ```ts
  * import { routedockHono } from '@routedock/sdk/provider/hono'
  *
- * app.use('/price', routedockHono({
+ * app.use('*', routedockHono({
  *   modes: ['x402', 'mpp-charge'],
  *   pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
  *   ...

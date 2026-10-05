@@ -67,7 +67,7 @@ export interface RouteDockMiddlewareOptions {
  * ```ts
  * import { routedock } from '@routedock/sdk/provider'
  *
- * app.use('/price', routedock({
+ * app.use(routedock({
  *   modes: ['x402', 'mpp-charge'],
  *   pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
  *   ...

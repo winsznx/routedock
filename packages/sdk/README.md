@@ -72,7 +72,7 @@ import { routedock } from '@routedock/sdk/provider'
 
 const app = express()
 
-app.use('/price', routedock({
+app.use(routedock({
   modes: ['x402', 'mpp-charge'],
   pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
   asset: 'USDC',
@@ -85,6 +85,10 @@ app.use('/price', routedock({
     console.log(`settled: ${mode} ${amount} USDC — ${txHash}`)
   },
 }))
+
+app.get('/price', (_req, res) => res.json({ price: '42' }))
+
+Mount the middleware at the app root. Clients fetch `/.well-known/routedock.json` from the provider origin, and the middleware only serves it when the request reaches it at that exact path.
 ```
 
 ## Session Lifecycle Hooks
@@ -92,7 +96,7 @@ app.use('/price', routedock({
 For `mpp-session` mode, the middleware exposes three hooks that fire at each stage of the payment channel lifecycle:
 
 ```ts
-app.use('/stream', routedock({
+app.use(routedock({
   modes: ['mpp-session'],
   pricing: { 'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT } },
   asset: 'USDC',
@@ -532,7 +536,7 @@ function StreamingFeed() {
 }
 ```
 
-The hook automatically fires `session.close()` in the background on unmount when status is `open` (best-effort settlement).
+The hook automatically fires `session.close()` in the background on unmount when status is `open` or while `open()` is still pending (best-effort settlement).
 
 ### `useTxLog(filter?)`
 

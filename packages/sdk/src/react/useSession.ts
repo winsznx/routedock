@@ -16,7 +16,7 @@ export interface UseSessionResult {
 
 /**
  * Manages MPP session lifecycle. On unmount, fires session.close() in the
- * background if status === 'open' (best-effort settlement).
+ * background if it is open or still opening (best-effort settlement).
  *
  * @example
  * const { session, open, close, vouchers, cumulative, status } = useSession(streamUrl)
@@ -31,6 +31,7 @@ export function useSession(url: string): UseSessionResult {
   const [error, setError] = useState<Error | null>(null)
   const mountedRef = useRef(true)
   const sessionRef = useRef<SessionHandle | null>(null)
+  const inFlightRef = useRef<Promise<SessionHandle | null> | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -47,24 +48,37 @@ export function useSession(url: string): UseSessionResult {
   }, [])
 
   const open = useCallback(async (): Promise<SessionHandle | null> => {
+    if (sessionRef.current) return sessionRef.current
+    if (inFlightRef.current) return inFlightRef.current
+
     setStatus('opening')
     setError(null)
-    try {
-      const s = await client.openSession(url)
-      sessionRef.current = s
-      if (mountedRef.current) {
+    const opening = client.openSession(url)
+      .then(async (s) => {
+        if (!mountedRef.current) {
+          await s.close().catch(() => {
+            /* unmount best-effort */
+          })
+          return null
+        }
+        sessionRef.current = s
         setSession(s)
         setStatus('open')
-      }
-      return s
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err))
-      if (mountedRef.current) {
-        setError(e)
-        setStatus('error')
-      }
-      return null
-    }
+        return s
+      })
+      .catch((err) => {
+        const e = err instanceof Error ? err : new Error(String(err))
+        if (mountedRef.current) {
+          setError(e)
+          setStatus('error')
+        }
+        return null
+      })
+      .finally(() => {
+        if (inFlightRef.current === opening) inFlightRef.current = null
+      })
+    inFlightRef.current = opening
+    return opening
   }, [client, url])
 
   const close = useCallback(async (): Promise<SessionCloseResult | null> => {
