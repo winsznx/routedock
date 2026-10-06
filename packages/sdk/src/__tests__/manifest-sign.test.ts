@@ -240,4 +240,42 @@ describe('verifyManifestSignature', () => {
       (err) => err instanceof RouteDockSignatureError,
     )
   })
+
+  it('includes nested assets in signature and detects tampering on assets[1].asset_contract', () => {
+    const multiAssetManifest: RouteDockManifest = {
+      ...baseManifest,
+      assets: [
+        {
+          asset: 'USDC',
+          asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+          modes: ['x402'],
+        },
+        {
+          asset: 'XLM',
+          asset_contract: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+          modes: ['mpp-charge'],
+        },
+      ],
+    }
+
+    const signed = signManifest(multiAssetManifest, keypair.secret())
+    assert.doesNotThrow(() => verifyManifestSignature(signed))
+
+    // Tamper nested assets[1].asset_contract
+    const tampered = {
+      ...signed,
+      assets: [
+        signed.assets![0]!,
+        {
+          ...signed.assets![1]!,
+          asset_contract: 'CTAMPEREDCONTRACTADDRESS0000000000000000000000000000000000',
+        },
+      ],
+    }
+
+    assert.throws(
+      () => verifyManifestSignature(tampered),
+      (err) => err instanceof RouteDockSignatureError,
+    )
+  })
 })

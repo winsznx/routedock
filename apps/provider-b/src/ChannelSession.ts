@@ -168,6 +168,12 @@ export class ChannelSession extends DurableObject<Env> {
     app.get(
       '/stream/orderbook',
       upgradeWebSocket((c) => {
+        // Hono runs this callback before it checks the Upgrade header, so a
+        // plain mpp-session GET lands here too. Return no events and let the
+        // helper fall through to the HTTP route below.
+        if (c.req.header('upgrade')?.toLowerCase() !== 'websocket') {
+          return {}
+        }
         // Never upgrade a handshake the payment middleware did not verify.
         // (The middleware returns 402 before reaching this route, so this is
         // defense in depth against misconfiguration — fail fast rather than

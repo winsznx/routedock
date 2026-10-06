@@ -4,7 +4,7 @@ import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/serv
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
-import { resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
+import { buildSessionSettlementTransaction, resolveVaultSettlementAddresses } from './internal/vaultSettlement.js'
 import { extractPayerAddress } from './payer.js'
 import {
   channelAuthorizer,
@@ -13,6 +13,7 @@ import {
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
 import type { Method } from 'mppx'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 
 /** Store shape extended with optional atomic update operation. */
 export type ChannelStore = MppxStore.Store & {
@@ -68,7 +69,7 @@ export interface MppSessionHandlerOptions {
   network: Network
   channelFactory: string
   rate: string
-  assetContract: string
+  assetContract?: string
   manifest: RouteDockManifest
   commitmentPublicKey: string
   onSettled?: (txHash: string, totalPaid: string, mode: string, payer: string | null) => Promise<void>
@@ -86,12 +87,15 @@ export interface MppSessionHandlerOptions {
    * activity. Disabled when unset.
    */
   idleTimeoutMs?: number
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
   const networkId = MPP_NETWORK[opts.network]
   const rateHuman = opts.rate
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
+  const logger = resolveLogger(opts.logger)
   const voucherRecordKey = `routedock:session:voucher:${opts.channelFactory}`
 
   const innerStore = Store.memory()
@@ -172,7 +176,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
           reason,
         })
       } catch (err) {
-        console.error('[mpp-session] onOrphaned handler failed:', err)
+        logger('error', '[mpp-session] onOrphaned handler failed', { error: err })
       }
     }
   }
@@ -226,7 +230,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         Promise.resolve()
           .then(() => opts.onSessionOpen!(opts.channelFactory, record!.payer))
           .catch((err) => {
-            console.error('[mpp-session] onSessionOpen callback error:', err)
+            logger('error', '[mpp-session] onSessionOpen callback error', { error: err })
             opts.onCallbackError?.(err, 'onSessionOpen')
           })
       }
@@ -234,7 +238,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     if (opts.onVoucher) {
       const humanAmount = (Number(record.amount) / 1e7).toFixed(7)
       Promise.resolve().then(() => opts.onVoucher!(opts.channelFactory, voucherCount, humanAmount, record!.signature)).catch(err => {
-        console.error('[mpp-session] onVoucher callback error:', err)
+        logger('error', '[mpp-session] onVoucher callback error', { error: err })
         opts.onCallbackError?.(err, 'onVoucher')
       })
     }
@@ -293,55 +297,49 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
           if (opts.onSettled) {
             const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
             Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', closePayer)).catch(err => {
-              console.error('[mpp-session] onSettled callback error:', err)
+              logger('error', '[mpp-session] onSettled callback error', { error: err })
               opts.onCallbackError?.(err, 'onSettled')
             })
           }
 
           // Optionally record session_settled on the agent vault.
-          // Requires AGENT_VAULT_CONTRACT and AGENT_VAULT_ADMIN_SECRET env vars.
+          // The vault authorizes this call with the allowlisted payee's own key,
+          // so the payee is the transaction source and signs it. Requires the
+          // AGENT_VAULT_CONTRACT env var only — the vault admin secret is never
+          // read, so a provider never holds the key that guards upgrade().
           const vaultContract = process.env.AGENT_VAULT_CONTRACT
-          const vaultAdminSecret = process.env.AGENT_VAULT_ADMIN_SECRET
-          if (vaultContract && vaultAdminSecret) {
+          if (vaultContract) {
             const settlementAddresses = resolveVaultSettlementAddresses(
               closePayer,
               payeeKeypair.publicKey(),
             )
             if (!settlementAddresses) {
-              console.error('[mpp-session] skipped session_settled vault record: payer address unavailable')
+              logger('warn', '[mpp-session] skipped session_settled vault record: payer address unavailable')
             } else {
               try {
-                const { Contract, TransactionBuilder, BASE_FEE, Networks, Account } = await import('@stellar/stellar-sdk')
+                const { Networks } = await import('@stellar/stellar-sdk')
                 const { Server } = await import('@stellar/stellar-sdk/rpc')
-                const adminKp = Keypair.fromSecret(vaultAdminSecret)
                 const networkPassphrase = opts.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
                 const rpcUrl = opts.network === 'mainnet'
                   ? 'https://mainnet.sorobanrpc.com'
                   : 'https://soroban-testnet.stellar.org'
                 const server = new Server(rpcUrl)
-                const sourceAccount = await server.getAccount(adminKp.publicKey())
-                const vault = new Contract(vaultContract)
-                const { nativeToScVal, Address: StellarAddress } = await import('@stellar/stellar-sdk')
-                const op = vault.call(
-                  'record_session_settlement',
-                  nativeToScVal(opts.channelFactory, { type: 'address' }),
-                  nativeToScVal(settlementAddresses.payer, { type: 'address' }),
-                  nativeToScVal(settlementAddresses.payee, { type: 'address' }),
-                  nativeToScVal(closeAmount, { type: 'i128' }),
-                  nativeToScVal(voucherCount, { type: 'u32' }),
-                )
-                const tx = new TransactionBuilder(sourceAccount, {
-                  fee: BASE_FEE,
+                const payeePublicKey = payeeKeypair.publicKey()
+                const sourceAccount = await server.getAccount(payeePublicKey)
+                const tx = buildSessionSettlementTransaction(
+                  sourceAccount,
+                  vaultContract,
+                  opts.channelFactory,
+                  settlementAddresses,
+                  closeAmount,
+                  voucherCount,
                   networkPassphrase,
-                })
-                  .addOperation(op)
-                  .setTimeout(30)
-                  .build()
+                )
                 const preparedTx = await server.prepareTransaction(tx)
-                preparedTx.sign(adminKp)
+                preparedTx.sign(payeeKeypair)
                 await server.sendTransaction(preparedTx)
               } catch (recordErr) {
-                console.error('[mpp-session] failed to record session_settled on vault:', recordErr)
+                logger('error', '[mpp-session] failed to record session_settled on vault', { error: recordErr })
               }
             }
           }

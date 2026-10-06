@@ -8,6 +8,7 @@ import { signManifest } from '../manifest/sign.js'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import type { RouteDockLogger } from '../internal/logger.js'
 
 export interface RouteDockFastifyOptions {
   modes: PaymentMode[]
@@ -16,8 +17,8 @@ export interface RouteDockFastifyOptions {
     'mpp-charge'?: string
     'mpp-session'?: { rate: string; channelFactory: string }
   }
-  asset: string
-  assetContract: string
+  asset?: string
+  assetContract?: string
   payee: string
   network: 'testnet' | 'mainnet'
   payeeSecretKey: string
@@ -31,6 +32,11 @@ export interface RouteDockFastifyOptions {
   onOrphaned?: (channelId: string, info: OrphanedSessionInfo) => Promise<void>
   idleTimeoutMs?: number
   seenTxStore?: SeenTxStore
+  /**
+   * Structured log sink for every adapter diagnostic (settlement errors,
+   * callback failures, orphaned sessions). Defaults to a console-backed logger.
+   */
+  logger?: RouteDockLogger
 }
 
 // ---------------------------------------------------------------------------
@@ -204,12 +210,13 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: x402Price,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
           manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -224,11 +231,12 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: chargePrice,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -247,7 +255,7 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
           network: opts.network,
           channelFactory: sessionPricing.channelFactory,
           rate: sessionPricing.rate,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           manifest: signedManifest,
           commitmentPublicKey: opts.commitmentPublicKey,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
@@ -256,6 +264,7 @@ export function routedockFastify(opts: RouteDockFastifyOptions): FastifyPluginAs
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }

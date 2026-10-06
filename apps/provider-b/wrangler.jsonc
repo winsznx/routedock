@@ -3,6 +3,13 @@
   "name": "routedock-provider-b",
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-05",
+  // Wrangler resolves "@stellar/stellar-sdk" to its browser build, which
+  // bundles its own stellar-base, while "@stellar/stellar-sdk/rpc" loads the
+  // node build. Mixing the two breaks instanceof checks in the x402 verifier
+  // ("expected a 'Transaction'"), so pin the root import to the node build.
+  "alias": {
+    "@stellar/stellar-sdk": "./node_modules/@stellar/stellar-sdk/lib/index.js"
+  },
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true

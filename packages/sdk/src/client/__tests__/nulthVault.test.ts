@@ -308,3 +308,25 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
   assert.equal(decoded.proof.publicInputs.amountStroops, '10000')
   console.log('✓ a rejected sign attempt leaves daily spend unchanged')
 }
+
+{
+  const vaultWithExpiry = {
+    ...vault,
+    expiryLedger: 10,
+  }
+  const { signer } = await prepareNulthSigner(
+    vaultWithExpiry,
+    baseManifest,
+    'x402',
+    'testnet',
+    Number.NaN,
+  )
+  await assert.rejects(
+    () =>
+      signer.signAuthEntry(
+        transferPreimage(USDC, NULTH, PAYEE, 10_000n),
+      ),
+    RangeError,
+  )
+  console.log('✓ prepareNulthSigner rejects NaN ledger on signing with RangeError')
+}

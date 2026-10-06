@@ -60,10 +60,13 @@ Open a sustained MPP session for streaming data. Uses off-chain vouchers for low
 ### 3. stream_session(channel_id, max_messages)
 
 Pull the next batch of streamed responses from a session opened with `open_session`.
+`max_messages` must be an integer from 1 to 50 (default 1).
 
 **Use case:** Consuming a streaming session's data after opening it
 
-**Returns:** The pulled messages
+**Returns:** The pulled messages. If a voucher fails mid-batch, the call returns `isError: true`
+with the already-paid messages, plus `count` and `stats`, so the caller can see what it was
+charged for in that call.
 
 ### 4. close_session(channel_id)
 

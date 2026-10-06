@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: `Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar ${networkLabel()}.`,
 }
 
-import { getSupabaseServerClient } from '@/lib/supabase'
+import { getSupabaseServerClient, SESSION_COLUMNS } from '@/lib/supabase'
 import { aggregateSessions } from '@/lib/aggregateSessions'
 import { DashboardHeader } from '@/components/layout/DashboardHeader'
 import { MetricCard } from '@/components/dashboard/MetricCard'
@@ -24,7 +24,7 @@ async function fetchDashboardData() {
   const [sessionsRes, txLogRes] = await Promise.all([
     supabase
       .from('public_sessions')
-      .select('*')
+      .select(SESSION_COLUMNS)
       .order('opened_at', { ascending: false })
       .limit(50),
     supabase

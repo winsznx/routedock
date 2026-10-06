@@ -62,6 +62,7 @@ graph LR
 | Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
 | Contract | endpoint allowlist policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
 | Contract | session key expiry | `contracts/agent-vault/src/lib.rs:__check_auth` |
+| Contract | 17,280-ledger Wasm upgrade notice period | `contracts/agent-vault/src/lib.rs:propose_upgrade` / `execute_upgrade` |
 | Contract | one-way-channel signature verification | [`CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH`](https://stellar.expert/explorer/testnet/contract/CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH) |
 
 ### Security Notice
@@ -72,6 +73,8 @@ The one-way-channel Soroban contract (`stellar-experimental/one-way-channel`) ha
 - Shortlisted auditors: [OtterSec](https://ottersec.com/), [Hacken](https://hacken.io/), [Trail of Bits](https://trailofbits.com/)
 - SCF Audit Bank application: Submitted
 
+The vault's single admin can still rotate agent keys and change caps, allowlists, and expiry. The upgrade timelock guarantees advance notice before the contract enforcement code itself is replaced; it does not make the admin trustless. Operators and governed payers should monitor `upgrade_proposed` and `upgrade_cancelled`, review every target Wasm hash, and use `pending_upgrade` to display the exact earliest execution ledger.
+
 ## Soroban Events
 
 The `agent-vault` contract emits structured events that indexers and Stellar Expert can attest to without parsing tx state changes.
@@ -79,7 +82,10 @@ The `agent-vault` contract emits structured events that indexers and Stellar Exp
 | Event | Topics | Data | When |
 |---|---|---|---|
 | `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
-| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | Server calls `record_session_settlement` after channel close |
+| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | After channel close, the provider calls `record_session_settlement`, authorized by its own allowlisted payee key |
+| `upgrade_proposed` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin schedules a Wasm change and starts the notice period |
+| `upgrade_cancelled` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin cancels a scheduled Wasm change |
+| `upgraded` | `(Symbol)` | `(new_wasm_hash: BytesN<32>)` | A ready Wasm proposal executes successfully |
 
 ```bash
 stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
@@ -141,13 +147,21 @@ Redeploying `provider-a`/`provider-b`: read [`docs/PROVIDER_REDEPLOY_ORDERING.md
 
 | Example | What it shows |
 |---|---|
-| [`examples/streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session to Provider B's `/stream/orderbook`, consumes 100 voucher-backed orderbook updates, prints best bid/ask, spread, and mid price, then closes the session and logs the settlement tx hash. |
+| [`price-oracle-agent`](examples/price-oracle-agent) | Fetches paid price quotes with one-shot x402 settlements. |
+| [`inference-agent`](examples/inference-agent) | Runs a mock inference provider and pays each response with MPP charge. |
+| [`agent-to-agent`](examples/agent-to-agent) | Has an orchestrator agent pay a specialist agent for each summary. |
+| [`streaming-orderbook-agent`](examples/streaming-orderbook-agent) | Opens an MPP session, consumes 100 voucher-backed orderbook updates, and settles the channel on close. |
 
-Run it with:
+From a fresh clone, build the SDKs before starting any example:
 
 ```bash
-cd examples/streaming-orderbook-agent
 pnpm install
+pnpm --filter @routedock/nulth-sdk build
+pnpm --filter @routedock/routedock build
+
+cd examples/<name>
+cp .env.example .env
+# fill in .env
 pnpm start
 ```
 
@@ -218,6 +232,18 @@ Every provider serves `/.well-known/routedock.json`. The SDK fetches and validat
   "network": "testnet",
   "asset": "USDC",
   "asset_contract": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+  "assets": [
+    {
+      "asset": "USDC",
+      "asset_contract": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "modes": ["x402"]
+    },
+    {
+      "asset": "XLM",
+      "asset_contract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      "modes": ["mpp-charge"]
+    }
+  ],
   "payee": "G...",
   "pricing": {
     "x402": { "amount": "0.001", "per": "request" },
@@ -227,6 +253,10 @@ Every provider serves `/.well-known/routedock.json`. The SDK fetches and validat
   "tags": ["price", "stellar", "dex", "orderbook"]
 }
 ```
+
+Manifests support optional multi-asset scoping via `assets` while preserving root `asset` / `asset_contract` for backward compatibility. See [Multi-Asset Support](docs/MULTI_ASSET_SUPPORT.md) for full details on asset normalization, endpoint-aware selection, and client preflight.
+
+> **Compatibility Notice:** Because the manifest schema uses `additionalProperties: false`, clients older than the multi-asset release will reject manifests containing the new `assets` field. Providers must not emit `assets` until clients have upgraded.
 
 The Supabase `providers` table indexes manifests with `pg_trgm` trigram search — agents query by capability, not by URL.
 
@@ -277,6 +307,13 @@ export default app
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
 
+This example uses in-memory defaults for settlement idempotency and session
+state, which aren't safe once requests can land on different isolates or
+processes (Cloudflare Workers, Deno Deploy, or any multi-instance deployment).
+See [Running a provider in production](packages/sdk/README.md#running-a-provider-in-production)
+for the durable stores, cron reconciliation, and `mpp-session-ws` upgrade
+route a serverless provider needs.
+
 ### Testing your settlement callbacks
 
 Provider authors wiring `onSettled` (e.g. a Supabase write) shouldn't have to mock the whole middleware chain or sign real payments to test that callback. `@routedock/routedock/testing` is the `msw`-equivalent for RouteDock providers: a mock middleware that drives your callbacks with synthetic data.
@@ -293,12 +330,18 @@ app.use('/price', createMockRoutedockMiddleware({ mode: 'x402', payment: 'auto-p
 app.get('/price', (_req, res) => res.json({ price: '42' }))
 
 await request(app).get('/price').expect(200)
-expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
+expect(onSettled).toHaveBeenCalledWith(
+  expect.any(String),
+  '0.001',
+  'x402',
+  expect.any(String), // payer
+)
 ```
 
 - `payment: 'auto-pass'` (default) invokes the callbacks with synthetic data, then runs your route handler. `'auto-fail'` responds `402` and skips both — exactly like a rejected payment.
-- `mode: 'mpp-session'` drives the full `onSessionOpen → onVoucher* → onSettled` sequence.
-- Override synthetic values via `synthetic: { txHash, amount, channelId, rate, voucherCount }`.
+- `mode: 'mpp-session'` and `mode: 'mpp-session-ws'` both drive the full `onSessionOpen → onVoucher* → onSettled` sequence; `onSettled` reports the transport it ran.
+- The callbacks receive the same arguments as the real adapter, including `payer` (a Stellar `G...` account by default, or `null`).
+- Override synthetic values via `synthetic: { txHash, amount, channelId, rate, voucherCount, payer }`.
 - To test a callback with no HTTP server at all, call `runMockSettlement(opts)` directly — it returns the synthetic settlement record.
 
 ---

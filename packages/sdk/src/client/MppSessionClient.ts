@@ -30,11 +30,14 @@ import {
   RouteDockDisputeError,
   httpStatusToError,
   wrapFetchError,
+  wrapMppError,
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
+import { consoleLogger, type RouteDockLogger } from '../internal/logger.js'
 import { usdcToStroops } from '../internal/usdc.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
+const STREAM_CLEANUP_TIMEOUT_MS = 3_000
 
 /** Internal listener shape: every event's payload, unioned. The public on()
  * signature narrows this per event through SessionEventPayloadMap. */
@@ -146,6 +149,7 @@ export class MppSessionClient {
     private readonly network: 'testnet' | 'mainnet',
     private readonly retryPolicy?: RetryPolicy,
     private readonly webSocketFactory: WebSocketFactory = defaultWebSocketFactory,
+    private readonly logger: RouteDockLogger = consoleLogger,
   ) {}
 
   async openSession(
@@ -461,14 +465,19 @@ export class MppSessionClient {
           }
         }
 
+        const abortController = new AbortController()
+
         // Shared fetch-one helper — retries on transient errors.
         const doFetch = (): Promise<unknown> =>
           withRetry(async () => {
             let resp: Response
             try {
-              resp = await mppx.fetch(url)
+              resp = await mppx.fetch(url, { signal: abortController.signal })
             } catch (err) {
-              throw wrapFetchError(err, 'Voucher request')
+              if (abortController.signal.aborted) {
+                throw err
+              }
+              throw wrapMppError(err, 'Voucher request')
             }
             if (!resp.ok) {
               if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
@@ -496,14 +505,18 @@ export class MppSessionClient {
           // Default: strictly sequential.
           // The next voucher is not issued until the provider returns HTTP 200
           // for the current one, preventing out-of-order sequence numbers.
-          while (true) {
-            // A closed session must not run checkSpend() or issue another
-            // voucher, even if the consumer keeps pulling the iterator.
-            assertOpen()
-            await checkSpend()
-            const data = await doFetch()
-            vouchersIssued++
-            yield data
+          try {
+            while (true) {
+              // A closed session must not run checkSpend() or issue another
+              // voucher, even if the consumer keeps pulling the iterator.
+              assertOpen()
+              await checkSpend()
+              const data = await doFetch()
+              vouchersIssued++
+              yield data
+            }
+          } finally {
+            abortController.abort()
           }
         } else {
           // Pipelined: maintain a sliding window of `concurrency` in-flight
@@ -511,23 +524,47 @@ export class MppSessionClient {
           // sequence integrity. The caller opts in knowing the provider supports
           // concurrent vouchers.
           const queue: Array<Promise<unknown>> = []
-          for (let i = 0; i < concurrency; i++) {
-            // Stop filling the window as soon as the session is closed.
-            assertOpen()
-            await checkSpend()
-            queue.push(doFetch())
-          }
+          try {
+            for (let i = 0; i < concurrency; i++) {
+              // Stop filling the window as soon as the session is closed.
+              assertOpen()
+              await checkSpend()
+              const p = doFetch()
+              p.catch(() => {})
+              queue.push(p)
+            }
 
-          while (true) {
-            // Checked before the shift and the refill below, so a closed
-            // session neither yields nor queues a new doFetch().
-            assertOpen()
-            const data = await queue.shift()!
-            // Replenish the window immediately after draining one slot.
-            await checkSpend()
-            queue.push(doFetch())
-            vouchersIssued++
-            yield data
+            while (true) {
+              // Checked before the shift and the refill below, so a closed
+              // session neither yields nor queues a new doFetch().
+              assertOpen()
+              const data = await queue.shift()!
+              // Replenish the window immediately after draining one slot.
+              await checkSpend()
+              const p = doFetch()
+              p.catch(() => {})
+              queue.push(p)
+              vouchersIssued++
+              yield data
+            }
+          } finally {
+            abortController.abort()
+            // Bound cleanup so hanging requests cannot stall consumer loop indefinitely
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([
+                Promise.allSettled(queue),
+                new Promise((resolve) => {
+                  timer = setTimeout(resolve, STREAM_CLEANUP_TIMEOUT_MS)
+                  timer.unref?.()
+                }),
+              ])
+            } finally {
+              if (timer) {
+                clearTimeout(timer)
+              }
+            }
+            queue.length = 0
           }
         }
       },
@@ -820,10 +857,11 @@ export class MppSessionClient {
         // way to learn the collateral is still locked.
         void handle.close().catch((error: unknown) => {
           emit('session:close-failed', { maxDurationMs, error })
-          console.warn(
+          this.logger(
+            'warn',
             `RouteDock: maxDuration auto-close failed after ${maxDurationMs}ms — ` +
               'the channel may still hold collateral; retry close() or call requestRefund().',
-            error,
+            { error },
           )
         })
       }, maxDurationMs)
@@ -885,7 +923,7 @@ export class MppSessionClient {
       )
       onSigned?.()
     } catch (err) {
-      throw wrapFetchError(err, 'Voucher credential')
+      throw wrapMppError(err, 'Voucher credential')
     }
 
     // ── 3: upgrade the HTTP connection to WebSocket ─────────────────────────

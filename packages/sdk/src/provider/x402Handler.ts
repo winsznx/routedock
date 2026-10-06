@@ -11,14 +11,19 @@ import {
 } from '@x402/core/http'
 import type { Network as X402Network } from '@x402/core/types'
 import type { RouteDockManifest } from '../types.js'
-import { resolvePayee } from './payee.js'
+import { RouteDockManifestError } from '../errors.js'
+import { resolvePayee } from '../internal/payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
+import { resolveAssetContract } from '../internal/assetUtils.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
+  checkSettlementReplay,
   type SeenTxStore,
 } from './SeenTxStore.js'
+import { readSettleResult } from './settleResult.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -33,7 +38,7 @@ export interface X402HandlerOptions {
   payeeSecretKey: string
   network: Network
   amount: string
-  assetContract: string
+  assetContract?: string
   facilitatorApiKey?: string
   manifest: RouteDockManifest
   onSettled?: (txHash: string, amount: string, mode: string, payer: string | null) => Promise<void>
@@ -43,13 +48,16 @@ export interface X402HandlerOptions {
    * retries the same signed payment. Defaults to a per-handler in-memory store.
    */
   seenTxStore?: SeenTxStore
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
   const caip2 = CAIP2[opts.network]
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const signer = createEd25519Signer(opts.payeeSecretKey, caip2)
-  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
+  const logger = resolveLogger(opts.logger)
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore({ logger })
 
   const useOzFacilitator = opts.network === 'mainnet' && opts.facilitatorApiKey
 
@@ -76,24 +84,36 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
   const amountInBaseUnits = String(usdcToUnits(opts.amount))
   const payTo = resolvePayee(opts.manifest, 'x402')
-  const requirements = {
-    scheme: 'exact' as const,
-    network: caip2,
-    asset: opts.assetContract,
-    amount: amountInBaseUnits,
-    payTo,
-    maxTimeoutSeconds: 60,
-    extra: {
-      areFeesSponsored: true,
-      ...(useOzFacilitator ? {} : { facilitatorAddresses: [payeeKeypair.publicKey()] }),
-    },
-  }
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const paymentHeader = (req.headers['payment-signature'] ?? req.headers['x-payment']) as string | undefined
+      const endpoint = req.path || req.originalUrl
+      const assetContract = resolveAssetContract(
+        opts.manifest,
+        'x402',
+        endpoint,
+        opts.assetContract,
+      )
+      const requirements = {
+        scheme: 'exact' as const,
+        network: caip2,
+        asset: assetContract,
+        amount: amountInBaseUnits,
+        payTo,
+        maxTimeoutSeconds: 60,
+        extra: {
+          areFeesSponsored: true,
+          ...(useOzFacilitator ? {} : { facilitatorAddresses: [payeeKeypair.publicKey()] }),
+        },
+      }
 
-      if (!paymentHeader) {
+      // Shared unpaid/failed-settlement response: it always carries the same
+      // payment requirements header an unpaid request would, so the agent can
+      // retry, and never an X-Payment-Response header. It is defined here
+      // because the requirements depend on the asset contract resolved for this
+      // request's endpoint.
+      const respondPaymentRequired = async (error: string, reason?: string): Promise<void> => {
+        const body = { error, ...(reason ? { reason } : {}) }
         if (ozServer) {
           const resourceInfo = {
             url: `${req.protocol}://${req.get('host') ?? ''}${req.originalUrl}`,
@@ -107,7 +127,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
             .status(402)
             .setHeader('Content-Type', 'application/json')
             .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(paymentRequired))
-            .json({ error: 'Payment Required' })
+            .json(body)
         } else {
           const x402Response = {
             x402Version: 2,
@@ -121,22 +141,42 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
             .status(402)
             .setHeader('Content-Type', 'application/json')
             .setHeader('X-Payment-Requirements', encodePaymentRequiredHeader(x402Response))
-            .json({ error: 'Payment Required' })
+            .json(body)
         }
+      }
+
+      const paymentHeader = (req.headers['payment-signature'] ?? req.headers['x-payment']) as string | undefined
+
+      if (!paymentHeader) {
+        await respondPaymentRequired('Payment Required')
         return
       }
 
       // Idempotency: a retry of an already-settled payment replays the cached
       // settlement response instead of settling (and billing) a second time.
-      const idempotencyKey = await paymentIdempotencyKey((name) => {
-        const v = req.headers[name.toLowerCase()]
-        return Array.isArray(v) ? v[0] : (v as string | undefined)
-      })
+      // The key is scoped to this route so a payment settled elsewhere can
+      // never replay here, and replays are capped + time-bounded.
+      const idempotencyKey = await paymentIdempotencyKey(
+        (name) => {
+          const v = req.headers[name.toLowerCase()]
+          return Array.isArray(v) ? v[0] : (v as string | undefined)
+        },
+        {
+          method: req.method,
+          path: req.originalUrl.split('?')[0]!,
+          amount: requirements.amount,
+          payTo: requirements.payTo,
+        },
+      )
       if (idempotencyKey) {
-        const cached = await seenTxStore.get(idempotencyKey)
-        if (cached) {
-          if (cached.headers) {
-            for (const [k, val] of Object.entries(cached.headers)) {
+        const replayCheck = await checkSettlementReplay(seenTxStore, idempotencyKey)
+        if (replayCheck.kind === 'spent') {
+          res.status(402).json({ error: 'Payment already used' })
+          return
+        }
+        if (replayCheck.kind === 'replay') {
+          if (replayCheck.record.headers) {
+            for (const [k, val] of Object.entries(replayCheck.record.headers)) {
               res.setHeader(k, val)
             }
           }
@@ -168,15 +208,18 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
-          )
+        const outcome = readSettleResult(settleResult)
+        if (!outcome.ok) {
+          await respondPaymentRequired('Payment settlement failed', outcome.reason)
+          return
         }
+        txHash = outcome.txHash
+        res.setHeader(
+          'X-Payment-Response',
+          encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+          ),
+        )
       } else {
         const verifyResult = await localFacilitator.verify(
           payload as Parameters<typeof localFacilitator.verify>[0],
@@ -193,15 +236,18 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           payload as Parameters<typeof localFacilitator.settle>[0],
           requirements,
         )
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          res.setHeader(
-            'X-Payment-Response',
-            encodePaymentResponseHeader(
-              settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-            ),
-          )
+        const outcome = readSettleResult(settleResult)
+        if (!outcome.ok) {
+          await respondPaymentRequired('Payment settlement failed', outcome.reason)
+          return
         }
+        txHash = outcome.txHash
+        res.setHeader(
+          'X-Payment-Response',
+          encodePaymentResponseHeader(
+            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+          ),
+        )
       }
 
       // Record the settlement so a retry of this exact payment is deduped.
@@ -211,19 +257,23 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         if (typeof paymentResponse === 'string') {
           headers['X-Payment-Response'] = paymentResponse
         }
-        await seenTxStore.set(idempotencyKey, { txHash, headers })
+        await seenTxStore.set(idempotencyKey, { txHash, headers, createdAt: Date.now() })
       }
 
       if (txHash && opts.onSettled) {
         Promise.resolve().then(() => opts.onSettled!(txHash!, opts.amount, 'x402', payerAddress)).catch(err => {
-          console.error('[x402] onSettled callback error:', err)
+          logger('error', '[x402] onSettled callback error', { error: err })
           opts.onCallbackError?.(err, 'onSettled')
         })
       }
 
       next()
     } catch (err) {
-      console.error('[x402] Settlement error:', err)
+      if (err instanceof RouteDockManifestError) {
+        next(err)
+        return
+      }
+      logger('error', '[x402] Settlement error', { error: err })
       res.status(500).json({ error: 'Payment settlement failed' })
     }
   }

@@ -1,3 +1,5 @@
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /**
@@ -36,6 +38,8 @@ export interface SpendStore {
 export interface InMemorySpendStoreOptions {
   /** Log a startup warning about non-durability. Defaults to true. */
   warn?: boolean
+  /** Log sink for the non-durability warning. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 /**
@@ -48,7 +52,8 @@ export class InMemorySpendStore implements SpendStore {
 
   constructor(options: InMemorySpendStoreOptions = {}) {
     if (options.warn !== false) {
-      console.warn(
+      resolveLogger(options.logger)(
+        'warn',
         '[RouteDock] Using in-memory SpendStore: the daily spend cap is NOT durable ' +
           'and resets on every process restart. Inject a persistent SpendStore via ' +
           'RouteDockClientConfig.spendStore for production safety.',

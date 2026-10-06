@@ -356,6 +356,98 @@ function transferPreimage(asset: string, from: string, to: string, amount: bigin
   console.log('✓ a rejected sign attempt leaves daily spend unchanged')
 }
 
+// ── Policy input validation (negative amounts, invalid ledgers) ──────────────
+
+{
+  const ASSET = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+  const policy = createPolicyState({
+    dailyCapUsdc: '1.00',
+    allowedPayees: [PAYEE_A],
+    witnessSecret: WITNESS,
+    expiryLedger: 10,
+  })
+  const client = new NulthClient({ nulthAccount: NULTH_ACCOUNT, network: 'testnet', policy })
+
+  // amountStroops: -1n throws RangeError and dailySpendStroops remains 0n
+  assert.throws(
+    () =>
+      client.buildPaymentAuthProof({
+        payee: PAYEE_A,
+        assetContract: ASSET,
+        amountStroops: -1n,
+        ledgerSequence: 5,
+        authEntry: 'test-entry',
+      }),
+    RangeError,
+  )
+  assert.equal(client.dailySpendStroops, 0n)
+
+  // invalid ledgers: NaN, 1.5, -1 throw RangeError
+  for (const badLedger of [Number.NaN, 1.5, -1]) {
+    assert.throws(
+      () =>
+        client.buildPaymentAuthProof({
+          payee: PAYEE_A,
+          assetContract: ASSET,
+          amountStroops: 100_000n,
+          ledgerSequence: badLedger,
+          authEntry: 'test-entry',
+        }),
+      RangeError,
+    )
+  }
+
+  // 0n amount works at valid ledger
+  const zeroProof = client.buildPaymentAuthProof({
+    payee: PAYEE_A,
+    assetContract: ASSET,
+    amountStroops: 0n,
+    ledgerSequence: 5,
+    authEntry: 'test-entry',
+  })
+  assert.ok(zeroProof)
+
+  // Under 1.00 USDC cap, first 1.00 USDC proof succeeds
+  const proof1 = client.buildPaymentAuthProof({
+    payee: PAYEE_A,
+    assetContract: ASSET,
+    amountStroops: 10_000_000n,
+    ledgerSequence: 5,
+    authEntry: 'test-entry',
+  })
+  assert.ok(proof1)
+
+  // Next proof throws daily_cap_exceeded
+  assert.throws(
+    () =>
+      client.buildPaymentAuthProof({
+        payee: PAYEE_A,
+        assetContract: ASSET,
+        amountStroops: 10_000_000n,
+        ledgerSequence: 5,
+        authEntry: 'test-entry',
+      }),
+    (err: unknown) =>
+      err instanceof NulthPolicyError && err.code === 'daily_cap_exceeded',
+  )
+
+  // With expiryLedger: 10, ledger 11 throws session_expired
+  assert.throws(
+    () =>
+      client.buildPaymentAuthProof({
+        payee: PAYEE_A,
+        assetContract: ASSET,
+        amountStroops: 0n,
+        ledgerSequence: 11,
+        authEntry: 'test-entry',
+      }),
+    (err: unknown) =>
+      err instanceof NulthPolicyError && err.code === 'session_expired',
+  )
+
+  console.log('✓ policy input validation rejects negative amounts and invalid ledgers')
+}
+
 console.log('\nAll nulth-sdk tests passed.')
 
 assert.throws(

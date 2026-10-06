@@ -1,18 +1,27 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import type { PaymentMode } from '../types.js'
+import type { RouteDockMiddlewareOptions } from '../provider/routedockMiddleware.js'
 
 /**
- * Provider settlement callbacks under test. Same shape as the real
- * `RouteDockMiddlewareOptions` callbacks, but accept sync or async fns so a
- * plain test spy works without wrapping it in a Promise.
+ * Loosen a production callback's return type so a plain sync test spy works,
+ * while keeping its exact parameter list (the real adapter's signature).
+ */
+type TestCallback<F> = F extends (...args: infer A) => unknown
+  ? (...args: A) => void | Promise<void>
+  : never
+
+/**
+ * Provider settlement callbacks under test. Same parameter list as the real
+ * `RouteDockMiddlewareOptions` callbacks — including `payer` — but they accept
+ * sync or async fns so a plain test spy works without wrapping it in a Promise.
  */
 export interface MockRoutedockCallbacks {
   /** Called after each (synthetic) on-chain settlement. */
-  onSettled?: (txHash: string, amount: string, mode: string) => void | Promise<void>
-  /** Called once when a synthetic mpp-session is opened (first voucher). */
-  onSessionOpen?: (channelId: string) => void | Promise<void>
-  /** Called for each synthetic voucher in an mpp-session (1-based index). */
-  onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => void | Promise<void>
+  onSettled?: TestCallback<NonNullable<RouteDockMiddlewareOptions['onSettled']>>
+  /** Called once when a synthetic session is opened (first voucher). */
+  onSessionOpen?: TestCallback<NonNullable<RouteDockMiddlewareOptions['onSessionOpen']>>
+  /** Called for each synthetic voucher in a session (1-based index). */
+  onVoucher?: TestCallback<NonNullable<RouteDockMiddlewareOptions['onVoucher']>>
 }
 
 /** Synthetic settlement values handed to the callbacks. All optional — sensible defaults per mode. */
@@ -21,12 +30,19 @@ export interface SyntheticPayment {
   txHash?: string
   /** Settled amount (x402 / mpp-charge) passed to onSettled. Default: '0.001'. */
   amount?: string
-  /** Channel address (mpp-session) passed to onSessionOpen. Default: a fixed C... address. */
+  /** Channel address (session modes) passed to onSessionOpen. Default: a fixed C... address. */
   channelId?: string
-  /** Per-voucher rate (mpp-session), in decimal string. Default: '0.0001'. */
+  /** Per-voucher rate (session modes), in decimal string. Default: '0.0001'. */
   rate?: string
-  /** Number of vouchers to emit before close (mpp-session). Default: 3. */
+  /** Number of vouchers to emit before close (session modes). Default: 3. */
   voucherCount?: number
+  /**
+   * Payer passed to onSettled (4th arg) and onSessionOpen (2nd arg). Default: a
+   * valid Stellar G... account. Pass `null` to exercise the address-unavailable
+   * path; `null` is passed through untouched (an explicit null is not replaced
+   * by the default).
+   */
+  payer?: string | null
 }
 
 export interface MockRoutedockOptions extends MockRoutedockCallbacks {
@@ -55,6 +71,12 @@ export interface MockSettlementRecord {
 
 const DEFAULT_TX_HASH = '0000000000000000000000000000000000000000000000000000000000000000'
 const DEFAULT_CHANNEL_ID = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
+/**
+ * A valid Ed25519 public key — production only ever sends a G... string or null.
+ * Deliberately different from any key the tests pass explicitly, so a test can
+ * tell the default apart from a caller-supplied payer.
+ */
+const DEFAULT_PAYER = 'GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M'
 
 /** Format a scaled (×1e7) BigInt as a 7-decimal string — mirrors the real handler. */
 function format7(scaled: bigint): string {
@@ -83,13 +105,18 @@ export async function runMockSettlement(
 
   const s = opts.synthetic ?? {}
   const txHash = s.txHash ?? DEFAULT_TX_HASH
+  // Don't use ?? here: an explicit `payer: null` must stay null so the
+  // address-unavailable path is testable.
+  const payer = s.payer === undefined ? DEFAULT_PAYER : s.payer
 
-  if (mode === 'mpp-session') {
+  // Both session transports run the same sequence and report their transport
+  // name as `mode`, mirroring the real Hono adapter's `reportMode`.
+  if (mode === 'mpp-session' || mode === 'mpp-session-ws') {
     const channelId = s.channelId ?? DEFAULT_CHANNEL_ID
     const rate = toScaled(s.rate ?? '0.0001')
     const count = s.voucherCount ?? 3
 
-    if (opts.onSessionOpen) await opts.onSessionOpen(channelId)
+    if (opts.onSessionOpen) await opts.onSessionOpen(channelId, payer)
 
     const vouchers: Array<{ index: number; cumulativeAmount: string }> = []
     for (let i = 1; i <= count; i++) {
@@ -99,14 +126,14 @@ export async function runMockSettlement(
     }
 
     const totalPaid = format7(rate * BigInt(count))
-    if (opts.onSettled) await opts.onSettled(txHash, totalPaid, 'mpp-session')
+    if (opts.onSettled) await opts.onSettled(txHash, totalPaid, mode, payer)
 
     return { mode, txHash, amount: totalPaid, channelId, vouchers }
   }
 
   // x402 / mpp-charge: a single settlement.
   const amount = s.amount ?? '0.001'
-  if (opts.onSettled) await opts.onSettled(txHash, amount, mode)
+  if (opts.onSettled) await opts.onSettled(txHash, amount, mode, payer)
   return { mode, txHash, amount }
 }
 
@@ -136,7 +163,12 @@ export async function runMockSettlement(
  * app.get('/price', (_req, res) => res.json({ price: '42' }))
  *
  * await request(app).get('/price').expect(200)
- * expect(onSettled).toHaveBeenCalledWith(expect.any(String), '0.001', 'x402')
+ * expect(onSettled).toHaveBeenCalledWith(
+ *   expect.any(String),
+ *   '0.001',
+ *   'x402',
+ *   expect.any(String), // payer
+ * )
  * ```
  */
 export function createMockRoutedockMiddleware(opts: MockRoutedockOptions = {}): RequestHandler {

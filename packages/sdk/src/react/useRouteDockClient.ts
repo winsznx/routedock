@@ -6,9 +6,14 @@ import { RouteDockClient, type RouteDockClientConfig } from '../client/RouteDock
  * Returns a memoized RouteDockClient. Re-creates only when wallet / network /
  * spendCap / commitmentSecret / retryPolicy identity changes.
  *
+ * The client runs in the browser, so the wallet secret is visible to anyone who
+ * loads the page. Never source it from a public environment variable or use a
+ * funded key.
+ *
  * @example
+ * const THROWAWAY_TESTNET_SECRET = 'S...'
  * const client = useRouteDockClient({
- *   wallet: process.env.NEXT_PUBLIC_AGENT_SECRET!,
+ *   wallet: THROWAWAY_TESTNET_SECRET,
  *   network: 'testnet',
  *   spendCap: { daily: '1.00', asset: 'USDC' },
  * })

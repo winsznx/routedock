@@ -33,7 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
-      COMMITMENT_SECRET: ${{ secrets.AGENT_SECRET }}
+      COMMITMENT_SECRET: ${{ secrets.COMMITMENT_SECRET }}
+      E2E_PAYEE_SECRET: ${{ secrets.E2E_PAYEE_SECRET }}
       PROVIDER_A_URL: http://localhost:8801
       PROVIDER_B_URL: http://localhost:8802
 
@@ -63,17 +64,17 @@ jobs:
         run: |
           set -euo pipefail
           STELLAR_PAYEE_ADDRESS=$(pnpm --filter @routedock/routedock exec node --input-type=module -e \
-            "import { Keypair } from '@stellar/stellar-sdk'; console.log(Keypair.fromSecret(process.env.AGENT_SECRET).publicKey())")
+            "import { Keypair } from '@stellar/stellar-sdk'; console.log(Keypair.fromSecret(process.env.E2E_PAYEE_SECRET).publicKey())")
           COMMITMENT_PUBLIC_KEY=$(COMMITMENT_SECRET="$COMMITMENT_SECRET" pnpm --filter @routedock/routedock exec node --input-type=module -e \
             "import { Keypair } from '@stellar/stellar-sdk'; console.log(Keypair.fromSecret(process.env.COMMITMENT_SECRET).publicKey())")
-          export STELLAR_PAYEE_SECRET="$AGENT_SECRET"
+          export STELLAR_PAYEE_SECRET="$E2E_PAYEE_SECRET"
           export STELLAR_PAYEE_ADDRESS
           export COMMITMENT_PUBLIC_KEY
           export CHANNEL_CONTRACT_ID=CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH
 
-          pnpm --filter provider-a dev -- --port 8801 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" >"$RUNNER_TEMP/provider-a.log" 2>&1 &
+          pnpm --filter provider-a exec wrangler dev --port 8801 --inspector-port 9231 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" >"$RUNNER_TEMP/provider-a.log" 2>&1 &
           PROVIDER_A_PID=$!
-          pnpm --filter provider-b dev -- --port 8802 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" --var "COMMITMENT_PUBLIC_KEY:$COMMITMENT_PUBLIC_KEY" --var "CHANNEL_CONTRACT_ID:$CHANNEL_CONTRACT_ID" >"$RUNNER_TEMP/provider-b.log" 2>&1 &
+          pnpm --filter provider-b exec wrangler dev --port 8802 --inspector-port 9232 --var "STELLAR_PAYEE_SECRET:$STELLAR_PAYEE_SECRET" --var "STELLAR_PAYEE_ADDRESS:$STELLAR_PAYEE_ADDRESS" --var "COMMITMENT_PUBLIC_KEY:$COMMITMENT_PUBLIC_KEY" --var "CHANNEL_CONTRACT_ID:$CHANNEL_CONTRACT_ID" >"$RUNNER_TEMP/provider-b.log" 2>&1 &
           PROVIDER_B_PID=$!
           trap 'kill "$PROVIDER_A_PID" "$PROVIDER_B_PID" 2>/dev/null || true' EXIT
 
@@ -105,6 +106,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Explain skipped payment verification
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo 'AGENT_SECRET is not configured; no Stellar payment was executed.'
-          echo 'Configure the repository secret or use the scheduled/manual workflow to run E2E.'
+          case "$EVENT_NAME" in
+            schedule|workflow_dispatch)
+              echo "::error title=E2E did not run::$EVENT_NAME runs exist to execute testnet payments, but the AGENT_SECRET repository secret is not set. See docs/AGENT_RUN_CHECKLIST.md to create a funded testnet account."
+              exit 1
+              ;;
+            *)
+              echo 'The weekly scheduled run and manual dispatch execute payments once AGENT_SECRET is set.'
+              ;;
+          esac

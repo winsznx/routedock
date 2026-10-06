@@ -15,7 +15,7 @@ import {
   type ProviderRow,
   type SupabaseQueryBuilder,
 } from '../handlers.js'
-import { TOOLS } from '../tools.js'
+import { MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
 
 // ---------------------------------------------------------------------------
 // Tool schema regression guard (issue #272)
@@ -49,6 +49,20 @@ describe('TOOLS schema regression', () => {
       expected,
       `Tool enum ${JSON.stringify(actual)} must match SDK PaymentMode ${JSON.stringify(expected)}`,
     )
+  })
+
+  it('stream_session max_messages is a bounded integer', () => {
+    const tool = TOOLS.find((t) => t.name === 'stream_session')
+    assert.ok(tool, 'stream_session tool must exist in TOOLS')
+
+    const schema = (tool.inputSchema as unknown as {
+      properties: { max_messages: { type: string; minimum: number; maximum: number } }
+    }).properties.max_messages
+
+    assert.equal(schema.type, 'integer')
+    assert.equal(schema.minimum, 1)
+    assert.equal(schema.maximum, MAX_STREAM_MESSAGES)
+    assert.equal(MAX_STREAM_MESSAGES, 50)
   })
 })
 
@@ -114,6 +128,21 @@ function makeSupabase(rows: unknown[], error: { message: string } | null = null)
   return {
     from: (_table: string) => ({
       select: (_cols: string) => builder as SupabaseQueryBuilder,
+    }),
+  }
+}
+
+/** Fake session that yields each item once, then reports done. */
+function makeStreamSession(items: unknown[]) {
+  let idx = 0
+  return {
+    stream: () => ({
+      [Symbol.asyncIterator]: () => ({
+        next: async () =>
+          idx < items.length
+            ? { done: false, value: items[idx++] }
+            : { done: true, value: undefined },
+      }),
     }),
   }
 }
@@ -334,6 +363,172 @@ describe('handleStreamSession', () => {
     )
     const body = parseResult(result) as any
     assert.equal(body.count, 1)
+  })
+
+  it('pulls exactly 1 message when max_messages is omitted', async () => {
+    const items = ['msg1', 'msg2', 'msg3']
+    const fakeSession = makeStreamSession(items)
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1' },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(result.isError, undefined)
+    const body = parseResult(result) as any
+    assert.equal(body.count, 1)
+    assert.deepEqual(body.messages, ['msg1'])
+  })
+
+  it('returns the paid prefix with stats when a later voucher fails', async () => {
+    const stats = {
+      vouchersIssued: 2,
+      currentCumulative: '0.0002',
+      channelId: 'CHAN1',
+      openTxHash: null,
+    }
+    const items = ['msg1', 'msg2']
+    let idx = 0
+    const fakeSession = {
+      stats: () => stats,
+      stream: () => ({
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            if (idx >= items.length) {
+              throw new Error('local_daily_cap_exceeded')
+            }
+            return { done: false, value: items[idx++] }
+          },
+        }),
+      }),
+    }
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 5 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(result.isError, true)
+    const body = parseResult(result) as any
+    assert.equal(body.success, false)
+    assert.ok(body.error.includes('local_daily_cap_exceeded'))
+    assert.equal(body.channel_id, 'CHAN1')
+    assert.equal(body.count, 2)
+    assert.deepEqual(body.messages, ['msg1', 'msg2'])
+    assert.deepEqual(body.stats, stats)
+  })
+
+  it('resolves with an empty partial batch when the first voucher fails', async () => {
+    const stats = { vouchersIssued: 0, currentCumulative: '0', channelId: 'CHAN1', openTxHash: null }
+    const fakeSession = {
+      stats: () => stats,
+      stream: () => ({
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            throw new Error('Voucher request failed: HTTP 500')
+          },
+        }),
+      }),
+    }
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 5 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(result.isError, true)
+    const body = parseResult(result) as any
+    assert.equal(body.count, 0)
+    assert.deepEqual(body.messages, [])
+  })
+
+  it('closes the generator with return() on the normal path', async () => {
+    let returnCalls = 0
+    const items = ['msg1', 'msg2', 'msg3']
+    let idx = 0
+    const iterator = {
+      next: async () =>
+        idx < items.length
+          ? { done: false, value: items[idx++] }
+          : { done: true, value: undefined },
+      return: async () => {
+        returnCalls++
+        return { done: true, value: undefined }
+      },
+    }
+    const fakeSession = { stream: () => ({ [Symbol.asyncIterator]: () => iterator }) }
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 2 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(returnCalls, 1)
+  })
+
+  it('closes the generator with return() on the error path', async () => {
+    let returnCalls = 0
+    const iterator = {
+      next: async () => {
+        throw new Error('local_daily_cap_exceeded')
+      },
+      return: async () => {
+        returnCalls++
+        return { done: true, value: undefined }
+      },
+    }
+    const fakeSession = {
+      stats: () => ({ vouchersIssued: 0, currentCumulative: '0', channelId: 'CHAN1', openTxHash: null }),
+      stream: () => ({ [Symbol.asyncIterator]: () => iterator }),
+    }
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 3 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(returnCalls, 1)
+  })
+
+  it('still works with a generator that has no return() method', async () => {
+    const items = ['msg1']
+    const fakeSession = makeStreamSession(items)
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 1 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(result.isError, undefined)
+  })
+
+  for (const invalid of [0, -1, 2.5, 51]) {
+    it(`rejects invalid max_messages ${invalid} without calling stream()`, async () => {
+      let streamCalls = 0
+      const fakeSession = {
+        stats: () => ({}),
+        stream: () => {
+          streamCalls++
+          return { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true, value: undefined }) }) }
+        },
+      }
+      const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+      const result = await handleStreamSession(
+        { channel_id: 'CHAN1', max_messages: invalid },
+        baseDeps({ openSessions: sessions }),
+      )
+      assert.equal(result.isError, true)
+      const body = parseResult(result) as any
+      assert.ok(body.error.includes('1 and 50'))
+      assert.equal(streamCalls, 0)
+    })
+  }
+
+  it('accepts max_messages at the upper bound of 50', async () => {
+    const items = ['msg1', 'msg2']
+    const fakeSession = makeStreamSession(items)
+    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1', max_messages: 50 },
+      baseDeps({ openSessions: sessions }),
+    )
+    assert.equal(result.isError, undefined)
+    const body = parseResult(result) as any
+    assert.equal(body.count, 2)
   })
 })
 

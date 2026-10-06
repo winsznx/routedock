@@ -15,9 +15,10 @@ import { stellar as mppChannel, close as channelClose, Store } from '@stellar/mp
 import { Mppx } from 'mppx/server'
 import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
-import { resolvePayee } from './payee.js'
+import { resolvePayee } from '../internal/payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
 import { extractPayerAddress } from './payer.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
   channelAuthorizer,
   onVerifiedCredential,
@@ -30,8 +31,12 @@ import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
+  checkSettlementReplay,
   type SeenTxStore,
 } from './SeenTxStore.js'
+import { resolveAssetContract } from '../internal/assetUtils.js'
+import { RouteDockManifestError } from '../errors.js'
+import { readSettleResult } from './settleResult.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -51,8 +56,8 @@ export interface RouteDockHonoOptions {
     /** WebSocket transport variant of mpp-session — same channel, WS streaming */
     'mpp-session-ws'?: { rate: string; channelFactory: string }
   }
-  asset: string
-  assetContract: string
+  asset?: string
+  assetContract?: string
   payee: string
   network: Network
   payeeSecretKey: string
@@ -81,6 +86,8 @@ export interface RouteDockHonoOptions {
    * Durable Object storage) so voucher tracking survives isolate eviction.
    */
   sessionStore?: Store.Store
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -88,7 +95,8 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const signer = createEd25519Signer(opts.payeeSecretKey, caip2)
   const x402Price = opts.pricing.x402!
-  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
+  const logger = resolveLogger(opts.logger)
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore({ logger })
 
   const useOzFacilitator = opts.network === 'mainnet' && opts.facilitatorApiKey
 
@@ -112,24 +120,35 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
   }
 
   const amountInBaseUnits = String(usdcToUnits(x402Price))
-  const requirements = {
-    scheme: 'exact' as const,
-    network: caip2,
-    asset: opts.assetContract,
-    amount: amountInBaseUnits,
-    payTo: resolvePayee(opts.manifest, 'x402'),
-    maxTimeoutSeconds: 60,
-    extra: {
-      areFeesSponsored: true,
-      ...(useOzFacilitator ? {} : { facilitatorAddresses: [payeeKeypair.publicKey()] }),
-    },
-  }
 
   return async (c, next) => {
     try {
-      const paymentHeader = c.req.header('payment-signature') ?? c.req.header('x-payment')
+      const endpoint = c.req.path
+      const assetContract = resolveAssetContract(
+        opts.manifest,
+        'x402',
+        endpoint,
+        opts.assetContract,
+      )
+      const requirements = {
+        scheme: 'exact' as const,
+        network: caip2,
+        asset: assetContract,
+        amount: amountInBaseUnits,
+        payTo: resolvePayee(opts.manifest, 'x402'),
+        maxTimeoutSeconds: 60,
+        extra: {
+          areFeesSponsored: true,
+          ...(useOzFacilitator ? {} : { facilitatorAddresses: [payeeKeypair.publicKey()] }),
+        },
+      }
 
-      if (!paymentHeader) {
+      // Shared unpaid/failed-settlement response: it always carries the same
+      // payment requirements header an unpaid request would, so the agent can
+      // retry, and never an X-Payment-Response header. It is defined here
+      // because the requirements depend on the asset contract resolved for this
+      // request's endpoint.
+      const respondPaymentRequired = async (error: string, reason?: string) => {
         if (ozServer) {
           const resourceInfo = {
             url: c.req.url,
@@ -140,7 +159,6 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
             resourceInfo,
           )
           c.header('X-Payment-Requirements', encodePaymentRequiredHeader(paymentRequired))
-          return c.json({ error: 'Payment Required' }, 402)
         } else {
           const x402Response = {
             x402Version: 2,
@@ -148,18 +166,37 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
             accepts: [requirements],
           }
           c.header('X-Payment-Requirements', encodePaymentRequiredHeader(x402Response))
-          return c.json({ error: 'Payment Required' }, 402)
         }
+        return c.json({ error, ...(reason ? { reason } : {}) }, 402)
+      }
+
+      const paymentHeader = c.req.header('payment-signature') ?? c.req.header('x-payment')
+
+      if (!paymentHeader) {
+        return respondPaymentRequired('Payment Required')
       }
 
       // Idempotency: a retry of an already-settled payment replays the cached
       // settlement response instead of settling (and billing) a second time.
-      const idempotencyKey = await paymentIdempotencyKey((name) => c.req.header(name))
+      // The key is scoped to this route so a payment settled elsewhere can
+      // never replay here, and replays are capped + time-bounded.
+      const idempotencyKey = await paymentIdempotencyKey(
+        (name) => c.req.header(name),
+        {
+          method: c.req.method,
+          path: c.req.path,
+          amount: requirements.amount,
+          payTo: requirements.payTo,
+        },
+      )
       if (idempotencyKey) {
-        const cached = await seenTxStore.get(idempotencyKey)
-        if (cached) {
-          if (cached.headers) {
-            for (const [k, val] of Object.entries(cached.headers)) {
+        const replayCheck = await checkSettlementReplay(seenTxStore, idempotencyKey)
+        if (replayCheck.kind === 'spent') {
+          return c.json({ error: 'Payment already used' }, 402)
+        }
+        if (replayCheck.kind === 'replay') {
+          if (replayCheck.record.headers) {
+            for (const [k, val] of Object.entries(replayCheck.record.headers)) {
               c.header(k, val)
             }
           }
@@ -187,13 +224,15 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          paymentResponseHeader = encodePaymentResponseHeader(
-            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-          )
-          c.header('X-Payment-Response', paymentResponseHeader)
+        const outcome = readSettleResult(settleResult)
+        if (!outcome.ok) {
+          return respondPaymentRequired('Payment settlement failed', outcome.reason)
         }
+        txHash = outcome.txHash
+        paymentResponseHeader = encodePaymentResponseHeader(
+          settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+        )
+        c.header('X-Payment-Response', paymentResponseHeader)
       } else {
         const verifyResult = await localFacilitator.verify(
           payload as Parameters<typeof localFacilitator.verify>[0],
@@ -212,32 +251,37 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
           payload as Parameters<typeof localFacilitator.settle>[0],
           requirements,
         )
-        txHash = (settleResult as { transaction?: string }).transaction ?? null
-        if (settleResult) {
-          paymentResponseHeader = encodePaymentResponseHeader(
-            settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
-          )
-          c.header('X-Payment-Response', paymentResponseHeader)
+        const outcome = readSettleResult(settleResult)
+        if (!outcome.ok) {
+          return respondPaymentRequired('Payment settlement failed', outcome.reason)
         }
+        txHash = outcome.txHash
+        paymentResponseHeader = encodePaymentResponseHeader(
+          settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
+        )
+        c.header('X-Payment-Response', paymentResponseHeader)
       }
 
       // Record the settlement so a retry of this exact payment is deduped.
       if (idempotencyKey) {
         const headers: Record<string, string> = {}
         if (paymentResponseHeader) headers['X-Payment-Response'] = paymentResponseHeader
-        await seenTxStore.set(idempotencyKey, { txHash, headers })
+        await seenTxStore.set(idempotencyKey, { txHash, headers, createdAt: Date.now() })
       }
 
       if (txHash && opts.onSettled) {
         Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402', payerAddress)).catch(err => {
-          console.error('[x402] onSettled callback error:', err)
+          logger('error', '[x402] onSettled callback error', { error: err })
           opts.onCallbackError?.(err, 'onSettled')
         })
       }
 
       await next()
     } catch (err) {
-      console.error('[x402] Settlement error:', err)
+      if (err instanceof RouteDockManifestError) {
+        throw err
+      }
+      logger('error', '[x402] Settlement error', { error: err })
       return c.json({ error: 'Payment settlement failed' }, 500)
     }
   }
@@ -247,22 +291,39 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const chargePrice = opts.pricing['mpp-charge']!
   const recipient = resolvePayee(opts.manifest, 'mpp-charge')
-  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
+  const logger = resolveLogger(opts.logger)
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore({ logger })
 
-  const mppx = Mppx.create({
-    secretKey: opts.payeeSecretKey,
-    methods: [
-      mppCharge({
-        recipient,
-        currency: opts.assetContract,
-        network: networkId,
-        feePayer: { envelopeSigner: opts.payeeSecretKey },
-      }),
-    ],
-  })
+  const mppxInstances = new Map<string, unknown>()
+  function getMppx(contract: string) {
+    let instance = mppxInstances.get(contract)
+    if (!instance) {
+      instance = Mppx.create({
+        secretKey: opts.payeeSecretKey,
+        methods: [
+          mppCharge({
+            recipient,
+            currency: contract,
+            network: networkId,
+            feePayer: { envelopeSigner: opts.payeeSecretKey },
+          }),
+        ],
+      })
+      mppxInstances.set(contract, instance)
+    }
+    return instance
+  }
 
   return async (c, next) => {
     try {
+      const endpoint = c.req.path
+      const assetContract = resolveAssetContract(
+        opts.manifest,
+        'mpp-charge',
+        endpoint,
+        opts.assetContract,
+      )
+      const mppx = getMppx(assetContract)
       // Extract payer public key from the mppx Payment authorization header.
       let payerAddress: string | null = null
       try {
@@ -288,13 +349,25 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       }
 
       // Idempotency: a retry of an already-settled charge replays the cached
-      // receipt headers instead of settling (and billing) a second time.
-       const idempotencyKey = await paymentIdempotencyKey((name) => c.req.header(name))
+      // receipt headers instead of settling (and billing) a second time. The
+      // key is scoped to this route and replays are capped + time-bounded.
+      const idempotencyKey = await paymentIdempotencyKey(
+        (name) => c.req.header(name),
+        {
+          method: c.req.method,
+          path: c.req.path,
+          amount: chargePrice,
+          payTo: recipient,
+        },
+      )
       if (idempotencyKey) {
-        const cached = await seenTxStore.get(idempotencyKey)
-        if (cached) {
-          if (cached.headers) {
-            for (const [k, val] of Object.entries(cached.headers)) {
+        const replayCheck = await checkSettlementReplay(seenTxStore, idempotencyKey)
+        if (replayCheck.kind === 'spent') {
+          return c.json({ error: 'Payment already used' }, 402)
+        }
+        if (replayCheck.kind === 'replay') {
+          if (replayCheck.record.headers) {
+            for (const [k, val] of Object.entries(replayCheck.record.headers)) {
               c.header(k, val)
             }
           }
@@ -320,7 +393,7 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
 
       const result = await handler({
         amount: chargePrice,
-        currency: opts.assetContract,
+        currency: assetContract,
         recipient,
         description: opts.manifest.name,
       })(c.req.raw)
@@ -355,12 +428,13 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
         await seenTxStore.set(idempotencyKey, {
           txHash: reference ?? null,
           headers: receiptHeaders,
+          createdAt: Date.now(),
         })
       }
 
       if (reference && opts.onSettled) {
         Promise.resolve().then(() => opts.onSettled!(reference!, chargePrice, 'mpp-charge', payerAddress)).catch(err => {
-          console.error('[mpp-charge] onSettled callback error:', err)
+          logger('error', '[mpp-charge] onSettled callback error', { error: err })
           opts.onCallbackError?.(err, 'onSettled')
         })
       }
@@ -427,6 +501,7 @@ function createMppSessionHandlerState(
 ): MppSessionHandlerState {
   const networkId = CAIP2[opts.network] as 'stellar:testnet' | 'stellar:pubnet'
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
+  const logger = resolveLogger(opts.logger)
   const voucherRecordKey = `routedock:session:voucher:${sessionPricing.channelFactory}`
 
   const innerStore = opts.sessionStore ?? Store.memory()
@@ -499,7 +574,7 @@ function createMppSessionHandlerState(
           reason,
         })
       } catch (err) {
-        console.error('[mpp-session] onOrphaned handler failed:', err)
+        logger('error', '[mpp-session] onOrphaned handler failed', { error: err })
       }
     }
   }
@@ -554,7 +629,7 @@ function createMppSessionHandlerState(
         Promise.resolve()
           .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
           .catch((err) => {
-            console.error('[mpp-session] onSessionOpen callback error:', err)
+            logger('error', '[mpp-session] onSessionOpen callback error', { error: err })
             opts.onCallbackError?.(err, 'onSessionOpen')
           })
       }
@@ -563,7 +638,7 @@ function createMppSessionHandlerState(
     if (opts.onVoucher) {
       const humanAmount = (Number(record.amount) / 1e7).toFixed(7)
       Promise.resolve().then(() => opts.onVoucher!(sessionPricing.channelFactory, voucherCount, humanAmount, record!.signature)).catch(err => {
-        console.error('[mpp-session] onVoucher callback error:', err)
+        logger('error', '[mpp-session] onVoucher callback error', { error: err })
         opts.onCallbackError?.(err, 'onVoucher')
       })
     }
@@ -639,7 +714,7 @@ function createMppSessionHandlerState(
         if (opts.onSettled) {
           const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
           Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, closePayer)).catch(err => {
-            console.error(`[mpp-session] onSettled callback error:`, err)
+            logger('error', '[mpp-session] onSettled callback error', { error: err })
             opts.onCallbackError?.(err, 'onSettled')
           })
         }

@@ -7,6 +7,14 @@
  */
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
+/**
+ * Upper bound on how many streamed messages stream_session may pull in one
+ * call. Each message costs one session voucher, and any voucher after the
+ * first can reject mid-batch, so an unbounded batch could commit an arbitrary
+ * slice of the caller's daily spend cap before failing.
+ */
+export const MAX_STREAM_MESSAGES = 50
+
 export const TOOLS: Tool[] = [
   {
     name: 'pay_for_data',
@@ -66,8 +74,10 @@ export const TOOLS: Tool[] = [
           description: 'The channel_id returned by open_session',
         },
         max_messages: {
-          type: 'number',
-          description: 'Maximum number of messages to pull in this call (default 1)',
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_STREAM_MESSAGES,
+          description: `Maximum number of messages to pull in this call (1 to ${MAX_STREAM_MESSAGES}, default 1)`,
         },
       },
       required: ['channel_id'],

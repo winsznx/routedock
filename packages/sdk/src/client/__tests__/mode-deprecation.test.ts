@@ -69,7 +69,7 @@ function startManifestServer(
 {
   const logs: string[] = []
   const manifest = createManifest({ deprecated_modes: ['mpp-charge'] })
-  assert.equal(selectMode(manifest, { logger: (message) => logs.push(message) }), 'x402')
+  assert.equal(selectMode(manifest, { logger: (_level, message) => logs.push(message) }), 'x402')
   assert.equal(logs.some((message) => message.includes('WARNING')), false)
 }
 
@@ -189,7 +189,7 @@ function startManifestServer(
 {
   const logs: string[] = []
   const manifest = createManifest({ deprecated_modes: ['x402', 'mpp-charge'] })
-  assert.equal(selectMode(manifest, { logger: (message) => logs.push(message) }), 'mpp-charge')
+  assert.equal(selectMode(manifest, { logger: (_level, message) => logs.push(message) }), 'mpp-charge')
   assert.ok(logs.some((message) => message.includes('WARNING') && message.includes('deprecated')))
 }
 
@@ -200,7 +200,7 @@ function startManifestServer(
   assert.equal(
     selectMode(manifest, {
       forceMode: 'mpp-charge',
-      logger: (message) => logs.push(message),
+      logger: (_level, message) => logs.push(message),
     }),
     'mpp-charge',
   )

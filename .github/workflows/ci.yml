@@ -94,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run actionlint
-        uses: reviewdog/action-actionlint@2085657ab2c7f48c58edcc767fba576f63bea76b # v1.77.0
+        uses: reviewdog/action-actionlint@13465d022aa41c282f730be17574b5ce692d0186 # v1.78.1
         with:
           fail_level: error
       - name: Guard release.yml permissions
@@ -112,6 +112,10 @@ jobs:
               exit 1
             fi
           done
+          if ! grep -qE "^[[:space:]]+permission-workflows:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
+            echo "::error file=.github/workflows/release.yml::the release App token must request 'permission-workflows: write'"
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest

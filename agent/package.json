@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test:e2e": "tsx __tests__/e2e.test.ts",
+    "stress": "tsx src/stress.ts",
     "recover-sessions": "ts-node-dev --transpile-only src/recover-sessions.ts"
   },
   "dependencies": {

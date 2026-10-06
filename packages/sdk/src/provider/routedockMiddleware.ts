@@ -6,6 +6,7 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import type { RouteDockLogger } from '../internal/logger.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -14,9 +15,9 @@ export interface RouteDockMiddlewareOptions {
     'mpp-charge'?: string
     'mpp-session'?: { rate: string; channelFactory: string }
   }
-  asset: string
+  asset?: string
   /** Stellar Asset Contract address for the payment asset */
-  assetContract: string
+  assetContract?: string
   payee: string
   network: 'testnet' | 'mainnet'
   /** Private key (S...) of the server/payee account */
@@ -55,6 +56,11 @@ export interface RouteDockMiddlewareOptions {
    * duplicate settlement on agent retries. Defaults to per-handler in-memory.
    */
   seenTxStore?: SeenTxStore
+  /**
+   * Structured log sink for every adapter diagnostic (settlement errors,
+   * callback failures, orphaned sessions). Defaults to a console-backed logger.
+   */
+  logger?: RouteDockLogger
 }
 
 /**
@@ -94,12 +100,13 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: x402Price,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           ...(opts.facilitatorApiKey ? { facilitatorApiKey: opts.facilitatorApiKey } : {}),
           manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -114,11 +121,12 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           payeeSecretKey: opts.payeeSecretKey,
           network: opts.network,
           amount: chargePrice,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           manifest: signedManifest,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.seenTxStore ? { seenTxStore: opts.seenTxStore } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }
@@ -137,7 +145,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           network: opts.network,
           channelFactory: sessionPricing.channelFactory,
           rate: sessionPricing.rate,
-          assetContract: opts.assetContract,
+          ...(opts.assetContract ? { assetContract: opts.assetContract } : {}),
           manifest: signedManifest,
           commitmentPublicKey: opts.commitmentPublicKey,
           ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
@@ -146,6 +154,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onCallbackError ? { onCallbackError: opts.onCallbackError } : {}),
           ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
         }),
       )
     }

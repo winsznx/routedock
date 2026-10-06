@@ -1,0 +1,818 @@
+{
+  "runAt": "2026-09-26T19:45:03.258Z",
+  "wallMs": 6749.186599999999,
+  "mode": "probe",
+  "network": "testnet",
+  "agents": 50,
+  "callsPerPhase": "x402-paid=10, mpp-charge-paid=10, session-voucher=10",
+  "providers": {
+    "a": "https://api-a.routedock.xyz",
+    "b": "https://api-b.routedock.xyz"
+  },
+  "table": [
+    {
+      "phase": "manifest-get",
+      "n": 50,
+      "successPct": 100,
+      "p50": 2778,
+      "p95": 3186,
+      "p99": 3197,
+      "min": 980.0056000000004,
+      "max": 3196.7967999999983
+    },
+    {
+      "phase": "stream-unpaid",
+      "n": 50,
+      "successPct": 100,
+      "p50": 449,
+      "p95": 1474,
+      "p99": 2386,
+      "min": 299.4411,
+      "max": 2386.3664000000026
+    },
+    {
+      "phase": "price-unpaid",
+      "n": 50,
+      "successPct": 100,
+      "p50": 1726,
+      "p95": 3183,
+      "p99": 3297,
+      "min": 398.53600000000006,
+      "max": 3297.0455
+    }
+  ],
+  "raw": [
+    {
+      "phase": "manifest-get",
+      "ms": 980.0056000000004,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 2386.3664000000026,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2207.9912000000004,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3098.0523999999987,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 299.4411,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1934.7016000000003,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3050.9326999999994,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 318.31319999999687,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1723.6476000000002,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3090.046199999999,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 321.8830999999991,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2459.426299999999,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3196.7967999999983,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 470.7355000000025,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2505.0961000000025,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2747.4437,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 444.28609999999753,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1979.6823000000004,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2754.8118000000013,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 453.15559999999823,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2003.4997999999978,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2565.7314000000006,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 382.001400000001,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1293.1227,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3072.726800000002,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 300.9989999999998,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 3196.5748999999996,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3188.6620999999996,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 460.5095000000001,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2210.4375999999975,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2777.998599999999,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 422.90550000000076,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1979.1438000000016,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3024.2708000000002,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 332.0665000000008,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1474.7201999999997,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3185.551700000002,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 460.2726999999977,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 3079.569299999999,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3173.1429000000007,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 474.66029999999955,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2471.1850000000013,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3018.4171000000006,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 339.0042999999969,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1843.8973000000005,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3020.751599999998,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 321.3868000000002,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1457.0231999999996,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2741.103800000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 457.89410000000134,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1725.7199,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3169.2385999999988,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 466.8863999999994,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2199.2432999999983,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3160.573700000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 472.39650000000256,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 464.97739999999976,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1379.1921000000002,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 1275.5622999999978,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 398.53600000000006,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3075.360499999999,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 330.6876000000011,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 3182.9045000000006,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1938.9021999999986,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 933.6272000000026,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1700.9667000000009,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3061.436600000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 301.6342000000004,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1491.759900000001,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3069.2294999999995,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 332.5092000000004,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 3297.0455,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2437.316200000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 475.8891000000003,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1557.6376999999993,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2514.2476000000006,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 1473.9082999999991,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2311.9367999999995,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1353.3023999999987,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 1521.0213999999996,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1623.9143000000004,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2703.7119999999995,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 443.4341999999997,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 427.86919999999736,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3057.6178999999993,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 330.1772999999994,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2632.8148,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3043.915000000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 337.45969999999943,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2877.8945999999996,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3034.7545999999984,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 299.9395000000004,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1707.9477000000006,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1839.6232999999993,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 919.5470999999998,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2676.4890000000014,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3034.9702000000016,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 334.0012000000024,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2882.0594999999994,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3035.017600000001,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 301.3594000000012,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1557.4408999999978,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2684.3071999999975,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 314.5397000000012,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1367.3568999999989,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1897.0694999999996,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 895.6984000000011,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1598.9246999999996,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3036.2659000000003,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 322.6859000000004,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2663.055400000001,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2506.109699999999,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 395.60239999999976,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1286.1575999999986,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1909.149199999998,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 941.6453000000001,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1983.1212000000014,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1868.9541999999983,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 894.2071999999971,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1503.3557999999975,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1860.3865000000005,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 919.9495999999999,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1696.4059000000016,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2885.3480999999992,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 421.1918000000005,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1480.4200999999994,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2689.9345999999987,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 449.4340999999986,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1674.684799999999,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1824.598799999998,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 926.1182000000008,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 2700.580399999999,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2352.0155000000013,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 521.9075000000012,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1456.3427999999985,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3112.9298,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 475.09180000000197,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1272.9286999999968,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 3024.1978,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 308.0496000000021,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 3073.8956,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2340.1024000000016,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 523.4570999999996,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1568.2652999999991,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 2324.9136000000017,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 518.2490999999973,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1583.3421000000017,
+      "ok": true
+    },
+    {
+      "phase": "manifest-get",
+      "ms": 1880.1827999999987,
+      "ok": true
+    },
+    {
+      "phase": "stream-unpaid",
+      "ms": 893.2668999999987,
+      "ok": true
+    },
+    {
+      "phase": "price-unpaid",
+      "ms": 1870.4742000000006,
+      "ok": true
+    }
+  ],
+  "notRun": [
+    {
+      "phase": "x402-paid",
+      "reason": "AGENT_SECRET not set"
+    },
+    {
+      "phase": "mpp-charge-paid",
+      "reason": "AGENT_SECRET not set"
+    },
+    {
+      "phase": "session-open",
+      "reason": "AGENT_SECRET and COMMITMENT_SECRET not set"
+    },
+    {
+      "phase": "session-voucher",
+      "reason": "AGENT_SECRET and COMMITMENT_SECRET not set"
+    },
+    {
+      "phase": "session-close",
+      "reason": "AGENT_SECRET and COMMITMENT_SECRET not set"
+    }
+  ]
+}

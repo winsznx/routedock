@@ -41,12 +41,25 @@ export function getSupabaseServerClient() {
 
 // ── Database types from Section 8 schema ──────────────────────────────────────
 
+/**
+ * Explicit column list for the `public_sessions` view.
+ *
+ * `cumulative_amount` is cast to text on purpose: the column is NUMERIC(20,7) and
+ * PostgREST otherwise hands supabase-js a JSON number. `String()` on any value below
+ * 1e-6 yields exponent form ("5e-7"), which `usdcToStroops` rejects. Postgres renders
+ * NUMERIC as plain decimal text ("0.0000005"), so selecting it as text keeps the amount
+ * in a format the parser accepts.
+ */
+export const SESSION_COLUMNS =
+  'id, channel_id, payee, payer, cumulative_amount::text, status, network, opened_at, updated_at, settlement_tx_hash, open_tx_hash, voucher_count'
+
 export interface Session {
   id: string
   channel_id: string
   payee: string
   payer: string
-  cumulative_amount: number
+  /** Decimal USDC as text, e.g. "0.0000005" — see {@link SESSION_COLUMNS}. */
+  cumulative_amount: string
   status: 'open' | 'closing' | 'closed'
   network: string
   opened_at: string

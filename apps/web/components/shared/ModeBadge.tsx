@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session'
+type PaymentMode = 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
 
 const MODE_CONFIG: Record<PaymentMode, { label: string; className: string }> = {
   x402: {
@@ -14,6 +14,10 @@ const MODE_CONFIG: Record<PaymentMode, { label: string; className: string }> = {
   'mpp-session': {
     label: 'MPP Session',
     className: 'bg-emerald-500/10 text-[var(--status-success)]',
+  },
+  'mpp-session-ws': {
+    label: 'MPP Session WS',
+    className: 'bg-sky-500/10 text-sky-400 dark:text-[#7DD3FC]',
   },
 }
 
