@@ -14,6 +14,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient, usdcToMicros } from '../RouteDockClient.js'
 import { InMemorySpendStore, FileSpendStore } from '../../store/SpendStore.js'
@@ -25,6 +26,15 @@ import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// openSession verifies the deployed channel contract's refund window before
+// opening. Answer with the manifest's declared value so the spend-cap cases
+// stay offline; the verification itself has its own suite.
+mock.module('@stellar/mpp/channel/server', {
+  namedExports: {
+    getChannelState: async () => ({ refundWaitingPeriod: 17280 }),
+  },
+})
 
 const PAYEE_KEYPAIR = Keypair.random()
 

@@ -85,7 +85,14 @@ try {
 
 ### Time budget
 
-`refund_waiting_period_ledgers` is set by the provider in the manifest. The minimum enforced by the SDK is **17 280 ledgers ≈ 24 hours** at 5 s/ledger. Never connect to a provider whose manifest sets this below 17 280 — the SDK will throw `RouteDockManifestError` during `openSession`.
+`refund_waiting_period_ledgers` is declared by the provider in the manifest, but the manifest is not authoritative for what is actually deployed. `openSession` therefore checks two things, in this order:
+
+1. **Bounds.** The declared value must be within **17 280 ledgers ≈ 24 hours** (floor) and **518 400 ledgers ≈ 30 days** (ceiling) at 5 s/ledger. The floor stops a provider from shortening the window below a day; the ceiling stops one from stretching it until the agent's collateral is effectively locked. A value outside either bound throws `RouteDockManifestError` before any network call is made.
+2. **Agreement.** The SDK then reads `refundWaitingPeriod` from the deployed channel contract named by `pricing.channel_factory` — a fee-free simulation of the contract's public getter, the same path `getDisputeStatus()` uses — and throws `RouteDockManifestError` unless it matches the declared value exactly.
+
+If the contract's state cannot be read at all, `openSession` throws `RouteDockChannelStateError` rather than proceeding on the manifest's word: an unverifiable window is not a verified one. This means a **network round-trip to the channel contract is part of opening a session** — a provider cannot hand the agent a window and have the agent trust it.
+
+> Historical note: the SDK previously enforced only the floor, and only against the manifest's self-declared value. A channel deployed with a different (or unbounded) window would have passed, and the agent would have discovered the real window only when it tried to recover its funds. This section describes what is verified now.
 
 ---
 
