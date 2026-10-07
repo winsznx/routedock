@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 2,
+    "address": 3,
     "nonce": 0
   },
   "auth": [
@@ -20,7 +20,7 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -31,7 +31,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {
@@ -53,7 +53,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "8e4ba4d83f79e574bf59c09f743b8d975fc214926ea37922d58cf9232e610a53"
+                          "bytes": "23cedfbc2d342db7cae08818e58215b969189b45160e75f713a2d28f8dc9cb8c"
                         }
                       },
                       {
@@ -62,6 +62,14 @@
                         },
                         "val": {
                           "map": []
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "asset"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                         }
                       },
                       {

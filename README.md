@@ -81,7 +81,7 @@ The `agent-vault` contract emits structured events that indexers and Stellar Exp
 
 | Event | Topics | Data | When |
 |---|---|---|---|
-| `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
+| `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth`; `payer` is always the vault and `asset` is the configured SAC |
 | `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | After channel close, the provider calls `record_session_settlement`, authorized by its own allowlisted payee key |
 | `upgrade_proposed` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin schedules a Wasm change and starts the notice period |
 | `upgrade_cancelled` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin cancels a scheduled Wasm change |

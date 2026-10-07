@@ -328,6 +328,14 @@
                       },
                       {
                         "key": {
+                          "symbol": "asset"
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "dailycap"
                         },
                         "val": {
