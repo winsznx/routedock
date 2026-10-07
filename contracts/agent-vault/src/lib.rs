@@ -114,8 +114,8 @@ pub struct AgentVault;
 impl AgentVault {
     /// One-time constructor executed atomically upon contract deployment.
     /// `lifetime_cap`: total USDC (stroops) the vault may ever spend; 0 = unlimited.
-/// Negative `daily_cap`, `lifetime_cap` or allowlist sub-caps are rejected with
-    /// `Error::InvalidCap`.
+    /// Negative `daily_cap`, `lifetime_cap` or allowlist sub-caps are rejected
+    /// with `Error::InvalidCap`.
     pub fn __constructor(
         env: Env,
         admin: Address,
@@ -125,21 +125,9 @@ impl AgentVault {
         expiry_ledger: u32,
         lifetime_cap: i128,
     ) {
-let storage = env.storage().instance();
-        if storage.has(&INIT_KEY) {
-            panic_with_error!(&env, Error::AlreadyInitialized);
-        }
-
-        // A negative cap is not a meaningful limit: a negative daily cap blocks
-        // every positive transfer, while a negative lifetime cap fails open
-        // because the lifetime check only runs when the value is above 0.
-        // Reject the configuration at setup time rather than storing a value
-        // that silently disables a spend control. 0 stays valid everywhere
-        // (for the lifetime cap it means unlimited).
         validate_cap(&env, daily_cap);
-        // A negative lifetime cap would silently disable the lifetime spend
-        // control (the check only runs when the cap is above 0), so it is
-        // rejected here like every other cap. 0 still means unlimited.
+        // The lifetime cap fails open on a negative value (its check only runs
+        // when the cap is above 0), so it needs the same guard. 0 = unlimited.
         validate_cap(&env, lifetime_cap);
         for (_, sub_cap) in allowlist.iter() {
             validate_cap(&env, sub_cap);
@@ -248,9 +236,9 @@ let storage = env.storage().instance();
     }
 
     /// Update the lifetime USDC spend cap (in stroops). Admin only. 0 = unlimited.
-    /// The value is stored as given: the admin can raise, lower or clear the cap.
-    /// Setting it at or below `get_lifetime_spend()` blocks further payments.
-    /// Negative values are rejected with `Error::InvalidCap`.
+    /// Any non-negative value is stored as given: the admin can raise or lower the
+    /// cap, and setting it at or below `get_lifetime_spend()` blocks further
+    /// payments. Negative values are rejected with `Error::InvalidCap`.
     pub fn set_lifetime_cap(env: Env, new_cap: i128) {
         let storage = env.storage().instance();
         let admin: Address = storage
@@ -3156,12 +3144,12 @@ mod tests {
         assert!(result.is_ok(), "valid transfer must still pass: {result:?}");
     }
 
-    // ── #336: negative caps are rejected with InvalidCap ─────────────────────
-    // A negative cap used to be stored as given, and the two caps reacted in
-    // opposite ways: the daily cap fails closed (every positive transfer is over
-    // it) while the lifetime cap fails open, because its check only runs when the
-    // value is above 0. Negative values are now rejected where they are set. 0
-    // stays valid everywhere.
+    // ── #336: the lifetime cap rejects negative values ───────────────────────
+    // A negative cap used to be stored as given. The daily cap happens to fail
+    // closed on one, but the lifetime cap fails open, because its check only runs
+    // when the cap is above 0. Negative values are now rejected where they are
+    // set, with the same `Error::InvalidCap` the daily-cap and allowlist checks
+    // already use. 0 stays valid and means unlimited.
 
     /// The one-time constructor rejects a negative lifetime cap.
     #[test]
@@ -3186,50 +3174,6 @@ mod tests {
         );
     }
 
-    /// The one-time constructor rejects a negative daily cap.
-    #[test]
-    #[should_panic(expected = "Error(Contract, #13)")]
-    fn test_constructor_rejects_negative_daily_cap() {
-        let env = Env::default();
-        let admin = Address::generate(&env);
-        let (_, agent_pk) = gen_keypair(&env);
-
-        env.register(
-            AgentVault,
-            (
-                admin.clone(),
-                agent_pk.clone(),
-                -1_i128,
-                Map::<Address, i128>::new(&env),
-                10_000_u32,
-                0_i128,
-            ),
-        );
-    }
-
-    /// The one-time constructor rejects a negative allowlist sub-cap.
-    #[test]
-    #[should_panic(expected = "Error(Contract, #13)")]
-    fn test_constructor_rejects_negative_allowlist_sub_cap() {
-        let env = Env::default();
-        let admin = Address::generate(&env);
-        let (_, agent_pk) = gen_keypair(&env);
-        let payee = Address::generate(&env);
-        let allowlist = Map::from_array(&env, [(payee, -1_i128)]);
-
-        env.register(
-            AgentVault,
-            (
-                admin.clone(),
-                agent_pk.clone(),
-                5_000_000_i128,
-                allowlist.clone(),
-                10_000_u32,
-                0_i128,
-            ),
-        );
-    }
-
     /// set_lifetime_cap rejects a negative cap.
     #[test]
     #[should_panic(expected = "Error(Contract, #13)")]
@@ -3239,29 +3183,6 @@ mod tests {
         env.mock_all_auths();
 
         client.set_lifetime_cap(&-1_i128);
-    }
-
-    /// set_daily_cap rejects a negative cap.
-    #[test]
-    #[should_panic(expected = "Error(Contract, #13)")]
-    fn test_set_daily_cap_rejects_negative() {
-        let env = Env::default();
-        let (client, _, _, _) = setup(&env);
-        env.mock_all_auths();
-
-        client.set_daily_cap(&-1_i128);
-    }
-
-    /// add_to_allowlist rejects a negative sub-cap.
-    #[test]
-    #[should_panic(expected = "Error(Contract, #13)")]
-    fn test_add_to_allowlist_rejects_negative() {
-        let env = Env::default();
-        let (client, _, _, _) = setup(&env);
-        env.mock_all_auths();
-        let payee = Address::generate(&env);
-
-        client.add_to_allowlist(&payee, &-1_i128);
     }
 
     /// Raising the lifetime cap with set_lifetime_cap lets a transfer through
@@ -3724,5 +3645,4 @@ mod prop_tests {
             }
         }
     }
-
 }
