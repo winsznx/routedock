@@ -15,3 +15,6 @@ SHA-512 digest as a placeholder. No real zero-knowledge proof is generated.
 
 See [Issue #143](https://github.com/winsznx/routedock/issues/143) for context.
 
+- `RouteDockClient.pay()` rejects Nulth vaults until a Nulth scheme client and
+  account contract exist. See [Issue #356](https://github.com/winsznx/routedock/issues/356).
+
