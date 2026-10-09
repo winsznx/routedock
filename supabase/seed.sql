@@ -31,7 +31,7 @@ VALUES
         "x402": { "amount": "0.001", "per": "request", "facilitator": "https://channels.openzeppelin.com/x402/testnet" },
         "mpp-charge": { "amount": "0.0008", "per": "request" }
       },
-      "endpoints": { "price": "GET /price" },
+      "endpoints": { "price": { "method": "GET", "path": "/price" } },
       "tags": ["price", "stellar", "dex", "orderbook", "usdc"],
       "categories": ["data/price/crypto"]
     }'::jsonb,
@@ -59,19 +59,19 @@ VALUES
         "mpp-session": {
           "rate": "0.0001",
           "per": "voucher",
-          "channel_contract": "CDEMO1CHANNELCONTRACT1111111111111111111111111111111111",
+          "channel_factory": "CDEMO1CHANNELCONTRACT1111111111111111111111111111111111",
           "min_deposit": "0.10",
           "refund_waiting_period_ledgers": 17280
         },
         "mpp-session-ws": {
           "rate": "0.0001",
           "per": "voucher",
-          "channel_contract": "CDEMO1CHANNELCONTRACT1111111111111111111111111111111111",
+          "channel_factory": "CDEMO1CHANNELCONTRACT1111111111111111111111111111111111",
           "min_deposit": "0.10",
           "refund_waiting_period_ledgers": 17280
         }
       },
-      "endpoints": { "stream": "GET /stream/orderbook" },
+      "endpoints": { "stream": { "method": "GET", "path": "/stream/orderbook" } },
       "tags": ["stream", "stellar", "dex", "orderbook", "usdc", "sse", "realtime"],
       "categories": ["data/stream/crypto"]
     }'::jsonb,

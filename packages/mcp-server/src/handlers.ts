@@ -11,7 +11,12 @@
  * the MCP Server, and dispatching to these functions.
  */
 
-import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
+import {
+  RouteDockChannelStateError,
+  type RouteDockClient,
+  type SessionHandle,
+  type PaymentMode,
+} from '@routedock/routedock'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { MAX_STREAM_MESSAGES } from './tools.js'
 
@@ -47,9 +52,18 @@ export interface SupabaseQueryResult {
 /** Chainable query builder type for Supabase provider queries. */
 export interface SupabaseQueryBuilder {
   eq?: (field: string, value: unknown) => SupabaseQueryBuilder
-  overlaps?: (field: string, values: string[]) => SupabaseQueryBuilder | Promise<SupabaseQueryResult>
+  overlaps?: (
+    field: string,
+    values: string[]
+  ) => SupabaseQueryBuilder | Promise<SupabaseQueryResult>
   then?: (onfulfilled: (res: SupabaseQueryResult) => unknown) => unknown
   [key: string]: unknown
+}
+
+export interface OpenSessionEntry {
+  handle: SessionHandle
+  timedOut: boolean
+  unsubscribe: () => void
 }
 
 /** All external dependencies required by the handlers.  Inject fakes in tests. */
@@ -57,7 +71,7 @@ export interface HandlerDeps {
   /** Initialised RouteDockClient for paying / opening sessions. */
   client: RouteDockClient
   /** Live sessions keyed by channelId; shared across open/stream/close. */
-  openSessions: Map<string, SessionHandle>
+  openSessions: Map<string, OpenSessionEntry>
   /** Supabase client for list_providers, or null when not configured. */
   supabase: {
     from: (table: string) => {
@@ -94,7 +108,12 @@ function ok(payload: unknown): ToolResult {
 
 function err(message: string): ToolResult {
   return {
-    content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }, null, 2) }],
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ success: false, error: message }, null, 2),
+      },
+    ],
     isError: true,
   }
 }
@@ -117,14 +136,12 @@ export interface PayForDataArgs {
  */
 export async function handlePayForData(
   args: PayForDataArgs,
-  deps: HandlerDeps,
+  deps: HandlerDeps
 ): Promise<ToolResult> {
   const { url, max_amount, preferred_mode } = args
   const { client } = deps
 
-  const modeOptions = preferred_mode
-    ? { forceMode: preferred_mode as PaymentMode }
-    : undefined
+  const modeOptions = preferred_mode ? { forceMode: preferred_mode as PaymentMode } : undefined
 
   const estimate = await client.estimateCost(url, modeOptions)
 
@@ -134,7 +151,7 @@ export async function handlePayForData(
 
   if (parseFloat(estimate.amount) > parseFloat(max_amount)) {
     return err(
-      `Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`,
+      `Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`
     )
   }
 
@@ -166,7 +183,7 @@ export interface OpenSessionArgs {
 export async function handleOpenSession(
   args: OpenSessionArgs,
   deps: HandlerDeps,
-  commitmentSecret: string | undefined,
+  commitmentSecret: string | undefined
 ): Promise<ToolResult> {
   const { url, initial_deposit } = args
   const { client, openSessions, fetchManifest } = deps
@@ -175,30 +192,49 @@ export async function handleOpenSession(
     return err('COMMITMENT_SECRET environment variable is required for session mode')
   }
 
+  const baseUrl = new URL(url).origin
+  const manifestUrl = `${baseUrl}/.well-known/routedock.json`
+  const fetcher = fetchManifest ?? ((u: string) => fetch(u))
+  const manifestResponse = await fetcher(manifestUrl)
+  const manifest = (await manifestResponse.json()) as {
+    pricing?: Record<string, { min_deposit?: string; channel_factory?: string }>
+  }
+
+  const sessionPricing = manifest.pricing?.['mpp-session'] ?? manifest.pricing?.['mpp-session-ws']
+  const channelId = sessionPricing?.channel_factory
+  if (!channelId) return err('Provider manifest does not advertise a session channel_factory')
+
+  const existing = openSessions.get(channelId)
+  if (existing) {
+    return err(
+      `A session is already open for channel_id ${channelId}. ` +
+        `Use stream_session or close_session on the existing session before opening another one.`
+    )
+  }
+
   if (initial_deposit) {
-    const baseUrl = new URL(url).origin
-    const manifestUrl = `${baseUrl}/.well-known/routedock.json`
-
-    const fetcher = fetchManifest ?? ((u: string) => fetch(u))
-    const manifestResponse = await fetcher(manifestUrl)
-    const manifest = (await manifestResponse.json()) as {
-      pricing?: Record<string, { min_deposit?: string }>
-    }
-
-    const minDeposit =
-      manifest?.pricing?.['mpp-session']?.min_deposit ??
-      manifest?.pricing?.['mpp-session-ws']?.min_deposit
+    const minDeposit = sessionPricing?.min_deposit
     if (minDeposit && parseFloat(initial_deposit) < parseFloat(minDeposit)) {
       return err(
         `initial_deposit ${initial_deposit} is below this provider's min_deposit ${minDeposit}. ` +
           `RouteDock channels are pre-deployed and funded out-of-band before the agent runs — ` +
-          `make sure the channel is funded with at least min_deposit before opening a session.`,
+          `make sure the channel is funded with at least min_deposit before opening a session.`
       )
     }
   }
 
   const session = await client.openSession(url)
-  openSessions.set(session.channelId, session)
+  let timedOut = false
+  const unsubscribe = session.on('session:timeout', () => {
+    timedOut = true
+    const entry = openSessions.get(session.channelId)
+    if (entry) entry.timedOut = true
+  })
+  openSessions.set(session.channelId, {
+    handle: session,
+    timedOut,
+    unsubscribe,
+  })
 
   return ok({
     success: true,
@@ -228,16 +264,23 @@ export interface StreamSessionArgs {
  */
 export async function handleStreamSession(
   args: StreamSessionArgs,
-  deps: HandlerDeps,
+  deps: HandlerDeps
 ): Promise<ToolResult> {
   const { channel_id, max_messages } = args
   const { openSessions } = deps
 
-  const session = openSessions.get(channel_id)
-  if (!session) {
+  const entry = openSessions.get(channel_id)
+  if (!entry) {
     return err(
       `No open session found for channel_id ${channel_id}. It may have already been closed, ` +
-        `auto-closed after its wall-clock lifetime guard, or opened by a different server process.`,
+        `or opened by a different or earlier server process.`
+    )
+  }
+
+  if (entry.timedOut) {
+    return err(
+      `Session ${channel_id} reached its 1h lifetime limit and the SDK started an automatic close. ` +
+        `Call close_session to confirm settlement before retrying.`
     )
   }
 
@@ -246,12 +289,13 @@ export async function handleStreamSession(
     (!Number.isInteger(max_messages) || max_messages < 1 || max_messages > MAX_STREAM_MESSAGES)
   ) {
     return err(
-      `max_messages must be an integer between 1 and ${MAX_STREAM_MESSAGES} (received ${max_messages})`,
+      `max_messages must be an integer between 1 and ${MAX_STREAM_MESSAGES} (received ${max_messages})`
     )
   }
 
   const limit = max_messages ?? 1
   const messages: unknown[] = []
+  const session = entry.handle
   const iterator = session.stream()[Symbol.asyncIterator]()
 
   try {
@@ -277,7 +321,7 @@ export async function handleStreamSession(
               stats: session.stats(),
             },
             null,
-            2,
+            2
           ),
         },
       ],
@@ -310,29 +354,62 @@ export interface CloseSessionArgs {
  */
 export async function handleCloseSession(
   args: CloseSessionArgs,
-  deps: HandlerDeps,
+  deps: HandlerDeps
 ): Promise<ToolResult> {
   const { channel_id } = args
   const { openSessions } = deps
 
-  const session = openSessions.get(channel_id)
-  if (!session) {
+  const entry = openSessions.get(channel_id)
+  if (!entry) {
     return err(
       `No open session found for channel_id ${channel_id}. It may have already been closed or ` +
-        `auto-closed after its wall-clock lifetime guard.`,
+        `opened by a different or earlier server process.`
     )
   }
 
-  const result = await session.close()
-  openSessions.delete(channel_id)
+  try {
+    const result = await entry.handle.close()
+    entry.unsubscribe()
+    openSessions.delete(channel_id)
 
-  return ok({
-    success: true,
-    channel_id,
-    close_tx_hash: result.closeTxHash,
-    total_paid: result.totalPaid,
-    vouchers_issued: result.vouchersIssued,
-  })
+    return ok({
+      success: true,
+      channel_id,
+      close_tx_hash: result.closeTxHash,
+      total_paid: result.totalPaid,
+      vouchers_issued: result.vouchersIssued,
+    })
+  } catch (error) {
+    if (error instanceof RouteDockChannelStateError) {
+      entry.unsubscribe()
+      openSessions.delete(channel_id)
+    }
+    return err(error instanceof Error ? error.message : String(error))
+  }
+}
+
+export async function closeAllSessions(
+  openSessions: Map<string, OpenSessionEntry>
+): Promise<Array<{ channel_id: string; success: boolean; error?: string }>> {
+  const entries = [...openSessions.entries()]
+  const results = await Promise.all(
+    entries.map(async ([channel_id, entry]) => {
+      try {
+        await entry.handle.close()
+        return { channel_id, success: true }
+      } catch (error) {
+        return {
+          channel_id,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      } finally {
+        entry.unsubscribe()
+        openSessions.delete(channel_id)
+      }
+    })
+  )
+  return results
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +439,7 @@ export type HorizonBalance = {
 }
 
 function normalizeBalances(
-  balances: ReadonlyArray<HorizonBalance | Horizon.HorizonApi.BalanceLine>,
+  balances: ReadonlyArray<HorizonBalance | Horizon.HorizonApi.BalanceLine>
 ): HorizonBalance[] {
   return balances.map((b) => ({
     asset_type: b.asset_type,
@@ -379,7 +456,7 @@ function normalizeBalances(
  */
 export async function handleCheckBalance(
   args: CheckBalanceArgs,
-  deps: HandlerDeps,
+  deps: HandlerDeps
 ): Promise<ToolResult> {
   const { asset_code, asset_issuer } = args
   const { stellarSecret, stellarNetwork, createHorizonServer } = deps
@@ -398,7 +475,7 @@ export async function handleCheckBalance(
 
   if (asset_code && asset_issuer) {
     const balance = balances.find(
-      (b) => b.asset_code === asset_code && b.asset_issuer === asset_issuer,
+      (b) => b.asset_code === asset_code && b.asset_issuer === asset_issuer
     )
     return ok({
       asset: asset_code,
@@ -442,14 +519,14 @@ export interface ListProvidersArgs {
  */
 export async function handleListProviders(
   args: ListProvidersArgs,
-  deps: HandlerDeps,
+  deps: HandlerDeps
 ): Promise<ToolResult> {
   const { tags, network } = args
   const { supabase } = deps
 
   if (!supabase) {
     return err(
-      'SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access',
+      'SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access'
     )
   }
 

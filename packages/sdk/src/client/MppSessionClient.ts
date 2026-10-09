@@ -370,6 +370,7 @@ export class MppSessionClient {
     const listeners = new Map<SessionEvent, Set<SessionListener>>()
     let timeoutId: ReturnType<typeof setTimeout> | undefined
     let closed = false
+    let closePromise: Promise<SessionCloseResult> | undefined
 
     const emit = <E extends SessionEvent>(
       event: E,
@@ -428,6 +429,7 @@ export class MppSessionClient {
       },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        if (closed) throw new RouteDockChannelStateError('Session is closed')
         // Check the local daily spend cap before issuing a voucher over either
         // transport. The WebSocket path signs a credential before the HTTP probe
         // becomes a live stream, so it must run before any network request.
@@ -569,7 +571,10 @@ export class MppSessionClient {
         }
       },
 
-      async close(): Promise<SessionCloseResult> {
+      close(): Promise<SessionCloseResult> {
+        if (closePromise) return closePromise
+
+        const pending = (async (): Promise<SessionCloseResult> => {
         // Manual close — cancel the lifetime guard so it can't fire later.
         clearSessionTimer()
         closed = true
@@ -689,6 +694,13 @@ export class MppSessionClient {
           totalPaid,
           vouchersIssued,
         }
+        })()
+
+        closePromise = pending
+        void pending.catch(() => {
+          if (closePromise === pending) closePromise = undefined
+        })
+        return pending
       },
 
       async requestRefund(): Promise<string> {

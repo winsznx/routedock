@@ -106,7 +106,7 @@ existing manifest stays valid (no breaking change):
   "asset_contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "payee": "0xabc…",              // chain-specific address format
   "pricing": { "x402": { "amount": "0.001", "per": "request" } },
-  "endpoints": { "price": "GET /price" },
+  "endpoints": { "price": { "method": "GET", "path": "/price" } },
   "tags": ["price", "evm", "base"]
 }
 ```
