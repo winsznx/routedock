@@ -501,4 +501,3 @@ function startTestServer(
 }
 
 console.log('\nAll smoke tests passed.')
-
