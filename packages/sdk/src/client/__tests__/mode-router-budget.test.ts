@@ -98,10 +98,25 @@ describe('selectMode — budget_per_request validation', () => {
     assert.equal(selectMode(manifest, { optimize: 'cost' }), 'mpp-charge')
   })
 
-  it('ignores the budget when optimize is not cost', () => {
-    assert.equal(
-      selectMode(manifest, { budget_per_request: 'abc' }),
-      'mpp-charge',
+  it('enforces the budget without cost optimization and falls back to the next affordable mode', () => {
+    const mixedPrices = createManifest({
+      x402: { amount: '0.0005', per: 'request' },
+      'mpp-charge': { amount: '0.01', per: 'request' },
+    })
+    assert.equal(selectMode(mixedPrices, { budget_per_request: '0.001' }), 'x402')
+  })
+
+  it('rejects a default selection when every per-request mode exceeds the budget', () => {
+    assert.throws(
+      () => selectMode(manifest, { budget_per_request: '0.0005' }),
+      assertPolicyReject('budget_per_request_exceeded'),
+    )
+  })
+
+  it('rejects malformed budgets without cost optimization', () => {
+    assert.throws(
+      () => selectMode(manifest, { budget_per_request: 'abc' }),
+      assertPolicyReject('invalid_budget_per_request'),
     )
   })
 })
