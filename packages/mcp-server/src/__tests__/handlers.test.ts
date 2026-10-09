@@ -175,18 +175,26 @@ describe('handlePayForData', () => {
   })
 
   it('returns isError when estimate exceeds max_amount', async () => {
+    let payCalls = 0
     const deps = baseDeps({
       client: makeClient({
         estimateCost: async () => estimate('5.00'),
+        pay: async () => {
+          payCalls += 1
+          return {
+            mode: 'x402', amount: '5.00', txHash: 'TXHASH', timestamp: Date.now(), data: {},
+          }
+        },
       }),
     })
     const result = await handlePayForData(
-      { url: 'https://provider.example.com/data', max_amount: '1.00' },
+      { url: 'https://provider.example.com/data', max_amount: '0.01' },
       deps,
     )
     assert.equal(result.isError, true)
-    const body = parseResult(result) as any
+    const body = parseResult(result) as { error: string }
     assert.ok(body.error.includes('exceeds max_amount'))
+    assert.equal(payCalls, 0)
   })
 
   it('returns isError when provider returns an undefined amount', async () => {
@@ -202,6 +210,93 @@ describe('handlePayForData', () => {
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
     assert.ok(body.error.includes('undefined or invalid price'))
+  })
+
+  it('rejects invalid max_amount values before estimating or paying', async () => {
+    const invalidValues: unknown[] = [undefined, '', null, '$0.01', 'abc', 'one cent', '0', '-1', 0.01]
+
+    for (const max_amount of invalidValues) {
+      let estimateCalls = 0
+      let payCalls = 0
+      const deps = baseDeps({
+        client: makeClient({
+          estimateCost: async () => {
+            estimateCalls += 1
+            return estimate('0.01')
+          },
+          pay: async () => {
+            payCalls += 1
+            return {
+              mode: 'x402', amount: '0.01', txHash: 'TXHASH', timestamp: Date.now(), data: {},
+            }
+          },
+        }),
+      })
+
+      const result = await handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount } as unknown as import('../handlers.js').PayForDataArgs,
+        deps,
+      )
+
+      assert.equal(result.isError, true, `expected ${JSON.stringify(max_amount)} to fail`)
+      assert.equal(estimateCalls, 0, `expected ${JSON.stringify(max_amount)} not to estimate`)
+      assert.equal(payCalls, 0, `expected ${JSON.stringify(max_amount)} not to pay`)
+    }
+  })
+
+  it('compares prices exactly at the stroop boundary', async () => {
+    for (const [amount, maxAmount, shouldPay] of [
+      ['0.01', '0.01', true],
+      ['0.0100000', '0.01', true],
+      ['0.0100001', '0.01', false],
+    ] as const) {
+      let payCalls = 0
+      const deps = baseDeps({
+        client: makeClient({
+          estimateCost: async () => estimate(amount),
+          pay: async () => {
+            payCalls += 1
+            return {
+              mode: 'x402', amount, txHash: 'TXHASH', timestamp: Date.now(), data: {},
+            }
+          },
+        }),
+      })
+
+      const result = await handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount: maxAmount },
+        deps,
+      )
+
+      assert.equal(result.isError, shouldPay ? undefined : true)
+      assert.equal(payCalls, shouldPay ? 1 : 0)
+    }
+  })
+
+  it('rejects malformed or overly precise provider prices', async () => {
+    for (const amount of ['abc', '0.00000001']) {
+      let payCalls = 0
+      const deps = baseDeps({
+        client: makeClient({
+          estimateCost: async () => estimate(amount),
+          pay: async () => {
+            payCalls += 1
+            return {
+              mode: 'x402', amount, txHash: 'TXHASH', timestamp: Date.now(), data: {},
+            }
+          },
+        }),
+      })
+
+      const result = await handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount: '1.00' },
+        deps,
+      )
+
+      assert.equal(result.isError, true)
+      assert.ok((parseResult(result) as { error: string }).error.includes('undefined or invalid price'))
+      assert.equal(payCalls, 0)
+    }
   })
 
   it('passes forceMode (not preferredMode) to estimateCost and pay', async () => {

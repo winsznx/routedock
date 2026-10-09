@@ -35,13 +35,12 @@ jobs:
         run: pnpm --filter @routedock/nulth-sdk build
       - name: Run SDK tests
         run: pnpm --filter @routedock/routedock test
+      # MCP server and provider tests import the SDK's built dist/. The SDK's
+      # own tests run from source, so build it before either downstream suite.
+      - name: Build sdk (required by MCP server and provider tests)
+        run: pnpm --filter @routedock/routedock build
       - name: Run MCP server tests
         run: pnpm --filter @routedock/mcp-server test
-      # The provider manifest tests import @routedock/routedock/schema, which
-      # resolves to the SDK's built dist/. The SDK's own tests run from source,
-      # so nothing above this point builds it.
-      - name: Build sdk (provider tests import its built schema)
-        run: pnpm --filter @routedock/routedock build
       - name: Run provider-a tests
         run: pnpm --filter provider-a test
       - name: Run provider-b tests
