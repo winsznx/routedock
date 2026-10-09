@@ -3564,85 +3564,336 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// Property-based invariant tests
-// Enabled only when compiled with --features testutils (runs in CI, not locally
-// by default to avoid heavy compilation on resource-constrained machines).
+// Property-based invariant tests (#162, #335)
+//
+// Each case deploys a real `AgentVault`, drives `__check_auth` with an
+// arbitrary sequence of signed SAC `transfer` authorizations — across several
+// allowlisted payees, one non-allowlisted payee, arbitrary (including zero and
+// negative) amounts, single- and multi-transfer batches, and day-bucket
+// rollovers — and checks every outcome against an independent model of the
+// five spend policies:
+//
+//   * every accept/reject verdict, and the exact `Error` on rejection, matches
+//     the model (so deleting or weakening any cap check fails the property);
+//   * after every call the stored day / per-payee / lifetime counters equal the
+//     model's, i.e. a rejected batch leaves no partial spend behind;
+//   * the counters never exceed their caps, and lifetime spend never decreases.
+//
+// Enabled only with --features testutils (CI: "Run contract proptest
+// invariants").
 // ---------------------------------------------------------------------------
 #[cfg(all(test, feature = "testutils"))]
 mod prop_tests {
     extern crate alloc;
-    use alloc::vec::Vec;
-    use proptest::prelude::*;
+    extern crate std;
 
-    /// Helper: clamp a sequence of withdrawals to never exceed the cap, and
-    /// verify the running sum stays at or below the cap at every step.
-    fn withdrawals_never_exceed_cap(cap: i128, amounts: Vec<i128>) -> bool {
-        let mut running_total: i128 = 0;
-        for amount in amounts {
-            // Only authorise amounts that would not bust the cap
-            if amount <= 0 {
-                continue;
-            }
-            if running_total + amount > cap {
-                // Simulate a rejected withdrawal — running total stays the same
-                continue;
-            }
-            running_total += amount;
-            if running_total > cap {
-                return false;
+    use super::*;
+    use alloc::vec::Vec as StdVec;
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use proptest::prelude::*;
+    use soroban_sdk::{
+        auth::ContractContext,
+        testutils::{Address as _, EnvTestConfig, Ledger},
+        IntoVal,
+    };
+
+    const LEDGERS_PER_DAY: u32 = 17_280;
+    /// Payees on the allowlist; index `ALLOWLISTED` is the non-allowlisted one.
+    const ALLOWLISTED: usize = 3;
+
+    /// One authorization request: a batch of `(payee index, amount)` transfers,
+    /// preceded by an optional ledger advance.
+    #[derive(Clone, Debug)]
+    struct Step {
+        advance: Advance,
+        transfers: StdVec<(usize, i128)>,
+    }
+
+    #[derive(Clone, Debug)]
+    enum Advance {
+        None,
+        /// Move forward inside the current day bucket (when possible).
+        WithinDay(u32),
+        /// Move to the start of a later day bucket.
+        Days(u32),
+    }
+
+    /// Independent reference model of policies 1, 2, 4 and 5 (policy 3, expiry,
+    /// is held constant: the session never expires during a case).
+    #[derive(Clone, Debug)]
+    struct Model {
+        daily_cap: i128,
+        sub_caps: [i128; ALLOWLISTED],
+        lifetime_cap: i128,
+        bucket: u32,
+        day_spend: i128,
+        payee_spend: [i128; ALLOWLISTED],
+        lifetime_spend: i128,
+    }
+
+    impl Model {
+        fn roll_to(&mut self, bucket: u32) {
+            if bucket != self.bucket {
+                self.bucket = bucket;
+                self.day_spend = 0;
+                self.payee_spend = [0; ALLOWLISTED];
             }
         }
-        true
+
+        /// Apply a batch atomically: all transfers commit, or none do and the
+        /// first failing policy is reported, in the contract's check order.
+        fn authorize(&mut self, transfers: &[(usize, i128)]) -> Result<(), Error> {
+            let mut next = self.clone();
+            for &(payee, amount) in transfers {
+                if amount <= 0 {
+                    return Err(Error::InvalidAmount);
+                }
+                if payee >= ALLOWLISTED {
+                    return Err(Error::PayeeNotAllowed);
+                }
+                let day = next.day_spend.checked_add(amount).unwrap_or(i128::MAX);
+                if day > next.daily_cap {
+                    return Err(Error::DailyCapExceeded);
+                }
+                next.day_spend = day;
+                let per_payee = next.payee_spend[payee]
+                    .checked_add(amount)
+                    .unwrap_or(i128::MAX);
+                if per_payee > next.sub_caps[payee] {
+                    return Err(Error::PayeeCapExceeded);
+                }
+                next.payee_spend[payee] = per_payee;
+                let lifetime = next.lifetime_spend.checked_add(amount).unwrap_or(i128::MAX);
+                if next.lifetime_cap > 0 && lifetime > next.lifetime_cap {
+                    return Err(Error::LifetimeCapExceeded);
+                }
+                next.lifetime_spend = lifetime;
+            }
+            *self = next;
+            Ok(())
+        }
+    }
+
+    fn amount() -> impl Strategy<Value = i128> {
+        prop_oneof![
+            // Mostly small, so caps are reached often and boundaries get hit.
+            6 => 1_i128..=400_000,
+            2 => 400_000_i128..=3_000_000,
+            1 => Just(0_i128),
+            1 => -1_000_i128..=-1,
+        ]
+    }
+
+    fn step() -> impl Strategy<Value = Step> {
+        let advance = prop_oneof![
+            6 => Just(Advance::None),
+            2 => (1_u32..LEDGERS_PER_DAY).prop_map(Advance::WithinDay),
+            1 => (1_u32..=3).prop_map(Advance::Days),
+        ];
+        // Payee index ALLOWLISTED is the non-allowlisted address.
+        let transfer = (
+            prop_oneof![9 => 0..ALLOWLISTED, 1 => Just(ALLOWLISTED)],
+            amount(),
+        );
+        (advance, proptest::collection::vec(transfer, 1..=3))
+            .prop_map(|(advance, transfers)| Step { advance, transfers })
+    }
+
+    fn caps() -> impl Strategy<Value = (i128, [i128; ALLOWLISTED], i128)> {
+        (
+            1_i128..=5_000_000,
+            [0_i128..=3_000_000, 0_i128..=3_000_000, 0_i128..=3_000_000],
+            prop_oneof![1 => Just(0_i128), 2 => 1_i128..=12_000_000],
+        )
+    }
+
+    fn read_counters(
+        env: &Env,
+        vault: &Address,
+        payees: &[Address],
+    ) -> (i128, [i128; ALLOWLISTED], i128) {
+        let bucket = env.ledger().sequence() / LEDGERS_PER_DAY;
+        env.as_contract(vault, || {
+            let temp = env.storage().temporary();
+            let day = temp
+                .get::<(Symbol, u32), i128>(&(SPEND_PREFIX, bucket))
+                .unwrap_or(0);
+            let mut per_payee = [0_i128; ALLOWLISTED];
+            for (i, payee) in payees.iter().take(ALLOWLISTED).enumerate() {
+                per_payee[i] = temp
+                    .get::<(Symbol, u32, Address), i128>(&(
+                        PAYEE_SPEND_PREFIX,
+                        bucket,
+                        payee.clone(),
+                    ))
+                    .unwrap_or(0);
+            }
+            let lifetime = env
+                .storage()
+                .instance()
+                .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
+                .unwrap_or(0);
+            (day, per_payee, lifetime)
+        })
+    }
+
+    fn run_case(
+        daily_cap: i128,
+        sub_caps: [i128; ALLOWLISTED],
+        lifetime_cap: i128,
+        steps: StdVec<Step>,
+    ) -> Result<(), TestCaseError> {
+        // No snapshot files: hundreds of generated cases would otherwise each
+        // write one under test_snapshots/.
+        let env = Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        });
+        env.ledger().set_sequence_number(1);
+
+        let sk = SigningKey::from_bytes(&[7_u8; 32]);
+        let agent_pk = BytesN::<32>::from_array(&env, &sk.verifying_key().to_bytes());
+        let payees: StdVec<Address> = (0..=ALLOWLISTED).map(|_| Address::generate(&env)).collect();
+        let mut allowlist = Map::new(&env);
+        for (i, cap) in sub_caps.iter().enumerate() {
+            allowlist.set(payees[i].clone(), *cap);
+        }
+        let vault = env.register(
+            AgentVault,
+            (
+                Address::generate(&env),
+                agent_pk,
+                daily_cap,
+                allowlist,
+                u32::MAX,
+                lifetime_cap,
+            ),
+        );
+        let token = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        let mut model = Model {
+            daily_cap,
+            sub_caps,
+            lifetime_cap,
+            bucket: env.ledger().sequence() / LEDGERS_PER_DAY,
+            day_spend: 0,
+            payee_spend: [0; ALLOWLISTED],
+            lifetime_spend: 0,
+        };
+
+        for (n, step) in steps.into_iter().enumerate() {
+            let seq = env.ledger().sequence();
+            let next_seq = match step.advance {
+                Advance::None => seq,
+                Advance::WithinDay(by) => {
+                    let day_end = (seq / LEDGERS_PER_DAY + 1) * LEDGERS_PER_DAY - 1;
+                    seq.saturating_add(by).min(day_end)
+                }
+                Advance::Days(days) => (seq / LEDGERS_PER_DAY + days) * LEDGERS_PER_DAY,
+            };
+            env.ledger().set_sequence_number(next_seq);
+            model.roll_to(next_seq / LEDGERS_PER_DAY);
+
+            let mut contexts = Vec::new(&env);
+            for &(payee, amount) in &step.transfers {
+                contexts.push_back(Context::Contract(ContractContext {
+                    contract: token.clone(),
+                    fn_name: symbol_short!("transfer"),
+                    args: (payer.clone(), payees[payee].clone(), amount).into_val(&env),
+                }));
+            }
+            // Unique payload per call; the signature is genuine.
+            let mut raw = [0_u8; 32];
+            raw[..4].copy_from_slice(&(n as u32).to_be_bytes());
+            let payload = BytesN::<32>::from_array(&env, &raw);
+            let signature = BytesN::<64>::from_array(&env, &sk.sign(&raw).to_bytes());
+
+            let actual = env
+                .try_invoke_contract_check_auth::<Error>(
+                    &vault,
+                    &payload,
+                    signature.into_val(&env),
+                    &contexts,
+                )
+                .map_err(|e| e.expect("__check_auth must fail with a contract Error"));
+            let lifetime_before = model.lifetime_spend;
+            let expected = model.authorize(&step.transfers);
+
+            prop_assert_eq!(
+                actual,
+                expected,
+                "step {} at ledger {}: {:?}",
+                n,
+                next_seq,
+                step.transfers
+            );
+
+            let (day, per_payee, lifetime) = read_counters(&env, &vault, &payees);
+            prop_assert_eq!(day, model.day_spend, "day spend after step {}", n);
+            prop_assert_eq!(per_payee, model.payee_spend, "payee spend after step {}", n);
+            prop_assert_eq!(
+                lifetime,
+                model.lifetime_spend,
+                "lifetime spend after step {}",
+                n
+            );
+
+            // The cap invariants themselves, on the contract's stored state.
+            prop_assert!(day <= daily_cap);
+            for i in 0..ALLOWLISTED {
+                prop_assert!(per_payee[i] <= sub_caps[i]);
+            }
+            if lifetime_cap > 0 {
+                prop_assert!(lifetime <= lifetime_cap);
+            }
+            prop_assert!(lifetime >= lifetime_before, "lifetime spend decreased");
+        }
+        Ok(())
     }
 
     proptest! {
-        /// Invariant 1: The daily cap is never exceeded regardless of the
-        /// sequence and magnitude of approved withdrawals.
+        #![proptest_config(ProptestConfig {
+            cases: 128,
+            ..ProptestConfig::default()
+        })]
+
+        /// Arbitrary payment sequences against the real `__check_auth`: daily,
+        /// per-payee and lifetime caps hold, verdicts match the model, and a
+        /// rejected batch commits nothing.
         #[test]
-        fn daily_cap_never_exceeded(
-            cap in 1_i128..=100_000_000_i128,
-            amounts in proptest::collection::vec(0_i128..=10_000_000_i128, 0..=50),
+        fn check_auth_matches_spend_model(
+            (daily_cap, sub_caps, lifetime_cap) in caps(),
+            steps in proptest::collection::vec(step(), 1..=24),
         ) {
-            prop_assert!(withdrawals_never_exceed_cap(cap, amounts));
+            run_case(daily_cap, sub_caps, lifetime_cap, steps)?;
         }
 
-        /// Invariant 2: Per-payee sub-cap is never exceeded.
-        /// Each payee cap is always <= the global daily cap.
+        /// Single payee, one transfer per call, no day change: the classic
+        /// daily-cap boundary, probed at random amounts around the cap.
         #[test]
-        fn per_payee_cap_not_exceeded(
-            global_cap in 1_i128..=100_000_000_i128,
-            // Sub-cap is always a fraction of the global cap
-            sub_cap_fraction in 1_u32..=100_u32,
-            amounts in proptest::collection::vec(0_i128..=5_000_000_i128, 0..=30),
+        fn daily_cap_boundary_on_real_contract(
+            daily_cap in 1_i128..=2_000_000,
+            amounts in proptest::collection::vec(1_i128..=2_000_000, 1..=16),
         ) {
-            let sub_cap = global_cap / (sub_cap_fraction as i128).max(1);
-            // Sub-cap must not exceed global cap
-            prop_assert!(sub_cap <= global_cap);
-            // Simulate withdrawals capped at the sub-cap
-            prop_assert!(withdrawals_never_exceed_cap(sub_cap, amounts.clone()));
-            // Also verify against global cap
-            prop_assert!(withdrawals_never_exceed_cap(global_cap, amounts));
+            let steps = amounts
+                .into_iter()
+                .map(|a| Step { advance: Advance::None, transfers: alloc::vec![(0, a)] })
+                .collect();
+            run_case(daily_cap, [i128::MAX, 0, 0], 0, steps)?;
         }
 
-        /// Invariant 3: Lifetime spend cap is monotonically non-decreasing and
-        /// never exceeds the configured maximum.
+        /// Lifetime cap across many day buckets: daily caps reset, the lifetime
+        /// counter does not.
         #[test]
-        fn lifetime_cap_monotone(
-            lifetime_max in 1_i128..=1_000_000_000_i128,
-            amounts in proptest::collection::vec(0_i128..=10_000_000_i128, 0..=100),
+        fn lifetime_cap_spans_day_buckets(
+            lifetime_cap in 1_i128..=5_000_000,
+            amounts in proptest::collection::vec(1_i128..=1_500_000, 1..=16),
         ) {
-            let mut lifetime_spent: i128 = 0;
-            let mut prev = 0_i128;
-            for amount in amounts {
-                if amount <= 0 { continue; }
-                if lifetime_spent + amount > lifetime_max { continue; }
-                lifetime_spent += amount;
-                // Monotone: never decreases
-                prop_assert!(lifetime_spent >= prev);
-                // Never exceeds maximum
-                prop_assert!(lifetime_spent <= lifetime_max);
-                prev = lifetime_spent;
-            }
+            let steps = amounts
+                .into_iter()
+                .map(|a| Step { advance: Advance::Days(1), transfers: alloc::vec![(0, a)] })
+                .collect();
+            run_case(i128::MAX, [i128::MAX, 0, 0], lifetime_cap, steps)?;
         }
     }
 }
