@@ -13,12 +13,30 @@
  * alone yields a binary (latin1) string and corrupts non-ASCII bytes.
  */
 export function base64ToUtf8(b64: string): string {
-  const binary = atob(b64)
+  const normalized = b64.replace(/-/g, '+').replace(/_/g, '/')
+    .padEnd(Math.ceil(b64.length / 4) * 4, '=')
+  const binary = atob(normalized)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
   return new TextDecoder().decode(bytes)
+}
+
+export function parsePaymentCredential(value: string): {
+  source?: string
+  payload?: Record<string, unknown>
+} | null {
+  try {
+    const match = value.match(/^Payment\s+(.+)$/i)
+    if (!match?.[1]) return null
+    return JSON.parse(base64ToUtf8(match[1])) as {
+      source?: string
+      payload?: Record<string, unknown>
+    }
+  } catch {
+    return null
+  }
 }
 
 /**
