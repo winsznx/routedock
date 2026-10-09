@@ -65,7 +65,7 @@ function buildExpressShims(
     return Array.isArray(val) ? val[0] : val
   }
 
-  if (!('get' in req && typeof (req as any).get === 'function')) {
+  if (!('get' in rawReq && typeof req.get === 'function')) {
     Object.defineProperty(req, 'get', { value: reqGet, configurable: true })
     Object.defineProperty(req, 'header', { value: reqGet, configurable: true })
   }
@@ -145,7 +145,7 @@ function buildExpressShims(
     return res
   }
 
-  if (!('status' in res && typeof (res as any).status === 'function')) {
+  if (!('status' in rawRes && typeof res.status === 'function')) {
     Object.defineProperty(res, 'status', { value: resStatus, configurable: true })
     Object.defineProperty(res, 'json', { value: resJson, configurable: true })
     Object.defineProperty(res, 'send', { value: resSend, configurable: true })
