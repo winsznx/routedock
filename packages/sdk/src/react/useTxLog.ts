@@ -13,7 +13,7 @@ export interface TxLogRow {
 
 export interface UseTxLogFilter {
   channelId?: string
-  mode?: 'x402' | 'mpp-charge' | 'mpp-session'
+  mode?: 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
   limit?: number
 }
 
@@ -41,7 +41,11 @@ export function useTxLog(filter?: UseTxLogFilter): TxLogRow[] {
         .limit(filter?.limit ?? 100)
       if (filter?.channelId) query = query.eq('channel_id', filter.channelId)
       if (filter?.mode) query = query.eq('mode', filter.mode)
-      const { data } = await query
+      const { data, error } = await query
+      if (error) {
+        console.error('[useTxLog] initial fetch failed:', error.message)
+        return
+      }
       if (!cancelled && data) setRows(data as TxLogRow[])
     }
     fetchInitial()

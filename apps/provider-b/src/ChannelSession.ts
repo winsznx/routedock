@@ -247,6 +247,7 @@ export class ChannelSession extends DurableObject<Env> {
           tx_hash: txHash,
           amount: parseFloat(totalPaid),
           mode: 'mpp-session',
+          channel_id: channelId,
           network,
           provider_url: providerUrl,
           metadata: { settled_at: new Date().toISOString(), recovered: true },
@@ -270,4 +271,3 @@ export class ChannelSession extends DurableObject<Env> {
     return this.app.fetch(request)
   }
 }
-
