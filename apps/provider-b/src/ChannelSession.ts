@@ -1,6 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
-import { upgradeWebSocket } from 'hono/cloudflare-workers'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   routedockHono,
@@ -15,12 +14,15 @@ import {
   buildManifest,
   HORIZON_URLS,
   SESSION_RATE,
+  WS_SNAPSHOT_INTERVAL_MS,
+  WS_SNAPSHOTS_PER_VOUCHER,
   USDC_ISSUERS,
   type Network,
 } from './manifest.js'
 import type { Env } from './env.js'
 import { createSessionWriters } from './sessionWrites.js'
 import { resolveAssetContract } from './config.js'
+import { startOrderbookStream } from './orderbookStream.js'
 
 interface OrderBookLevel {
   price: string
@@ -165,54 +167,26 @@ export class ChannelSession extends DurableObject<Env> {
       }
     }
 
-    app.get(
-      '/stream/orderbook',
-      upgradeWebSocket((c) => {
-        // Hono runs this callback before it checks the Upgrade header, so a
-        // plain mpp-session GET lands here too. Return no events and let the
-        // helper fall through to the HTTP route below.
-        if (c.req.header('upgrade')?.toLowerCase() !== 'websocket') {
-          return {}
-        }
-        // Never upgrade a handshake the payment middleware did not verify.
-        // (The middleware returns 402 before reaching this route, so this is
-        // defense in depth against misconfiguration — fail fast rather than
-        // opening an unpaid socket.)
-        if (!mppSessionWsVerified(c)) {
-          throw new Error('mpp-session-ws: refusing unverified WebSocket handshake')
-        }
+    app.get('/stream/orderbook', async (c, next) => {
+      if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') return next()
 
-        let timer: ReturnType<typeof setInterval> | null = null
-        let socket: { send: (data: string) => void } | null = null
-        const push = async () => {
-          try {
-            socket?.send(JSON.stringify(await fetchOrderbook()))
-          } catch (err) {
-            console.error('[horizon] orderbook ws error:', err)
-          }
-        }
+      if (!mppSessionWsVerified(c)) {
+        throw new Error('mpp-session-ws: refusing unverified WebSocket handshake')
+      }
 
-        return {
-          onMessage: (_evt, ws) => {
-            socket = ws
-            // First message kicks off a periodic snapshot push. Cloudflare's
-            // WebSocketPair has no onOpen, so a client message is the natural
-            // trigger for the stream.
-            if (!timer) {
-              void push()
-              timer = setInterval(() => void push(), 5_000)
-            }
-            void ws.send(JSON.stringify({ type: 'ack', at: new Date().toISOString() }))
-          },
-          onClose: () => {
-            if (timer) {
-              clearInterval(timer)
-              timer = null
-            }
-          },
-        }
-      }),
-    )
+      const pair = new WebSocketPair()
+      const server = pair[1]
+      server.accept()
+      const stop = startOrderbookStream(server, {
+        fetchSnapshot: fetchOrderbook,
+        intervalMs: WS_SNAPSHOT_INTERVAL_MS,
+        maxTicks: WS_SNAPSHOTS_PER_VOUCHER,
+      })
+      server.addEventListener('close', stop)
+      server.addEventListener('error', stop)
+
+      return new Response(null, { status: 101, webSocket: pair[0] })
+    })
 
     app.get('/stream/orderbook', async (c) => {
       try {
@@ -270,4 +244,3 @@ export class ChannelSession extends DurableObject<Env> {
     return this.app.fetch(request)
   }
 }
-
