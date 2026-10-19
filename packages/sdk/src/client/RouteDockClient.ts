@@ -502,6 +502,8 @@ export class RouteDockClient {
       )
     }
 
+    await this._checkTrustline(manifest)
+
     const secret = _secrets.get(this)
     if (!secret) {
       throw new RouteDockManifestError(
