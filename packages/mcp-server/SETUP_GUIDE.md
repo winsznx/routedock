@@ -4,14 +4,14 @@ Complete guide to set up and run the @routedock/mcp-server with Claude Desktop.
 
 ## Prerequisites
 
-1. Node.js 20+ installed
+1. Node.js 22+ installed
 2. A Stellar testnet account with XLM/USDC (for testing)
 3. Claude Desktop installed
 
 ## Step 1: Build the MCP Server
 
 ```bash
-cd /home/lynndabel/wokedi/routedock/packages/mcp-server
+cd /path/to/routedock/packages/mcp-server
 pnpm install
 pnpm build
 ```
@@ -42,13 +42,17 @@ STELLAR_SECRET=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 STELLAR_NETWORK=testnet
 COMMITMENT_SECRET=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-supabase-service-key
+SUPABASE_KEY=your-supabase-anon-key
+ROUTEDOCK_DAILY_CAP=1.00
+# Optional: ROUTEDOCK_SPEND_STORE_PATH=~/.routedock/spend.json
 ```
 
 **Important:** 
 - `STELLAR_SECRET` is required for all operations
 - `COMMITMENT_SECRET` is only required for `open_session` (mpp-session mode)
-- `SUPABASE_URL` and `SUPABASE_KEY` are only required for `list_providers`
+- `ROUTEDOCK_DAILY_CAP` is required and limits aggregate daily USDC spend
+- `SUPABASE_URL` and `SUPABASE_KEY` are only required for `list_providers`; use
+  the Supabase anon key, never a service-role key
 
 ## Step 4: Configure Claude Desktop
 
@@ -67,13 +71,14 @@ Add the following configuration:
   "mcpServers": {
     "routedock": {
       "command": "node",
-      "args": ["/home/lynndabel/wokedi/routedock/packages/mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/routedock/packages/mcp-server/dist/index.js"],
       "env": {
         "STELLAR_SECRET": "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
         "STELLAR_NETWORK": "testnet",
         "COMMITMENT_SECRET": "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
         "SUPABASE_URL": "https://your-project.supabase.co",
-        "SUPABASE_KEY": "your-supabase-service-key"
+        "SUPABASE_KEY": "your-supabase-anon-key",
+        "ROUTEDOCK_DAILY_CAP": "1.00"
       }
     }
   }
@@ -153,7 +158,7 @@ Try paying for real data from these providers using the MCP tools!
 
 ## Next Steps
 
-1. Test all four MCP tools with the live providers
+1. Test all six MCP tools with the live providers
 2. Integrate the MCP server into your agent workflows
 3. Deploy your own RouteDock provider
 4. Scale to mainnet when ready
