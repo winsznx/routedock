@@ -192,25 +192,19 @@ describe('requestRefund()', () => {
 // ── settleWithLatestVoucher() ──────────────────────────────────────────────────
 
 describe('settleWithLatestVoucher()', () => {
-  it('returns the settlement transaction hash on success', async () => {
+  it('rejects because the deployed contract does not authorize unilateral settlement', async () => {
     rpc.simulateTransaction = () => ({
       result: { retval: { bytes: () => Buffer.from([1, 2, 3, 4]) } },
     })
     rpc.sendTransaction = () => ({ hash: 'SETTLE_TX_HASH' })
     const handle = await openHandle()
-    const hash = await handle.settleWithLatestVoucher()
-    assert.equal(hash, 'SETTLE_TX_HASH')
+    await assert.rejects(() => handle.settleWithLatestVoucher(), /not supported by the deployed channel contract/)
   })
 
-  it('throws RouteDockDisputeError when prepare_commitment returns no bytes', async () => {
+  it('throws RouteDockDisputeError for the deprecated settlement path', async () => {
     rpc.simulateTransaction = () => ({ result: { retval: { bytes: () => undefined } } })
     const handle = await openHandle()
-    await assert.rejects(
-      () => handle.settleWithLatestVoucher(),
-      (err: unknown) =>
-        err instanceof RouteDockDisputeError &&
-        /no bytes/i.test((err as Error).message),
-    )
+    await assert.rejects(() => handle.settleWithLatestVoucher(), (err: unknown) => err instanceof RouteDockDisputeError)
   })
 
   it('throws RouteDockDisputeError when the commitment simulation fails', async () => {
@@ -243,11 +237,11 @@ describe('getDisputeStatus()', () => {
     })
   }
 
-  it('defaults to "open" for an unrecognized contract status', async () => {
+  it('derives status from the deployed balance/refund surface for unknown legacy data', async () => {
     rpc.simulateTransaction = () => ({ result: { retval: { status: 'something_new' } } })
     const handle = await openHandle()
     const status = await handle.getDisputeStatus()
-    assert.equal(status, 'open')
+    assert.equal(status, 'refundable')
   })
 
   it('throws RouteDockChannelStateError when the state query simulation fails', async () => {

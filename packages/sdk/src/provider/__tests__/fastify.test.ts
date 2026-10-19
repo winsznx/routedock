@@ -179,6 +179,23 @@ describe('routedockFastify — mpp-charge flow', () => {
     }
   })
 
+  it('keeps mpp-charge reachable when mpp-session is also enabled', async () => {
+    const { url, close } = await makeServer({
+      modes: ['mpp-charge', 'mpp-session'],
+      pricing: {
+        'mpp-charge': '0.0008',
+        'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT },
+      },
+    })
+    try {
+      const res = await fetch(`${url}/price`)
+      assert.equal(res.status, 402)
+      assert.match(res.headers.get('www-authenticate') ?? '', /intent="?charge"?/)
+    } finally {
+      await close()
+    }
+  })
+
   it('passes through to route handler on settled payment (idempotency cache hit)', async () => {
     const stubStore: SeenTxStore = {
       get: () => ({ txHash: 'abc', headers: { 'payment-receipt': 'cached' } }),

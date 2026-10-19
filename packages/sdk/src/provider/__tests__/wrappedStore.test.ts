@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { Store } from '@stellar/mpp/channel/server'
-import {
-  isVoucherStoreValue,
-  type ChannelStore,
-} from '../MppSessionHandler.js'
+import { isVoucherStoreValue } from '../MppSessionHandler.js'
 
 describe('isVoucherStoreValue type guard', () => {
   it('returns true for objects with valid numeric string amounts', () => {
@@ -39,85 +35,5 @@ describe('isVoucherStoreValue type guard', () => {
     assert.equal(isVoucherStoreValue('string'), false)
     assert.equal(isVoucherStoreValue(123), false)
     assert.equal(isVoucherStoreValue(true), false)
-  })
-})
-
-describe('ChannelStore update capability check', () => {
-  it('delegates to update when innerStore supports update', async () => {
-    let updateCalled = false
-    const innerStoreWithUpdate: ChannelStore = {
-      async get() {
-        return null
-      },
-      async put() {},
-      async delete() {},
-      async update(key: string, fn: (prev: unknown) => unknown) {
-        updateCalled = true
-        return fn(null)
-      },
-    }
-
-    const wrappedStore: ChannelStore = {
-      async get(key: string) {
-        return innerStoreWithUpdate.get(key)
-      },
-      async put(key: string, value: unknown) {
-        await innerStoreWithUpdate.put(key, value)
-      },
-      async delete(key: string) {
-        return innerStoreWithUpdate.delete(key)
-      },
-      async update(key: string, fn: (prev: unknown) => unknown) {
-        const storeWithUpdate = innerStoreWithUpdate as Partial<ChannelStore>
-        if (typeof storeWithUpdate.update === 'function') {
-          return storeWithUpdate.update(key, fn)
-        }
-        throw new Error('Store does not support atomic update operations')
-      },
-    }
-
-    await wrappedStore.put('test-key', { amount: '100' })
-    await wrappedStore.update!('test-key', (prev: unknown) => prev)
-
-    assert.equal(updateCalled, true)
-  })
-
-  it('throws expected error when innerStore lacks update capability', async () => {
-    const basicStore = {
-      async get() {
-        return null
-      },
-      async put() {},
-      async delete() {},
-    }
-
-    const wrappedStore: ChannelStore = {
-      async get(key: string) {
-        return basicStore.get()
-      },
-      async put(key: string, value: unknown) {
-        await basicStore.put()
-      },
-      async delete(key: string) {
-        return basicStore.delete()
-      },
-      async update(key: string, fn: (prev: unknown) => unknown) {
-        const storeWithUpdate = basicStore as Partial<ChannelStore>
-        if (typeof storeWithUpdate.update === 'function') {
-          return storeWithUpdate.update(key, fn)
-        }
-        throw new Error('Store does not support atomic update operations')
-      },
-    }
-
-    await assert.rejects(
-      async () => {
-        await wrappedStore.update!('key', (prev: unknown) => prev)
-      },
-      {
-        name: 'Error',
-        message: 'Store does not support atomic update operations',
-      },
-    )
   })
 })
