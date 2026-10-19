@@ -45,6 +45,21 @@ mock.module('@stellar/mpp/channel/server', {
 })
 
 const actualCompat = await import('../mppCompatibility.js')
+const actualMppxServer = await import('mppx/server')
+mock.module('mppx/server', {
+  namedExports: {
+    ...actualMppxServer,
+    Mppx: {
+      create: () => ({
+        stellar: {
+          channel: () => async (request: globalThis.Request) => request.headers.has('authorization')
+            ? { status: 200 }
+            : { status: 402, challenge: new globalThis.Response('Payment Required', { status: 402 }) },
+        },
+      }),
+    },
+  },
+})
 type Commit = (credential: { payload?: unknown; source?: string }) => void | Promise<void>
 let lastCommit: Commit | null = null
 mock.module('../mppCompatibility.js', {
@@ -205,7 +220,7 @@ describe('routedock (Express) — voucher state only from verified credentials',
 
       const res = await fetch(`${url}/price`, {
         method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: 'Payment verified-test' },
         body: JSON.stringify({ amount: '5000', signature: 'ff'.repeat(32) }),
       })
       assert.equal(res.status, 200)

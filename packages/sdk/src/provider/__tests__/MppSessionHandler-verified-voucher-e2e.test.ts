@@ -95,8 +95,7 @@ mock.module('mppx/server', {
     Mppx: {
       create: (config: { methods: Method.AnyServer[] }) => {
         const channelMethod = config.methods[0]!
-        return {
-          channel:
+        const handler =
             (_opts: { amount: string; description?: string }) =>
             async (request: globalThis.Request) => {
               const auth = request.headers.get('authorization')
@@ -115,8 +114,8 @@ mock.module('mppx/server', {
               } catch {
                 return { status: 402, challenge: buildChallengeResponse() }
               }
-            },
-        }
+            }
+        return { stellar: { channel: handler } }
       },
     },
   },
@@ -259,7 +258,7 @@ describe('routedock (Express) — real HTTP regression coverage for verified-onl
 
       const deleteRes = await fetch(`${url}/price`, {
         method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: goodHeader },
         body: JSON.stringify({ amount: '5000', signature: 'ab'.repeat(64) }),
       })
       assert.equal(deleteRes.status, 200)

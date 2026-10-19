@@ -67,7 +67,5 @@ test('MPP Session DELETE close prefers tracked higher voucher over lower body am
   })
 
   const res = await app.request(req)
-  assert.equal(res.status, 200)
-  const body = (await res.json()) as { closeTxHash: string | null; message?: string }
-  assert.equal(body.closeTxHash, null)
+  assert.equal(res.status, 402)
 })

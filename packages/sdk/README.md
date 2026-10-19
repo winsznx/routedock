@@ -17,6 +17,9 @@ import { Keypair } from '@stellar/stellar-sdk'
 const client = new RouteDockClient({
   wallet: Keypair.fromSecret(process.env.AGENT_SECRET),
   network: 'testnet',
+  // Optional: use operator-owned or paid Stellar infrastructure.
+  rpcUrl: 'https://rpc.example.com/soroban',
+  horizonUrl: 'https://rpc.example.com/horizon',
   spendCap: { daily: '1.00', asset: 'USDC' },
 })
 
@@ -34,6 +37,10 @@ for await (const update of session.stream()) {
 }
 await session.close() // triggers on-chain settlement
 ```
+
+`rpcUrl` and `horizonUrl` default to Stellar's public endpoints for the
+selected network. Those endpoints are rate-limited and intended for
+development; production deployments should provide their own endpoints.
 
 ### Durable spend cap
 

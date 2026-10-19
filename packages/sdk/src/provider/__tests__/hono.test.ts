@@ -135,7 +135,7 @@ describe('routedockHono — mpp-session flow', () => {
     assert.equal(res.status, 402)
   })
 
-  it('returns { closeTxHash: null } on DELETE with no prior vouchers', async () => {
+  it('rejects unauthenticated DELETE with no prior vouchers', async () => {
     const app = makeApp({
       modes: ['mpp-session'],
       pricing: {
@@ -143,9 +143,7 @@ describe('routedockHono — mpp-session flow', () => {
       },
     })
     const res = await app.request('/price', { method: 'DELETE' })
-    assert.equal(res.status, 200)
-    const body = await res.json() as { closeTxHash: null }
-    assert.equal(body.closeTxHash, null)
+    assert.equal(res.status, 402)
   })
 })
 
@@ -161,7 +159,7 @@ describe('routedockHono — mpp-session-ws flow', () => {
     assert.equal(res.status, 402)
   })
 
-  it('returns { closeTxHash: null } on DELETE with no prior vouchers', async () => {
+  it('rejects unauthenticated DELETE with no prior vouchers', async () => {
     const app = makeApp({
       modes: ['mpp-session-ws'],
       pricing: {
@@ -169,9 +167,7 @@ describe('routedockHono — mpp-session-ws flow', () => {
       },
     })
     const res = await app.request('/price', { method: 'DELETE' })
-    assert.equal(res.status, 200)
-    const body = await res.json() as { closeTxHash: null }
-    assert.equal(body.closeTxHash, null)
+    assert.equal(res.status, 402)
   })
 })
 
