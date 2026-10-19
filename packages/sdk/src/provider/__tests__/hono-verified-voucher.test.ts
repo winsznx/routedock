@@ -56,6 +56,13 @@ mock.module('@stellar/mpp/channel/server', {
 })
 
 const actualCompat = await import('../mppCompatibility.js')
+const actualMppx = await import('mppx/server')
+mock.module('mppx/server', {
+  namedExports: {
+    ...actualMppx,
+    Mppx: { create: () => ({ stellar: { channel: () => async (request: Request) => request.headers.has('authorization') ? { status: 200 } : { status: 402, challenge: new Response('Payment Required', { status: 402 }) } } }) },
+  },
+})
 type Commit = (credential: { payload?: unknown; source?: string }) => void | Promise<void>
 let lastCommit: Commit | null = null
 mock.module('../mppCompatibility.js', {
@@ -163,7 +170,7 @@ describe('routedockHono — voucher state only from verified credentials', () =>
 
     const res = await app.request('/price', {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: 'Payment verified-test' },
       body: JSON.stringify({ amount: '2000', signature: 'bb'.repeat(32) }),
     })
     assert.equal(res.status, 200)
@@ -245,7 +252,7 @@ describe('routedockHono — voucher state only from verified credentials', () =>
 
     const res = await app.request('/price', {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: 'Payment verified-test' },
       body: JSON.stringify({ amount: '5000', signature: 'ff'.repeat(32) }),
     })
     assert.equal(res.status, 200)
@@ -261,7 +268,7 @@ describe('routedockHono — voucher state only from verified credentials', () =>
     // client-supplied body with an amount of 0 must not trigger a close.
     const res = await app.request('/price', {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: 'Payment verified-test' },
       body: JSON.stringify({}),
     })
     assert.equal(res.status, 200)

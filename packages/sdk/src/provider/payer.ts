@@ -10,7 +10,11 @@ import { StrKey } from '@stellar/stellar-sdk'
 export function extractPayerAddress(key: unknown): string | null {
   if (typeof key !== 'string') return null
 
-  return StrKey.isValidEd25519PublicKey(key) || StrKey.isValidMed25519PublicKey(key)
-    ? key
+  const value = key
+  const didAccount = value.match(/(?:^|:)((?:G|M)[A-Z2-7]{55})$/)?.[1]
+  if (didAccount) return StrKey.isValidEd25519PublicKey(didAccount) || StrKey.isValidMed25519PublicKey(didAccount) ? didAccount : null
+
+  return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidMed25519PublicKey(value)
+    ? value
     : null
 }
