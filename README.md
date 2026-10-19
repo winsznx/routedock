@@ -56,7 +56,7 @@ graph LR
 | Layer | Mechanism | Enforcement Point |
 |---|---|---|
 | Application | per-voucher challenge guard (channel, amount, cumulative) | `packages/sdk/src/client/MppSessionClient.ts:reserveNextCumulative` |
-| Application | manifest schema validation (AJV draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
+| Application | manifest schema validation (`@cfworker/json-schema`, draft-07) | `packages/sdk/src/client/ModeRouter.ts` |
 | Database | monotonic cumulative trigger | `supabase/migrations/001_init.sql:37,50` |
 | Database | RLS on sessions table | `supabase/migrations/001_init.sql:128-131` |
 | Contract | daily USDC cap policy | `contracts/agent-vault/src/lib.rs:__check_auth` |
@@ -222,12 +222,13 @@ await session.close()
 
 ## Discovery: `routedock.json`
 
-Every provider serves `/.well-known/routedock.json`. The SDK fetches and validates it (JSON Schema, AJV) before every call. Agents never hardcode payment logic.
+Every provider serves `/.well-known/routedock.json`. The SDK fetches and validates it with `@cfworker/json-schema` (draft-07), then verifies its Ed25519 signature before every call. Providers add `signature_version: "2"` and `signature` when their adapter signs the manifest; see [`docs/MANIFEST.md`](docs/MANIFEST.md). Agents never hardcode payment logic.
 
 ```json
 {
   "routedock": "1.0",
   "name": "Stellar DEX Price Feed",
+  "description": "Real-time USDC/XLM mid-price from Stellar DEX orderbook via Horizon",
   "modes": ["x402", "mpp-charge"],
   "network": "testnet",
   "asset": "USDC",
@@ -249,7 +250,7 @@ Every provider serves `/.well-known/routedock.json`. The SDK fetches and validat
     "x402": { "amount": "0.001", "per": "request" },
     "mpp-charge": { "amount": "0.0008", "per": "request" }
   },
-  "endpoints": { "price": "GET /price" },
+  "endpoints": { "price": { "method": "GET", "path": "/price" } },
   "tags": ["price", "stellar", "dex", "orderbook"]
 }
 ```
@@ -257,6 +258,8 @@ Every provider serves `/.well-known/routedock.json`. The SDK fetches and validat
 Manifests support optional multi-asset scoping via `assets` while preserving root `asset` / `asset_contract` for backward compatibility. See [Multi-Asset Support](docs/MULTI_ASSET_SUPPORT.md) for full details on asset normalization, endpoint-aware selection, and client preflight.
 
 > **Compatibility Notice:** Because the manifest schema uses `additionalProperties: false`, clients older than the multi-asset release will reject manifests containing the new `assets` field. Providers must not emit `assets` until clients have upgraded.
+
+The served document also carries `signature_version: "2"` and `signature`, added by the provider adapter. See the [manifest specification](docs/MANIFEST.md) for the schema, signing, and trust rules.
 
 The Supabase `providers` table indexes manifests with `pg_trgm` trigram search — agents query by capability, not by URL.
 

@@ -11,6 +11,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import { MppSessionClient } from '../MppSessionClient.js'
+import { RouteDockChannelStateError } from '../../errors.js'
 import { DEFAULT_MAX_SESSION_DURATION_MS } from '../../types.js'
 import type {
   RouteDockManifest,
@@ -50,13 +51,14 @@ function manifest(): RouteDockManifest {
   }
 }
 
-function newSession(maxDurationMs?: number) {
-  const client = new MppSessionClient(Keypair.random(), 'testnet')
+function newSession(maxDurationMs?: number, onSpend?: (amount: string) => Promise<void>) {
+  const client = new MppSessionClient(Keypair.random(), 'testnet', { maxAttempts: 1 })
   return client.openSession(
     'https://provider.test/stream',
     manifest(),
     Keypair.random().secret(),
     maxDurationMs === undefined ? undefined : { maxDurationMs },
+    onSpend,
   )
 }
 
@@ -155,6 +157,47 @@ test('maxDurationMs <= 0 disables the guard', async () => {
 
 test('default budget is one hour', () => {
   assert.equal(DEFAULT_MAX_SESSION_DURATION_MS, 3_600_000)
+})
+
+test('stream rejects after close without charging another voucher', async () => {
+  let spendCalls = 0
+  const session = await newSession(0, async () => {
+    spendCalls++
+  })
+  const closePromise = session.close()
+  await assert.rejects(closePromise)
+
+  await assert.rejects(
+    session.stream()[Symbol.asyncIterator]().next(),
+    (error: unknown) => error instanceof RouteDockChannelStateError && error.message === 'Session is closed',
+  )
+  assert.equal(spendCalls, 0)
+})
+
+test('stream rejects after the lifetime guard without charging another voucher', async () => {
+  let spendCalls = 0
+  const session = await newSession(20, async () => {
+    spendCalls++
+  })
+  await new Promise((resolve) => setTimeout(resolve, 80))
+
+  await assert.rejects(
+    session.stream()[Symbol.asyncIterator]().next(),
+    (error: unknown) => error instanceof RouteDockChannelStateError && error.message === 'Session is closed',
+  )
+  assert.equal(spendCalls, 0)
+})
+
+test('close shares an in-flight promise and retries after rejection', async () => {
+  const session = await newSession(0)
+  const first = session.close()
+  const second = session.close()
+  assert.strictEqual(first, second)
+  await assert.rejects(first)
+
+  const third = session.close()
+  assert.notStrictEqual(third, first)
+  await assert.rejects(third)
 })
 
 // ── Auto-close failure signal (#400) ──────────────────────────────────────────

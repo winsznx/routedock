@@ -18,7 +18,6 @@ target/
 contracts/agent-vault/stellar
 
 # Internal workflow docs — not part of the project
-Routedock master.md
 FRONTEND_SKILL.md
 AGENT_PROGRESS.md
 docs/DEMO_SCRIPT.md

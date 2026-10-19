@@ -7,6 +7,7 @@ import {
   handleOpenSession,
   handleStreamSession,
   handleCloseSession,
+  closeAllSessions,
   handleCheckBalance,
   handleListProviders,
   type HandlerDeps,
@@ -15,6 +16,7 @@ import {
   type ProviderRow,
   type SupabaseQueryBuilder,
 } from '../handlers.js'
+import { RouteDockChannelStateError, RouteDockNetworkError } from '@routedock/routedock'
 import { MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
 
 // ---------------------------------------------------------------------------
@@ -26,20 +28,23 @@ import { MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
 /** The canonical set of modes exported by the SDK. Kept as a const so any
  *  addition to PaymentMode surfaces here as a type error before the test runs. */
 const SDK_PAYMENT_MODES = ['x402', 'mpp-charge', 'mpp-session', 'mpp-session-ws'] as const
-type _AssertPaymentModes = (typeof SDK_PAYMENT_MODES)[number] extends import('@routedock/routedock').PaymentMode
-  ? import('@routedock/routedock').PaymentMode extends (typeof SDK_PAYMENT_MODES)[number]
-    ? true
+type _AssertPaymentModes =
+  (typeof SDK_PAYMENT_MODES)[number] extends import('@routedock/routedock').PaymentMode
+    ? import('@routedock/routedock').PaymentMode extends (typeof SDK_PAYMENT_MODES)[number]
+      ? true
+      : never
     : never
-  : never
 
 describe('TOOLS schema regression', () => {
   it('pay_for_data preferred_mode enum matches SDK PaymentMode exactly', () => {
     const tool = TOOLS.find((t) => t.name === 'pay_for_data')
     assert.ok(tool, 'pay_for_data tool must exist in TOOLS')
 
-    const enumValues = (tool.inputSchema as unknown as {
-      properties: { preferred_mode: { enum: string[] } }
-    }).properties.preferred_mode.enum
+    const enumValues = (
+      tool.inputSchema as unknown as {
+        properties: { preferred_mode: { enum: string[] } }
+      }
+    ).properties.preferred_mode.enum
 
     const expected = [...SDK_PAYMENT_MODES].sort()
     const actual = [...enumValues].sort()
@@ -47,7 +52,7 @@ describe('TOOLS schema regression', () => {
     assert.deepEqual(
       actual,
       expected,
-      `Tool enum ${JSON.stringify(actual)} must match SDK PaymentMode ${JSON.stringify(expected)}`,
+      `Tool enum ${JSON.stringify(actual)} must match SDK PaymentMode ${JSON.stringify(expected)}`
     )
   })
 
@@ -55,9 +60,13 @@ describe('TOOLS schema regression', () => {
     const tool = TOOLS.find((t) => t.name === 'stream_session')
     assert.ok(tool, 'stream_session tool must exist in TOOLS')
 
-    const schema = (tool.inputSchema as unknown as {
-      properties: { max_messages: { type: string; minimum: number; maximum: number } }
-    }).properties.max_messages
+    const schema = (
+      tool.inputSchema as unknown as {
+        properties: {
+          max_messages: { type: string; minimum: number; maximum: number }
+        }
+      }
+    ).properties.max_messages
 
     assert.equal(schema.type, 'integer')
     assert.equal(schema.minimum, 1)
@@ -95,31 +104,49 @@ function estimate(amount: string): EstimateCostResult {
 }
 
 /** Minimal fake RouteDockClient */
-function makeClient(overrides: Partial<{
-  estimateCost: HandlerDeps['client']['estimateCost']
-  pay: HandlerDeps['client']['pay']
-  openSession: HandlerDeps['client']['openSession']
-}> = {}): HandlerDeps['client'] {
+function makeClient(
+  overrides: Partial<{
+    estimateCost: HandlerDeps['client']['estimateCost']
+    pay: HandlerDeps['client']['pay']
+    openSession: HandlerDeps['client']['openSession']
+  }> = {}
+): HandlerDeps['client'] {
   return {
     estimateCost: overrides.estimateCost ?? (async () => estimate('0.001')),
-    pay: overrides.pay ?? (async () => ({
-      mode: 'x402' as const,
-      amount: '0.001',
-      txHash: 'TXHASH',
-      timestamp: Date.now(),
-      data: {},
-    })),
-    openSession: overrides.openSession ?? (async () => ({
-      channelId: 'CHAN1',
-      openTxHash: 'OPEN_TX',
-      stream: () => ({ [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true, value: undefined }) }) }),
-      close: async () => ({ closeTxHash: 'CLOSE_TX', totalPaid: '0.01', vouchersIssued: 3 }),
-    })),
+    pay:
+      overrides.pay ??
+      (async () => ({
+        mode: 'x402' as const,
+        amount: '0.001',
+        txHash: 'TXHASH',
+        timestamp: Date.now(),
+        data: {},
+      })),
+    openSession:
+      overrides.openSession ??
+      (async () => ({
+        channelId: 'CHAN1',
+        openTxHash: 'OPEN_TX',
+        stream: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: async () => ({ done: true, value: undefined }),
+          }),
+        }),
+        close: async () => ({
+          closeTxHash: 'CLOSE_TX',
+          totalPaid: '0.01',
+          vouchersIssued: 3,
+        }),
+        on: () => () => {},
+      })),
   } as unknown as HandlerDeps['client']
 }
 
 /** Minimal fake Supabase client */
-function makeSupabase(rows: unknown[], error: { message: string } | null = null): HandlerDeps['supabase'] {
+function makeSupabase(
+  rows: unknown[],
+  error: { message: string } | null = null
+): HandlerDeps['supabase'] {
   const terminal = Promise.resolve({ data: rows as ProviderRow[], error })
   const builder: unknown = Object.assign(terminal, {
     eq: () => builder,
@@ -154,6 +181,11 @@ function baseDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     supabase: null,
     stellarSecret: Keypair.random().secret(),
     stellarNetwork: 'testnet',
+    fetchManifest: async () => ({
+      json: async () => ({
+        pricing: { 'mpp-session': { channel_factory: 'CHAN1' } },
+      }),
+    }),
     ...overrides,
   }
 }
@@ -166,7 +198,7 @@ describe('handlePayForData', () => {
   it('returns success when estimate is within max_amount', async () => {
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
-      baseDeps(),
+      baseDeps()
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -182,7 +214,7 @@ describe('handlePayForData', () => {
     })
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
-      deps,
+      deps
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -192,12 +224,15 @@ describe('handlePayForData', () => {
   it('returns isError when provider returns an undefined amount', async () => {
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async () => ({ ...estimate('0'), amount: undefined as unknown as string }),
+        estimateCost: async () => ({
+          ...estimate('0'),
+          amount: undefined as unknown as string,
+        }),
       }),
     })
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
-      deps,
+      deps
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -215,8 +250,12 @@ describe('handlePayForData', () => {
       }),
     })
     await handlePayForData(
-      { url: 'https://p.example.com/data', max_amount: '1.00', preferred_mode: 'mpp-charge' },
-      deps,
+      {
+        url: 'https://p.example.com/data',
+        max_amount: '1.00',
+        preferred_mode: 'mpp-charge',
+      },
+      deps
     )
     assert.deepEqual(capturedModeOptions, { forceMode: 'mpp-charge' })
   })
@@ -231,7 +270,7 @@ describe('handleOpenSession', () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com' },
       baseDeps(),
-      undefined,
+      undefined
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -243,7 +282,7 @@ describe('handleOpenSession', () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com' },
       baseDeps({ openSessions: sessions }),
-      'secret123',
+      'secret123'
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -254,7 +293,9 @@ describe('handleOpenSession', () => {
 
   it('returns isError when initial_deposit is below min_deposit', async () => {
     const fakeManifest = {
-      pricing: { 'mpp-session': { min_deposit: '10.0' } },
+      pricing: {
+        'mpp-session': { min_deposit: '10.0', channel_factory: 'CHAN1' },
+      },
     }
     const fetchManifest = async (_url: string) => ({
       json: async () => fakeManifest,
@@ -262,7 +303,7 @@ describe('handleOpenSession', () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com', initial_deposit: '1.0' },
       baseDeps({ fetchManifest }),
-      'secret123',
+      'secret123'
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -271,7 +312,9 @@ describe('handleOpenSession', () => {
 
   it('passes when initial_deposit meets min_deposit', async () => {
     const fakeManifest = {
-      pricing: { 'mpp-session': { min_deposit: '1.0' } },
+      pricing: {
+        'mpp-session': { min_deposit: '1.0', channel_factory: 'CHAN1' },
+      },
     }
     const fetchManifest = async (_url: string) => ({
       json: async () => fakeManifest,
@@ -280,7 +323,7 @@ describe('handleOpenSession', () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com', initial_deposit: '5.0' },
       baseDeps({ openSessions: sessions, fetchManifest }),
-      'secret123',
+      'secret123'
     )
     assert.equal(result.isError, undefined)
     assert.ok(sessions.has('CHAN1'))
@@ -288,7 +331,9 @@ describe('handleOpenSession', () => {
 
   it('reads min_deposit from mpp-session-ws when mpp-session is absent', async () => {
     const fakeManifest = {
-      pricing: { 'mpp-session-ws': { min_deposit: '10.0' } },
+      pricing: {
+        'mpp-session-ws': { min_deposit: '10.0', channel_factory: 'CHAN1' },
+      },
     }
     const fetchManifest = async (_url: string) => ({
       json: async () => fakeManifest,
@@ -296,11 +341,62 @@ describe('handleOpenSession', () => {
     const result = await handleOpenSession(
       { url: 'https://provider.example.com', initial_deposit: '1.0' },
       baseDeps({ fetchManifest }),
-      'secret123',
+      'secret123'
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
     assert.ok(body.error.includes('min_deposit'))
+  })
+
+  it('rejects a second session for the same provider channel', async () => {
+    let openCalls = 0
+    const fakeSession = {
+      channelId: 'SHARED_CHANNEL',
+      openTxHash: null,
+      stream: () => ({
+        [Symbol.asyncIterator]: () => ({
+          next: async () => ({ done: true, value: undefined }),
+        }),
+      }),
+      close: async () => ({
+        closeTxHash: 'CLOSE',
+        totalPaid: '0',
+        vouchersIssued: 0,
+      }),
+      on: () => () => {},
+    }
+    const sessions = new Map()
+    const deps = baseDeps({
+      openSessions: sessions,
+      fetchManifest: async () => ({
+        json: async () => ({
+          pricing: { 'mpp-session': { channel_factory: 'SHARED_CHANNEL' } },
+        }),
+      }),
+      client: makeClient({
+        openSession: async () => {
+          openCalls++
+          return fakeSession as any
+        },
+      }),
+    })
+
+    const first = await handleOpenSession(
+      { url: 'https://provider.example.com' },
+      deps,
+      'secret123'
+    )
+    const second = await handleOpenSession(
+      { url: 'https://provider.example.com' },
+      deps,
+      'secret123'
+    )
+
+    assert.equal(first.isError, undefined)
+    assert.equal(second.isError, true)
+    assert.match((parseResult(second) as any).error, /SHARED_CHANNEL/)
+    assert.equal(openCalls, 1)
+    assert.equal(sessions.size, 1)
   })
 })
 
@@ -310,10 +406,7 @@ describe('handleOpenSession', () => {
 
 describe('handleStreamSession', () => {
   it('returns isError for unknown channel_id', async () => {
-    const result = await handleStreamSession(
-      { channel_id: 'MISSING' },
-      baseDeps(),
-    )
+    const result = await handleStreamSession({ channel_id: 'MISSING' }, baseDeps())
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
     assert.ok(body.error.includes('No open session'))
@@ -332,10 +425,12 @@ describe('handleStreamSession', () => {
         }),
       }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 2 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -356,22 +451,55 @@ describe('handleStreamSession', () => {
         }),
       }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 10 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     const body = parseResult(result) as any
     assert.equal(body.count, 1)
   })
 
+  it('refuses a timed-out session and leaves it available for close_session', async () => {
+    let streamCalls = 0
+    const fakeSession = {
+      stream: () => {
+        streamCalls++
+        return {
+          [Symbol.asyncIterator]: () => ({
+            next: async () => ({ done: true, value: undefined }),
+          }),
+        }
+      },
+      on: () => () => {},
+    }
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
+    const entry = sessions.get('CHAN1')!
+    entry.timedOut = true
+
+    const result = await handleStreamSession(
+      { channel_id: 'CHAN1' },
+      baseDeps({ openSessions: sessions })
+    )
+    assert.equal(result.isError, true)
+    assert.match((parseResult(result) as any).error, /close_session/)
+    assert.equal(streamCalls, 0)
+    assert.equal(sessions.has('CHAN1'), true)
+  })
+
   it('pulls exactly 1 message when max_messages is omitted', async () => {
     const items = ['msg1', 'msg2', 'msg3']
     const fakeSession = makeStreamSession(items)
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1' },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -401,10 +529,12 @@ describe('handleStreamSession', () => {
         }),
       }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 5 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -417,7 +547,12 @@ describe('handleStreamSession', () => {
   })
 
   it('resolves with an empty partial batch when the first voucher fails', async () => {
-    const stats = { vouchersIssued: 0, currentCumulative: '0', channelId: 'CHAN1', openTxHash: null }
+    const stats = {
+      vouchersIssued: 0,
+      currentCumulative: '0',
+      channelId: 'CHAN1',
+      openTxHash: null,
+    }
     const fakeSession = {
       stats: () => stats,
       stream: () => ({
@@ -428,10 +563,12 @@ describe('handleStreamSession', () => {
         }),
       }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 5 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -453,11 +590,15 @@ describe('handleStreamSession', () => {
         return { done: true, value: undefined }
       },
     }
-    const fakeSession = { stream: () => ({ [Symbol.asyncIterator]: () => iterator }) }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const fakeSession = {
+      stream: () => ({ [Symbol.asyncIterator]: () => iterator }),
+    }
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 2 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(returnCalls, 1)
   })
@@ -474,13 +615,20 @@ describe('handleStreamSession', () => {
       },
     }
     const fakeSession = {
-      stats: () => ({ vouchersIssued: 0, currentCumulative: '0', channelId: 'CHAN1', openTxHash: null }),
+      stats: () => ({
+        vouchersIssued: 0,
+        currentCumulative: '0',
+        channelId: 'CHAN1',
+        openTxHash: null,
+      }),
       stream: () => ({ [Symbol.asyncIterator]: () => iterator }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 3 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(returnCalls, 1)
   })
@@ -488,10 +636,12 @@ describe('handleStreamSession', () => {
   it('still works with a generator that has no return() method', async () => {
     const items = ['msg1']
     const fakeSession = makeStreamSession(items)
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 1 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, undefined)
   })
@@ -503,13 +653,19 @@ describe('handleStreamSession', () => {
         stats: () => ({}),
         stream: () => {
           streamCalls++
-          return { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true, value: undefined }) }) }
+          return {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => ({ done: true, value: undefined }),
+            }),
+          }
         },
       }
-      const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+      const sessions = new Map<string, any>([
+        ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+      ])
       const result = await handleStreamSession(
         { channel_id: 'CHAN1', max_messages: invalid },
-        baseDeps({ openSessions: sessions }),
+        baseDeps({ openSessions: sessions })
       )
       assert.equal(result.isError, true)
       const body = parseResult(result) as any
@@ -521,10 +677,12 @@ describe('handleStreamSession', () => {
   it('accepts max_messages at the upper bound of 50', async () => {
     const items = ['msg1', 'msg2']
     const fakeSession = makeStreamSession(items)
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleStreamSession(
       { channel_id: 'CHAN1', max_messages: 50 },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -552,10 +710,12 @@ describe('handleCloseSession', () => {
         vouchersIssued: 5,
       }),
     }
-    const sessions = new Map<string, any>([['CHAN1', fakeSession]])
+    const sessions = new Map<string, any>([
+      ['CHAN1', { handle: fakeSession, timedOut: false, unsubscribe: () => {} }],
+    ])
     const result = await handleCloseSession(
       { channel_id: 'CHAN1' },
-      baseDeps({ openSessions: sessions }),
+      baseDeps({ openSessions: sessions })
     )
     assert.equal(result.isError, undefined)
     const body = parseResult(result) as any
@@ -565,6 +725,107 @@ describe('handleCloseSession', () => {
     assert.equal(body.vouchers_issued, 5)
     // Must be evicted
     assert.equal(sessions.has('CHAN1'), false)
+  })
+
+  it('evicts a timed-out session after close succeeds', async () => {
+    const sessions = new Map<string, any>([
+      [
+        'CHAN1',
+        {
+          handle: {
+            close: async () => ({
+              closeTxHash: 'CLOSE',
+              totalPaid: '0',
+              vouchersIssued: 0,
+            }),
+          },
+          timedOut: true,
+          unsubscribe: () => {},
+        },
+      ],
+    ])
+    const result = await handleCloseSession(
+      { channel_id: 'CHAN1' },
+      baseDeps({ openSessions: sessions })
+    )
+    assert.equal(result.isError, undefined)
+    assert.equal(sessions.has('CHAN1'), false)
+  })
+
+  it('evicts channel-state failures but preserves retryable network failures', async () => {
+    const stateSessions = new Map<string, any>([
+      [
+        'STATE',
+        {
+          handle: {
+            close: async () => {
+              throw new RouteDockChannelStateError('already settled')
+            },
+          },
+          timedOut: true,
+          unsubscribe: () => {},
+        },
+      ],
+    ])
+    const networkSessions = new Map<string, any>([
+      [
+        'NETWORK',
+        {
+          handle: {
+            close: async () => {
+              throw new RouteDockNetworkError('temporarily unavailable')
+            },
+          },
+          timedOut: false,
+          unsubscribe: () => {},
+        },
+      ],
+    ])
+
+    const stateResult = await handleCloseSession(
+      { channel_id: 'STATE' },
+      baseDeps({ openSessions: stateSessions })
+    )
+    const networkResult = await handleCloseSession(
+      { channel_id: 'NETWORK' },
+      baseDeps({ openSessions: networkSessions })
+    )
+    assert.equal(stateResult.isError, true)
+    assert.equal(networkResult.isError, true)
+    assert.equal(stateSessions.has('STATE'), false)
+    assert.equal(networkSessions.has('NETWORK'), true)
+  })
+
+  it('closes and evicts every session even when one close rejects', async () => {
+    const sessions = new Map<string, any>([
+      [
+        'OK',
+        {
+          handle: { close: async () => ({}) },
+          timedOut: false,
+          unsubscribe: () => {},
+        },
+      ],
+      [
+        'FAIL',
+        {
+          handle: {
+            close: async () => {
+              throw new Error('close failed')
+            },
+          },
+          timedOut: false,
+          unsubscribe: () => {},
+        },
+      ],
+    ])
+
+    const results = await closeAllSessions(sessions)
+    assert.deepEqual(
+      results.map((result) => result.success),
+      [true, false]
+    )
+    assert.equal(sessions.size, 0)
   })
 })
 
@@ -633,10 +894,7 @@ describe('handleCheckBalance', () => {
         { asset_code: 'USDC', asset_issuer: 'ISSUER1', balance: '55.50' },
       ]),
     })
-    const result = await handleCheckBalance(
-      { asset_code: 'USDC', asset_issuer: 'ISSUER1' },
-      deps,
-    )
+    const result = await handleCheckBalance({ asset_code: 'USDC', asset_issuer: 'ISSUER1' }, deps)
     const body = parseResult(result) as any
     assert.equal(body.balance, '55.50')
     assert.equal(body.issuer, 'ISSUER1')
@@ -657,7 +915,15 @@ describe('handleListProviders', () => {
 
   it('returns providers from supabase without filters', async () => {
     const rows = [
-      { name: 'ProvA', description: 'desc', network: 'testnet', asset: 'USDC', modes: ['x402'], tags: ['price'], base_url: 'https://a.example.com' },
+      {
+        name: 'ProvA',
+        description: 'desc',
+        network: 'testnet',
+        asset: 'USDC',
+        modes: ['x402'],
+        tags: ['price'],
+        base_url: 'https://a.example.com',
+      },
     ]
     const deps = baseDeps({ supabase: makeSupabase(rows) })
     const result = await handleListProviders({}, deps)
@@ -669,7 +935,9 @@ describe('handleListProviders', () => {
   })
 
   it('returns isError when supabase reports an error', async () => {
-    const deps = baseDeps({ supabase: makeSupabase([], { message: 'DB error' }) })
+    const deps = baseDeps({
+      supabase: makeSupabase([], { message: 'DB error' }),
+    })
     const result = await handleListProviders({}, deps)
     assert.equal(result.isError, true)
     const body = parseResult(result) as any
@@ -686,7 +954,15 @@ describe('handleListProviders', () => {
 
   it('applies tag filter (overlaps)', async () => {
     const rows = [
-      { name: 'ProvB', description: '', network: 'testnet', asset: 'USDC', modes: ['mpp-charge'], tags: ['dex'], base_url: 'https://b.example.com' },
+      {
+        name: 'ProvB',
+        description: '',
+        network: 'testnet',
+        asset: 'USDC',
+        modes: ['mpp-charge'],
+        tags: ['dex'],
+        base_url: 'https://b.example.com',
+      },
     ]
     let calledOverlaps = false
     const supabase: HandlerDeps['supabase'] = {

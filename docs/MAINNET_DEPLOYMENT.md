@@ -304,7 +304,7 @@ SUPABASE_ANON_KEY=<your-anon-key>
 
 ```bash
 curl -s https://api-a.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing.x402.facilitator'
-curl -s https://api-b.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing["mpp-session"].channel_contract'
+curl -s https://api-b.routedock.xyz/.well-known/routedock.json | jq '.network,.pricing["mpp-session"].channel_factory,.signature_version'
 curl -s https://api-a.routedock.xyz/health
 curl -s https://api-b.routedock.xyz/health
 ```

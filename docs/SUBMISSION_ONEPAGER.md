@@ -103,7 +103,7 @@ These are not application-layer checks. The chain enforces them. If the agent SD
 
 ### Discovery via manifest, not hardcoded URLs
 
-Every provider serves `routedock.json` at `/.well-known/routedock.json`. The SDK fetches and validates it against a JSON Schema (AJV, draft-07) before every call. Invalid manifests are rejected — the provider won't start if the manifest fails validation.
+Every provider serves `routedock.json` at `/.well-known/routedock.json`. The SDK validates it against the draft-07 JSON Schema with `@cfworker/json-schema` and verifies its Ed25519 signature before every call. Invalid manifests are rejected by clients; provider adapters sign the document when serving it. See [`docs/MANIFEST.md`](MANIFEST.md).
 
 The Supabase `providers` table indexes these manifests with `pg_trgm` trigram search. An agent can query "streaming price feed" and get ranked results by similarity score against provider name, description, and tags. This is the difference between a static directory and a searchable capability registry.
 
