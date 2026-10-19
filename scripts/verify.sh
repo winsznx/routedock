@@ -2,7 +2,7 @@
 #
 # Local mirror of CI. Run before pushing:
 #
-#   pnpm verify          full run (build + typecheck + tests)
+#   pnpm verify          full run (build + typecheck + tests + lint)
 #   pnpm verify --fast   skip tests, keep build + typecheck
 #
 # The build steps are not optional. Several packages import
@@ -48,10 +48,10 @@ if (( FAST )); then
 fi
 
 step "tests"
-pnpm --filter @routedock/routedock test
-pnpm --filter @routedock/mcp-server test
-pnpm --filter provider-a test
-pnpm --filter provider-b test
+pnpm -r test || fail "tests failed"
+
+step "lint"
+pnpm -r lint || fail "lint failed"
 
 step "provider bundles"
 # Catches a dependency that cannot run on Workers — the runtime rejects eval
