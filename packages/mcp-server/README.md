@@ -57,7 +57,7 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
 **Parameters:**
 - `url` (required): Full URL of the provider endpoint
 - `max_amount` (required): Maximum USDC amount to pay
-- `preferred_mode` (optional): Preferred payment mode (`x402`, `mpp-charge`, `mpp-session`)
+- `preferred_mode` (optional): Preferred single-request payment mode (`x402`, `mpp-charge`)
 
 **Returns:** Payment result with mode, amount, transaction hash, and response data
 
@@ -71,6 +71,7 @@ check against the provider's `min_deposit`, not a fund transfer. Pass the return
 **Parameters:**
 - `url` (required): Base URL of the provider
 - `initial_deposit` (optional): Amount in USDC you intend the channel to be funded with
+- `mode` (optional): `mpp-session` (default) or `mpp-session-ws` for WebSocket streaming
 
 **Returns:** `channel_id` and open transaction hash
 
