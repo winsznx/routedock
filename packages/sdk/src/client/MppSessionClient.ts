@@ -30,8 +30,10 @@ import {
   RouteDockDisputeError,
   httpStatusToError,
   wrapFetchError,
+  wrapMppError,
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
+import { consoleLogger, type RouteDockLogger } from '../internal/logger.js'
 import { usdcToStroops } from '../internal/usdc.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
@@ -147,6 +149,7 @@ export class MppSessionClient {
     private readonly network: 'testnet' | 'mainnet',
     private readonly retryPolicy?: RetryPolicy,
     private readonly webSocketFactory: WebSocketFactory = defaultWebSocketFactory,
+    private readonly logger: RouteDockLogger = consoleLogger,
   ) {}
 
   async openSession(
@@ -474,7 +477,7 @@ export class MppSessionClient {
               if (abortController.signal.aborted) {
                 throw err
               }
-              throw wrapFetchError(err, 'Voucher request')
+              throw wrapMppError(err, 'Voucher request')
             }
             if (!resp.ok) {
               if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
@@ -854,10 +857,11 @@ export class MppSessionClient {
         // way to learn the collateral is still locked.
         void handle.close().catch((error: unknown) => {
           emit('session:close-failed', { maxDurationMs, error })
-          console.warn(
+          this.logger(
+            'warn',
             `RouteDock: maxDuration auto-close failed after ${maxDurationMs}ms — ` +
               'the channel may still hold collateral; retry close() or call requestRefund().',
-            error,
+            { error },
           )
         })
       }, maxDurationMs)
@@ -919,7 +923,7 @@ export class MppSessionClient {
       )
       onSigned?.()
     } catch (err) {
-      throw wrapFetchError(err, 'Voucher credential')
+      throw wrapMppError(err, 'Voucher credential')
     }
 
     // ── 3: upgrade the HTTP connection to WebSocket ─────────────────────────

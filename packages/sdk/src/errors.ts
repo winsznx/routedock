@@ -235,3 +235,20 @@ export function wrapFetchError(err: unknown, context: string): RouteDockError {
   if (err instanceof RouteDockError) return err
   return new RouteDockNetworkError(`${context}: ${String(err)}`, { cause: err })
 }
+
+/**
+ * Wrap an mppx failure; differentiates network transport errors from signing/credential errors.
+ * Real transport failures (fetch TypeError, AbortError, TimeoutError) are wrapped as retryable
+ * RouteDockNetworkError, while signing and challenge failures are wrapped as non-retryable
+ * RouteDockSignatureError.
+ */
+export function wrapMppError(err: unknown, context: string): RouteDockError {
+  if (err instanceof RouteDockError) return err
+  if (
+    err instanceof TypeError ||
+    (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError'))
+  ) {
+    return new RouteDockNetworkError(`${context}: ${String(err)}`, { cause: err })
+  }
+  return new RouteDockSignatureError(`${context}: ${String(err)}`, { cause: err })
+}

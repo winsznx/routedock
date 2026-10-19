@@ -76,6 +76,14 @@
       "type": "string",
       "description": "Stellar Asset Contract (SAC) address for the payment asset"
     },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/AssetConfig"
+      },
+      "description": "Payment assets accepted by this provider. Each asset can be scoped to specific modes and endpoints. When present, assets[0] must match the root-level asset and asset_contract."
+    },
     "payee": {
       "type": "string",
       "description": "Stellar address (G...) that receives payments"
@@ -207,6 +215,38 @@
       "type": "string",
       "enum": ["x402", "mpp-charge", "mpp-session", "mpp-session-ws"],
       "description": "A supported RouteDock payment mode"
+    },
+    "AssetConfig": {
+      "type": "object",
+      "description": "Payment asset configuration with optional mode and endpoint scoping",
+      "required": ["asset", "asset_contract"],
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "type": "string",
+          "description": "Asset ticker symbol (e.g. 'USDC' or 'XLM')"
+        },
+        "asset_contract": {
+          "type": "string",
+          "description": "Stellar Asset Contract (SAC) address for the payment asset"
+        },
+        "modes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PaymentMode"
+          },
+          "uniqueItems": true,
+          "description": "Optional: restrict this asset to specific payment modes. If omitted, available for all modes."
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Optional: restrict this asset to specific endpoints (by name). If omitted, available for all endpoints."
+        }
+      }
     },
     "PricingConfig": {
       "type": "object",

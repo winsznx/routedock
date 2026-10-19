@@ -1,9 +1,8 @@
 /**
  * NulthVault — self-contained Nulth ZK account support for RouteDock SDK.
  *
- * All nulth-sdk logic is inlined here so this file has zero imports from
- * @routedock/nulth-sdk. This avoids workspace-resolution issues in CI
- * where the package may not be built before the DTS worker runs.
+ * @routedock/nulth-sdk is a workspace dependency, so usdcToStroops
+ * is imported from @routedock/nulth-sdk via ../internal/usdc.js.
  */
 import { createHash } from 'node:crypto'
 import { Address, rpc, hash, scValToNative, xdr } from '@stellar/stellar-sdk'
@@ -11,6 +10,8 @@ import type { ClientStellarSigner } from '@x402/stellar'
 import type { SignAuthEntry } from '@stellar/stellar-sdk/contract'
 import type { RouteDockManifest, PaymentMode, VaultMode } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
+import { usdcToStroops } from '../internal/usdc.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 
 // ---------------------------------------------------------------------------
 // Inlined types (from @routedock/nulth-sdk/types)
@@ -58,6 +59,8 @@ export interface NulthClientConfig {
   prover?: 'mock'
   policy: NulthPolicyState
   verifierContract?: string
+  /** Log sink for the mock-prover warning. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export class NulthPolicyError extends Error {
@@ -199,12 +202,6 @@ function encodeAuthSignature(proof: NulthProof): string {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
 }
 
-function usdcToStroops(amount: string): bigint {
-  const [whole = '0', frac = ''] = amount.split('.')
-  const padded = (frac + '0000000').slice(0, 7)
-  return BigInt(whole) * 10_000_000n + BigInt(padded)
-}
-
 // ---------------------------------------------------------------------------
 // Inlined NulthClient (from @routedock/nulth-sdk/NulthClient)
 // ---------------------------------------------------------------------------
@@ -226,7 +223,10 @@ class NulthClient {
         `NulthClient cannot use the insecure mock prover on mainnet; a production prover is required (network must be 'testnet', got ${String(config.network)})`,
       )
     }
-    console.warn('NulthClient is using the insecure mock prover; proofs are not cryptographically sound')
+    resolveLogger(config.logger)(
+      'warn',
+      'NulthClient is using the insecure mock prover; proofs are not cryptographically sound',
+    )
   }
 
   get proverBackend(): string { return this.prover }
@@ -274,6 +274,12 @@ class NulthClient {
   }
 
   private enforcePolicy(context: PaymentAuthContext): void {
+    if (context.amountStroops < 0n) {
+      throw new RangeError(`Invalid amountStroops: ${context.amountStroops}`)
+    }
+    if (!Number.isSafeInteger(context.ledgerSequence) || context.ledgerSequence < 0) {
+      throw new RangeError(`Invalid ledgerSequence: ${context.ledgerSequence}`)
+    }
     if (this.policy.expiryLedger !== undefined && context.ledgerSequence > this.policy.expiryLedger) {
       throw new NulthPolicyError('session_expired', 'Nulth session expired')
     }
@@ -327,7 +333,7 @@ export function paymentContextFromManifest(
   manifest: {
     payee: string
     asset_contract: string
-    pricing: { x402?: { amount: string }; 'mpp-charge'?: { amount: string } }
+    pricing: { x402?: { amount: string; payee?: string }; 'mpp-charge'?: { amount: string; payee?: string } }
   },
   mode: 'x402' | 'mpp-charge',
   ledgerSequence: number,
@@ -335,7 +341,7 @@ export function paymentContextFromManifest(
   const pricing = manifest.pricing[mode]
   if (!pricing) throw new Error(`manifest.pricing.${mode} missing`)
   return {
-    payee: manifest.payee,
+    payee: pricing.payee ?? manifest.payee,
     amountStroops: usdcToStroops(pricing.amount),
     assetContract: manifest.asset_contract,
     ledgerSequence,

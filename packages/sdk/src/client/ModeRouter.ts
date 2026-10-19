@@ -13,6 +13,7 @@ import {
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { usdcToStroops } from '../internal/usdc.js'
+import { noopLogger, type RouteDockLogger } from '../internal/logger.js'
 import schema from '../schemas/routedock.schema.json' assert { type: 'json' }
 import pkg from '../../package.json' assert { type: 'json' }
 import { verifyManifestSignature } from '../manifest/sign.js'
@@ -95,6 +96,7 @@ export function assertEndpointActive(
     const [key, descriptor] = deprecated
     const sunsetSuffix = descriptor.sunset_at ? `; sunset_at ${descriptor.sunset_at}` : ''
     logger(
+      'warn',
       `[RouteDock] WARNING: ${manifest.name} → ${pathname}; endpoint '${key}' is deprecated${sunsetSuffix}`,
     )
   }
@@ -102,7 +104,10 @@ export function assertEndpointActive(
 
 /**
  * Validate semantic constraints for manifest fields beyond JSON schema syntax.
- * Enforces that all keys in `latency_hints` must be a subset of declared `regions`.
+ * Enforces:
+ * - All keys in `latency_hints` must be a subset of declared `regions`.
+ * - If `assets` is defined, it must be a non-empty array whose first entry
+ *   (`assets[0]`) matches the root-level `asset` and `asset_contract`.
  */
 export function assertManifestValid(manifest: RouteDockManifest, baseUrl?: string): void {
   const context = baseUrl ? ` at ${baseUrl}` : ''
@@ -119,6 +124,28 @@ export function assertManifestValid(manifest: RouteDockManifest, baseUrl?: strin
           `Invalid manifest${context}: latency_hints key '${region}' is not declared in regions (${manifest.regions.join(', ')})`,
         )
       }
+    }
+  }
+
+  if (manifest.assets !== undefined) {
+    if (!Array.isArray(manifest.assets) || manifest.assets.length === 0) {
+      throw new RouteDockManifestError(
+        `Invalid manifest${context}: assets must be a non-empty array when defined`,
+      )
+    }
+    for (let i = 0; i < manifest.assets.length; i++) {
+      const a = manifest.assets[i]
+      if (!a || typeof a.asset !== 'string' || typeof a.asset_contract !== 'string') {
+        throw new RouteDockManifestError(
+          `Invalid manifest${context}: assets[${i}] must define asset and asset_contract strings`,
+        )
+      }
+    }
+    const first = manifest.assets[0]!
+    if (first.asset !== manifest.asset || first.asset_contract !== manifest.asset_contract) {
+      throw new RouteDockManifestError(
+        `Invalid manifest${context}: assets[0] (${first.asset}:${first.asset_contract}) must match root asset fields (${manifest.asset}:${manifest.asset_contract})`,
+      )
     }
   }
 }
@@ -237,7 +264,7 @@ function ttlFromHeaders(headers: Headers, now: number): number {
   return CACHE_TTL_MS
 }
 
-export type RouteDockLogger = (message: string) => void
+export type { RouteDockLogger, RouteDockLogLevel, RouteDockLogFields } from '../internal/logger.js'
 
 export interface ModeSelectOptions {
   /** Force mpp-session if the provider supports it */
@@ -432,11 +459,12 @@ function logSelection(
   const reason = selection.reason ? ` (${selection.reason})` : ''
   if (deprecated) {
     log(
+      'warn',
       `[RouteDock] WARNING: ${manifest.name} → ${selection.mode}${reason}; selected deprecated mode because no active supported mode is available`,
     )
     return
   }
-  log(`[RouteDock] ${manifest.name} → ${selection.mode}${reason}`)
+  log('info', `[RouteDock] ${manifest.name} → ${selection.mode}${reason}`)
 }
 
 /**
@@ -452,7 +480,7 @@ export function selectMode(
   options: ModeSelectOptions = {},
 ): PaymentMode {
   const modes = manifest.modes
-  const log = options.logger ?? (() => {})
+  const log = options.logger ?? noopLogger
   const deprecatedSet = new Set(manifest.deprecated_modes ?? [])
 
   if (options.forceMode) {
@@ -463,10 +491,11 @@ export function selectMode(
     }
     if (deprecatedSet.has(options.forceMode)) {
       log(
+        'warn',
         `[RouteDock] WARNING: ${manifest.name} → ${options.forceMode} (forced); selected mode is deprecated`,
       )
     } else {
-      log(`[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
+      log('info', `[RouteDock] ${manifest.name} → ${options.forceMode} (forced)`)
     }
     return options.forceMode
   }

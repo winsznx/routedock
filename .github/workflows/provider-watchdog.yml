@@ -1,0 +1,92 @@
+name: Provider Watchdog
+
+# Nothing else checks whether api-a.routedock.xyz and api-b.routedock.xyz are
+# actually serving. e2e.yml runs against locally started Workers and skips
+# entirely without AGENT_SECRET, which the repo does not have. The last outage
+# went unnoticed for three weeks (#287), so this runs every six hours and files
+# (or comments on) a single deduplicated issue on failure.
+#
+# No secrets required: all three checks are unauthenticated GETs.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      PROVIDER_A_URL: https://api-a.routedock.xyz
+      PROVIDER_B_URL: https://api-b.routedock.xyz
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # No actions/checkout in this job — there is nothing to build — so gh has
+      # no git remote to infer the repository from and needs it named explicitly.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Assert both providers serve health, a signed manifest and a 402
+        run: |
+          set -uo pipefail
+
+          REPORT_FILE="$(mktemp)"
+          record() {
+            echo "::error::$1"
+            echo "- $1" >> "$REPORT_FILE"
+          }
+
+          check_provider() {
+            local name="$1" base="$2" paid_path="$3"
+
+            local health
+            health="$(curl -sS --max-time 20 "$base/health" || true)"
+            if [ "$(printf '%s' "$health" | jq -r '.status // empty' 2>/dev/null)" != "ok" ]; then
+              record "$name /health did not report status: ok — ${health:-<no response>}"
+            elif [ "$(printf '%s' "$health" | jq -r '.registry // empty' 2>/dev/null)" != "connected" ]; then
+              record "$name /health reports registry != connected (Supabase credentials dropped?) — $health"
+            fi
+
+            local manifest
+            manifest="$(curl -sS --max-time 20 "$base/.well-known/routedock.json" || true)"
+            if ! printf '%s' "$manifest" | jq -e . >/dev/null 2>&1; then
+              record "$name manifest is not valid JSON"
+            elif [ -z "$(printf '%s' "$manifest" | jq -r '.signature // empty' 2>/dev/null)" ]; then
+              record "$name manifest is unsigned (no signature field) — a signed manifest is what makes the provider usable"
+            fi
+
+            local response status www
+            response="$(curl -sS --max-time 20 -D - -o /dev/null "$base$paid_path" || true)"
+            status="$(printf '%s' "$response" | head -n 1 | awk '{print $2}')"
+            www="$(printf '%s' "$response" | tr -d '\r' | grep -i '^www-authenticate:' | head -n 1 || true)"
+            if [ "$status" != "402" ]; then
+              record "$name unpaid $paid_path returned HTTP ${status:-none}, expected 402 (payment enforcement broken open or shut)"
+            elif ! printf '%s' "$www" | grep -qi '^www-authenticate:[[:space:]]*payment'; then
+              record "$name unpaid $paid_path returned 402 without a WWW-Authenticate: Payment header"
+            fi
+          }
+
+          check_provider "provider-a" "$PROVIDER_A_URL" "/price"
+          check_provider "provider-b" "$PROVIDER_B_URL" "/stream/orderbook"
+
+          if [ ! -s "$REPORT_FILE" ]; then
+            echo "Both providers healthy."
+            exit 0
+          fi
+
+          existing="$(gh issue list --state open --label provider \
+            --search "Provider health check is failing in:title" \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$(printf 'Still failing as of the six-hourly watchdog:\n\n%s' "$(cat "$REPORT_FILE")")"
+          else
+            gh issue create \
+              --title "Provider health check is failing" \
+              --label provider \
+              --body "$(printf 'The scheduled provider watchdog found the deployed providers unhealthy. These endpoints appear in no PR check set, so this is the only thing that surfaces it.\n\n%s\n\n[Workflow run](%s/%s/actions/runs/%s)' "$(cat "$REPORT_FILE")" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+          fi
+          exit 1

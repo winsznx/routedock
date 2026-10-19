@@ -12,6 +12,9 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
  * to the account that closes the channel (the server signer), so its recipient
  * cannot be redirected by a manifest field. Callers for session mode should use
  * the signer's account directly rather than this helper.
+ *
+ * Lives under `internal/` (not `provider/`) because client payment paths must
+ * compare the 402 challenge's payee against the manifest before signing.
  */
 export function resolvePayee(
   manifest: RouteDockManifest,

@@ -1,5 +1,12 @@
 # @routedock/mcp-server
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [[`7b54060`](https://github.com/winsznx/routedock/commit/7b54060fed748f6bb2a5af24558463c976913a9d), [`8185ad3`](https://github.com/winsznx/routedock/commit/8185ad30b730afce922c1599b1ce835e403cb2e9), [`56e9711`](https://github.com/winsznx/routedock/commit/56e9711b061aee16af5b01244062f2b46a9deb17), [`e591dd7`](https://github.com/winsznx/routedock/commit/e591dd7b2a25bb027c89b28a470fe90453f8d925), [`d6da43e`](https://github.com/winsznx/routedock/commit/d6da43e7eefb5a6488647c17240d356cac961da6), [`4c69763`](https://github.com/winsznx/routedock/commit/4c69763dde284c04d80592738f1fc2405d9c1cdc), [`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f), [`fad93c8`](https://github.com/winsznx/routedock/commit/fad93c8d3b9b8705ff10e6434fb7c00e36cdc74e), [`ddb2cbe`](https://github.com/winsznx/routedock/commit/ddb2cbe455e7b7940a402a9e49943cebbb191765), [`dc56f20`](https://github.com/winsznx/routedock/commit/dc56f20a559cab655d3da4b3fd2e550a52645f9b), [`6d95ccd`](https://github.com/winsznx/routedock/commit/6d95ccd5804d48c114c5bf8a8edf36a365b3027e), [`8216cd6`](https://github.com/winsznx/routedock/commit/8216cd699ce85b975323212dc6a6d041749d936a)]:
+  - @routedock/routedock@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes

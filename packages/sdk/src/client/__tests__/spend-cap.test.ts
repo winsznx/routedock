@@ -310,6 +310,99 @@ function fakeResult(mode: string, amount: string): PaymentResult {
   }
 }
 
+// ── Test 4b: free x402 responses do not consume the spend cap ─────────────────
+
+// #325 (regression of #139): pay() reserves the manifest price before dispatch,
+// but an x402 route answering a plain 200 with no 402 challenge pays nothing and
+// returns { txHash: null, amount: '0' }. That reservation must be released, or
+// repeated free calls drain the local budget and eventually lock the client out.
+{
+  const { manifest } = makeManifest({ modes: ['x402'] })
+  const server = await startTestServer(makeManifestHandler(manifest))
+
+  try {
+    const store = new InMemorySpendStore({ warn: false })
+    const client = new RouteDockClient({
+      wallet: Keypair.random(),
+      network: 'testnet',
+      spendCap: {
+        daily: '0.0015',
+        asset: 'USDC',
+        endpointCaps: { [server.url]: '0.0015' },
+      },
+      spendStore: store,
+    })
+    stubTrustlineCache(client)
+
+    // x402 price is 0.001 (10000 microUSDC); the cap is 0.0015, so a leaked
+    // reservation fails the second call with RouteDockPolicyRejectError.
+    ;(client as any).x402.pay = async () => ({
+      data: { free: true },
+      txHash: null,
+      mode: 'x402',
+      amount: '0',
+      timestamp: Date.now(),
+    })
+
+    for (let i = 0; i < 3; i++) {
+      const result = await client.pay(`${server.url}/test`, { forceMode: 'x402' })
+      assert.equal(result.amount, '0', 'free response should report amount 0')
+    }
+
+    const state = await store.read()
+    assert.ok(state)
+    assert.equal(state.totalMicros, '0', 'free responses must not consume the daily cap')
+    assert.equal(
+      state.endpoints[server.url],
+      undefined,
+      'free responses must not consume the endpoint cap',
+    )
+
+    console.log('✓ Test 4b: free x402 responses release their reservation')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 4c: a paid x402 result still commits when the txHash is absent ───────
+
+// The rollback above keys on `txHash === null && amount === '0'`. A facilitator
+// may omit `X-Payment-Response`, leaving txHash null on a genuinely paid call,
+// so the amount must still be recorded.
+{
+  const { manifest } = makeManifest({ modes: ['x402'] })
+  const server = await startTestServer(makeManifestHandler(manifest))
+
+  try {
+    const store = new InMemorySpendStore({ warn: false })
+    const client = new RouteDockClient({
+      wallet: Keypair.random(),
+      network: 'testnet',
+      spendCap: { daily: '1.00', asset: 'USDC' },
+      spendStore: store,
+    })
+    stubTrustlineCache(client)
+
+    ;(client as any).x402.pay = async () => ({
+      data: { ok: true },
+      txHash: null,
+      mode: 'x402',
+      amount: '0.001',
+      timestamp: Date.now(),
+    })
+
+    await client.pay(`${server.url}/test`, { forceMode: 'x402' })
+
+    const state = await store.read()
+    assert.ok(state)
+    assert.equal(state.totalMicros, '10000', 'paid x402 spend must be recorded without a txHash')
+
+    console.log('✓ Test 4c: paid x402 spend is recorded even when txHash is absent')
+  } finally {
+    await server.close()
+  }
+}
+
 // ── Test 5: MPP session voucher spend consults the cap ────────────────────────
 
 // Test 5a: RouteDockClient passes onSpend to MppSessionClient when spendCap is set

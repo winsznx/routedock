@@ -1,5 +1,12 @@
 // Provider-only exports (Express middleware + handlers)
 export * from '../types.js'
+export {
+  normalizeManifestAssets,
+  getEligibleAssets,
+  selectAsset,
+  isAssetEligible,
+  resolveAssetContract,
+} from '../internal/assetUtils.js'
 export * from './routedockMiddleware.js'
 export * from './x402Handler.js'
 export * from './MppChargeHandler.js'

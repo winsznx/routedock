@@ -192,7 +192,7 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
     const client = new RouteDockClient({
       wallet: Keypair.random(),
       network: 'testnet',
-      logger: (message) => logs.push(message),
+      logger: (_level, message) => logs.push(message),
     })
     stubSubClients(client)
 
@@ -218,7 +218,7 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
     const client = new RouteDockClient({
       wallet: Keypair.random(),
       network: 'testnet',
-      logger: (message) => logs.push(message),
+      logger: (_level, message) => logs.push(message),
     })
     stubSubClients(client)
 
@@ -270,7 +270,7 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
     const client = new RouteDockClient({
       wallet: Keypair.random(),
       network: 'testnet',
-      logger: (message) => logs.push(message),
+      logger: (_level, message) => logs.push(message),
     })
     stubSubClients(client)
 

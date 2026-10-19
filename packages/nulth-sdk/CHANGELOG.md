@@ -1,5 +1,19 @@
 # @routedock/nulth-sdk
 
+## 0.2.2
+
+### Patch Changes
+
+- [#546](https://github.com/winsznx/routedock/pull/546) [`cd645d5`](https://github.com/winsznx/routedock/commit/cd645d564d95cb836288ad62b03df4d58143c1bf) Thanks [@anifast-123](https://github.com/anifast-123)! - Fix `paymentContextFromManifest` in both the SDK and `@routedock/nulth-sdk` ignoring a per-mode payee override. Both helpers always returned the top-level `manifest.payee`, while providers pay out to `resolvePayee(manifest, mode)` (`pricing.<mode>.payee ?? manifest.payee`). For any manifest using treasury separation the Nulth allowlist therefore checked an address that never received the payment: an agent allowlisting the real recipient was rejected with `payee_not_allowed`, while one allowlisting only the top-level payee got a signature for funds sent elsewhere. Each helper's parameter type now accepts an optional `payee` and returns `pricing.payee ?? manifest.payee`, mirroring `resolvePayee`.
+
+## 0.2.1
+
+### Patch Changes
+
+- [#537](https://github.com/winsznx/routedock/pull/537) [`e591dd7`](https://github.com/winsznx/routedock/commit/e591dd7b2a25bb027c89b28a470fe90453f8d925) Thanks [@vrse-vrde](https://github.com/vrse-vrde)! - Bind the payment challenge to the signed manifest before anything is signed. The client verified the manifest signature and then signed whatever the unsigned 402 asked for, so a dishonest provider could publish a manifest priced at 0.0001 USDC and demand 1000 USDC to any address in any SAC token. `X402Client` and `MppChargeClient` now compare the challenge's network, payee, asset and amount against the manifest and throw `RouteDockPolicyRejectError` with a `challenge_*` reason before any signer is called. `PaymentResult.amount` reports the amount actually signed, which may be less than the manifest price, and `stroopsToUsdc` is exported from `@routedock/nulth-sdk` as the inverse of `usdcToStroops`.
+
+- [#492](https://github.com/winsznx/routedock/pull/492) [`70fbcd5`](https://github.com/winsznx/routedock/commit/70fbcd55f55180c1162de33225a7568a1925409f) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Reject negative `amountStroops` and non-safe-integer or negative `ledgerSequence` in nulth policy enforcement with `RangeError`.
+
 ## 0.2.0
 
 ### Minor Changes

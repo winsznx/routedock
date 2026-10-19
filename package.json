@@ -6,7 +6,7 @@
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "stress:test": "pnpm exec tsx scripts/stress_test.ts",
+    "stress:test": "pnpm --filter agent stress",
     "version": "changeset version",
     "release": "pnpm run release:build && changeset publish",
     "release:build": "pnpm --filter @routedock/nulth-sdk build && pnpm --filter @routedock/routedock build && pnpm --filter @routedock/mcp-server build",

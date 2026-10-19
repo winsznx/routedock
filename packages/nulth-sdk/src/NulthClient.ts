@@ -108,6 +108,13 @@ export class NulthClient {
   }
 
   private enforcePolicy(context: PaymentAuthContext): void {
+    if (context.amountStroops < 0n) {
+      throw new RangeError(`Invalid amountStroops: ${context.amountStroops}`)
+    }
+    if (!Number.isSafeInteger(context.ledgerSequence) || context.ledgerSequence < 0) {
+      throw new RangeError(`Invalid ledgerSequence: ${context.ledgerSequence}`)
+    }
+
     if (
       this.policy.expiryLedger !== undefined &&
       context.ledgerSequence > this.policy.expiryLedger

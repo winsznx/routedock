@@ -5,10 +5,11 @@ import { useEffect } from 'react'
 /**
  * Route-level error boundary for /dashboard.
  *
- * The dashboard aggregates every closed session it loads, so any unhandled throw
- * here would otherwise take the page down for every visitor. `aggregateSessions`
- * already skips rows it cannot parse; this boundary is the backstop for anything
- * else (Supabase client failure, rendering error).
+ * The dashboard reads aggregate figures and the latest sessions from Supabase,
+ * so any unhandled throw here would otherwise take the page down for every
+ * visitor. The metrics mapper already tolerates a missing or null stats row;
+ * this boundary is the backstop for anything else (Supabase client failure,
+ * rendering error).
  */
 export default function DashboardError({
   error,

@@ -23,6 +23,7 @@ import {
   RouteDockNetworkError,
   RouteDockFacilitatorError,
   RouteDockPolicyRejectError,
+  RouteDockSignatureError,
 } from '../../errors.js'
 
 const CHANNEL_CONTRACT = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
@@ -474,6 +475,37 @@ describe('mpp-session-ws — failure paths', () => {
         err instanceof RouteDockChannelStateError &&
         /abnormally/.test((err as Error).message),
     )
+  })
+
+  it('wraps createCredential failure as RouteDockSignatureError', async () => {
+    mppxScript = {}
+    wsScript = {}
+    const { factory } = makeFakeWsFactory()
+    const origCreateCredential = fakeMppx.createCredential
+    const customErr = new Error('invalid signing credential')
+    fakeMppx.createCredential = async () => {
+      throw customErr
+    }
+    try {
+      const handle = await openWsHandle(factory)
+      await assert.rejects(
+        async () => {
+          for await (const _ of handle.stream()) {
+            // consume
+          }
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof RouteDockSignatureError)
+          assert.equal(err.retryable, false)
+          assert.equal(err.code, 'SIGNATURE')
+          assert.equal(err.cause, customErr)
+          assert.ok(/Voucher credential: Error: invalid signing credential/.test(err.message))
+          return true
+        },
+      )
+    } finally {
+      fakeMppx.createCredential = origCreateCredential
+    }
   })
 })
 

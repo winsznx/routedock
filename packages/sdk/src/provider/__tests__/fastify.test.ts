@@ -3,9 +3,14 @@ import { describe, it, after } from 'node:test'
 import { createServer, type Server } from 'node:http'
 import Fastify from 'fastify'
 import { Keypair } from '@stellar/stellar-sdk'
-import { routedockFastify } from '../fastify.js'
+import { routedockFastify, type RouteDockFastifyOptions } from '../fastify.js'
 import type { RouteDockManifest } from '../../types.js'
-import type { SeenTxStore } from '../SeenTxStore.js'
+import {
+  InMemorySeenTxStore,
+  paymentIdempotencyKey,
+  type SeenTxStore,
+} from '../SeenTxStore.js'
+import { usdcToStroops } from '../../internal/usdc.js'
 
 // Generate fresh keypairs — avoids hardcoding secrets while keeping tests self-contained
 const payeeKeypair = Keypair.random()
@@ -50,11 +55,7 @@ const BASE_OPTS = {
 
 /** Spin up a Fastify instance, return its base URL and a close function. */
 async function makeServer(
-  overrides: Partial<typeof BASE_OPTS & {
-    modes: ('x402' | 'mpp-charge' | 'mpp-session')[]
-    pricing: Record<string, unknown>
-    seenTxStore: SeenTxStore
-  }> = {},
+  overrides: Partial<RouteDockFastifyOptions> = {},
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const fastify = Fastify()
   await fastify.register(
@@ -223,6 +224,191 @@ describe('routedockFastify — mpp-session flow', () => {
       assert.equal(body.closeTxHash, null)
     } finally {
       await close()
+    }
+  })
+})
+
+describe('routedockFastify — settlement idempotency', () => {
+  const X402_AMOUNT = String(usdcToStroops('0.001'))
+
+  /** Seed one settled-header record for `path` at `amount` stroops. */
+  async function seedSettlement(
+    seenStore: InMemorySeenTxStore,
+    path: string,
+    amount: string,
+    record: {
+      txHash: string
+      createdAt: number
+      headers?: Record<string, string>
+    },
+  ): Promise<void> {
+    const key = await paymentIdempotencyKey(
+      (n) => (n === 'payment-signature' ? 'SIG' : undefined),
+      { method: 'GET', path, amount, payTo: payeeKeypair.publicKey() },
+    )
+    assert.ok(key)
+    await seenStore.set(key, record)
+  }
+
+  /** Build an app whose `/price` handler counts how many times it ran. */
+  async function makeCountingServer(
+    overrides: Partial<RouteDockFastifyOptions> = {},
+  ): Promise<{ url: string; runs: () => number; close: () => Promise<void> }> {
+    const app = Fastify()
+    await app.register(
+      routedockFastify({
+        ...BASE_OPTS,
+        modes: ['x402'],
+        pricing: { x402: '0.001' },
+        ...overrides,
+      } as RouteDockFastifyOptions),
+    )
+    let handlerRuns = 0
+    app.get('/price', async () => {
+      handlerRuns++
+      return { price: '42' }
+    })
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const address = app.server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    return {
+      url: `http://127.0.0.1:${port}`,
+      runs: () => handlerRuns,
+      close: () => app.close(),
+    }
+  }
+
+  it('replays cached settlement on duplicate payment-signature header', async () => {
+    const seenStore = new InMemorySeenTxStore()
+    const settled: string[] = []
+    await seedSettlement(seenStore, '/price', X402_AMOUNT, {
+      txHash: 'CACHED_TX_HASH',
+      headers: { 'X-Payment-Response': 'cached-response' },
+      createdAt: Date.now(),
+    })
+
+    const { url, close } = await makeServer({
+      modes: ['x402'],
+      pricing: { x402: '0.001' },
+      seenTxStore: seenStore,
+      onSettled: async (txHash: string) => {
+        settled.push(txHash)
+      },
+    })
+    try {
+      const res = await fetch(`${url}/price`, {
+        headers: { 'payment-signature': 'SIG' },
+      })
+      assert.equal(res.status, 200)
+      const data = (await res.json()) as { price: string }
+      assert.equal(data.price, '42')
+      assert.equal(res.headers.get('x-payment-response'), 'cached-response')
+
+      await new Promise((r) => setImmediate(r))
+      assert.equal(settled.length, 0)
+    } finally {
+      await close()
+    }
+  })
+
+  it('rejects the second replay with 402 and does not run the route handler again', async () => {
+    const seenStore = new InMemorySeenTxStore({ warn: false })
+    await seedSettlement(seenStore, '/price', X402_AMOUNT, {
+      txHash: 'TX',
+      createdAt: Date.now(),
+    })
+
+    const { url, runs, close } = await makeCountingServer({ seenTxStore: seenStore })
+    try {
+      const first = await fetch(`${url}/price`, { headers: { 'payment-signature': 'SIG' } })
+      assert.equal(first.status, 200)
+      const second = await fetch(`${url}/price`, { headers: { 'payment-signature': 'SIG' } })
+      assert.equal(second.status, 402)
+      const body = (await second.json()) as { error: string }
+      assert.equal(body.error, 'Payment already used')
+      assert.equal(runs(), 1)
+    } finally {
+      await close()
+    }
+  })
+
+  it('rejects a settlement older than the replay window', async () => {
+    const seenStore = new InMemorySeenTxStore({ warn: false })
+    await seedSettlement(seenStore, '/price', X402_AMOUNT, {
+      txHash: 'TX',
+      headers: { 'X-Payment-Response': 'cached-response' },
+      createdAt: Date.now() - 61_000,
+    })
+
+    const { url, close } = await makeServer({
+      modes: ['x402'],
+      pricing: { x402: '0.001' },
+      seenTxStore: seenStore,
+    })
+    try {
+      const res = await fetch(`${url}/price`, { headers: { 'payment-signature': 'SIG' } })
+      assert.equal(res.status, 402)
+    } finally {
+      await close()
+    }
+  })
+
+  it('does not replay a payment settled on a different route against a shared store', async () => {
+    const seenStore = new InMemorySeenTxStore({ warn: false })
+    await seedSettlement(seenStore, '/cheap', X402_AMOUNT, {
+      txHash: 'TX',
+      createdAt: Date.now(),
+    })
+
+    // Two priced mount points sharing one store: the scope must key the
+    // settled header to the route that settled it.
+    const runs = { cheap: 0, expensive: 0 }
+    const app = Fastify()
+    await app.register(async (scope) => {
+      await scope.register(
+        routedockFastify({
+          ...BASE_OPTS,
+          modes: ['x402'],
+          pricing: { x402: '0.001' },
+          seenTxStore: seenStore,
+        }),
+      )
+      scope.get('/', async () => {
+        runs.cheap++
+        return { price: 'cheap' }
+      })
+    }, { prefix: '/cheap' })
+    await app.register(async (scope) => {
+      await scope.register(
+        routedockFastify({
+          ...BASE_OPTS,
+          modes: ['x402'],
+          pricing: { x402: '5.00' },
+          seenTxStore: seenStore,
+        }),
+      )
+      scope.get('/', async () => {
+        runs.expensive++
+        return { price: 'expensive' }
+      })
+    }, { prefix: '/expensive' })
+
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const address = app.server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const url = `http://127.0.0.1:${port}`
+    try {
+      // Request /expensive before /cheap: the reverse order hides a header-only
+      // key behind the replay cap instead of the route scope.
+      const expensiveRes = await fetch(`${url}/expensive`, { headers: { 'payment-signature': 'SIG' } })
+      assert.notEqual(expensiveRes.status, 200)
+      assert.equal(runs.expensive, 0)
+
+      const cheapRes = await fetch(`${url}/cheap`, { headers: { 'payment-signature': 'SIG' } })
+      assert.equal(cheapRes.status, 200)
+      assert.equal(runs.cheap, 1)
+    } finally {
+      await app.close()
     }
   })
 })

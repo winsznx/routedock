@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { describe, it, mock } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest } from '../../types.js'
-import { RouteDockChannelStateError } from '../../errors.js'
+import { RouteDockChannelStateError, RouteDockSignatureError } from '../../errors.js'
 
 const CHANNEL_CONTRACT = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
 const ASSET_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
@@ -31,6 +31,8 @@ let capturedOnProgress: ((event: ProgressEvent) => void) | null = null
 let scriptedCumulatives: string[] = []
 let scriptedFetchRejects = false
 let scriptedFetchNonJson = false
+let scriptedFetchError: Error | null = null
+let fetchCallCount = 0
 
 mock.module('@stellar/mpp/channel/client', {
   namedExports: {
@@ -48,6 +50,10 @@ mock.module('mppx/client', {
     Mppx: {
       create: () => ({
         fetch: async (): Promise<Response> => {
+          fetchCallCount++
+          if (scriptedFetchError) {
+            throw scriptedFetchError
+          }
           if (scriptedFetchRejects) {
             throw new TypeError('fetch failed')
           }
@@ -213,6 +219,33 @@ describe('SessionHandle.stats()', () => {
       )
     } finally {
       scriptedFetchNonJson = false
+    }
+  })
+
+  it('surfaces non-network mppx voucher errors as SIGNATURE and is attempted once', async () => {
+    scriptedCumulatives = ['1000']
+    scriptedFetchRejects = false
+    const handle = await openHandle()
+
+    fetchCallCount = 0
+    const signingErr = new Error('invalid signature bytes')
+    scriptedFetchError = signingErr
+
+    try {
+      const iter = handle.stream()[Symbol.asyncIterator]()
+      await assert.rejects(
+        () => iter.next(),
+        (err: unknown) => {
+          assert.ok(err instanceof RouteDockSignatureError)
+          assert.equal(err.retryable, false)
+          assert.equal(err.code, 'SIGNATURE')
+          assert.equal(err.cause, signingErr)
+          return true
+        },
+      )
+      assert.equal(fetchCallCount, 1, 'voucher request should be attempted exactly once (no retry)')
+    } finally {
+      scriptedFetchError = null
     }
   })
 })

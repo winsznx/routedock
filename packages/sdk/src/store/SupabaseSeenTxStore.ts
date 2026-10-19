@@ -15,7 +15,9 @@ import { RouteDockNetworkError } from '../errors.js'
  * would not, since a retry can outrun propagation and reintroduce the double
  * settle.
  *
- * Requires the `settlements` table from migration `003_settlement_idempotency`:
+ * Requires the `settlements` table from migration `003_settlement_idempotency`
+ * and the `claim_settlement_replay` function from migration
+ * `006_settlement_replay_limit`:
  *
  * ```sql
  * CREATE TABLE settlements (
@@ -28,7 +30,7 @@ import { RouteDockNetworkError } from '../errors.js'
  *
  * @example
  * ```ts
- * import { SupabaseSeenTxStore } from '@routedock/routedock/store'
+ * import { SupabaseSeenTxStore } from '@routedock/routedock/provider/hono'
  * import { createClient } from '@supabase/supabase-js'
  *
  * const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
@@ -43,7 +45,7 @@ export class SupabaseSeenTxStore implements SeenTxStore {
   async get(key: string): Promise<SettlementRecord | undefined> {
     const { data, error } = await this.supabase
       .from('settlements')
-      .select('tx_hash, headers')
+      .select('tx_hash, headers, created_at')
       .eq('key', key)
       .maybeSingle()
 
@@ -56,6 +58,7 @@ export class SupabaseSeenTxStore implements SeenTxStore {
     return {
       txHash: (data.tx_hash as string | null) ?? null,
       ...(headers ? { headers } : {}),
+      createdAt: Date.parse(data.created_at as string),
     }
   }
 
@@ -65,6 +68,7 @@ export class SupabaseSeenTxStore implements SeenTxStore {
         key,
         tx_hash: record.txHash,
         headers: record.headers ?? null,
+        created_at: new Date(record.createdAt ?? Date.now()).toISOString(),
       },
       { onConflict: 'key' },
     )
@@ -72,5 +76,23 @@ export class SupabaseSeenTxStore implements SeenTxStore {
     if (error) {
       throw new RouteDockNetworkError(`SupabaseSeenTxStore.set failed: ${error.message}`)
     }
+  }
+
+  /**
+   * Atomically increment the settlement's replay counter through the
+   * `claim_settlement_replay` Postgres function (migration 006). The UPDATE's
+   * row lock gives concurrent claims distinct counts. Returns `Infinity` when
+   * the key no longer exists, so the caller treats it as spent.
+   */
+  async claimReplay(key: string): Promise<number> {
+    const { data, error } = await this.supabase.rpc('claim_settlement_replay', {
+      p_key: key,
+    })
+
+    if (error) {
+      throw new RouteDockNetworkError(`SupabaseSeenTxStore.claimReplay failed: ${error.message}`)
+    }
+    if (data == null) return Number.POSITIVE_INFINITY
+    return data as number
   }
 }

@@ -2,14 +2,17 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { stellar } from '@stellar/mpp/charge/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
-import { resolvePayee } from './payee.js'
+import { resolvePayee } from '../internal/payee.js'
 import { extractPayerAddress } from './payer.js'
 import type { SessionStore } from '../store/SessionStore.js'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
+  checkSettlementReplay,
   type SeenTxStore,
 } from './SeenTxStore.js'
+import { resolveAssetContract } from '../internal/assetUtils.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -22,7 +25,7 @@ export interface MppChargeHandlerOptions {
   payeeSecretKey: string
   network: Network
   amount: string
-  assetContract: string
+  assetContract?: string
   manifest: RouteDockManifest
   /**
    * @deprecated Ignored. Charge mode opens no channel, so there is nothing for a session store to hold.
@@ -35,28 +38,47 @@ export interface MppChargeHandlerOptions {
    * retries the same signed charge. Defaults to a per-handler in-memory store.
    */
   seenTxStore?: SeenTxStore
+  /** Log sink for internal error paths. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHandler {
   const networkId = MPP_NETWORK[opts.network]
   const amountHumanReadable = opts.amount
   const recipient = resolvePayee(opts.manifest, 'mpp-charge')
-  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore()
+  const logger = resolveLogger(opts.logger)
+  const seenTxStore = opts.seenTxStore ?? new InMemorySeenTxStore({ logger })
 
-  const mppx = Mppx.create({
-    secretKey: opts.payeeSecretKey,
-    methods: [
-      stellar.charge({
-        recipient,
-        currency: opts.assetContract,
-        network: networkId,
-        feePayer: { envelopeSigner: opts.payeeSecretKey },
-      }),
-    ],
-  })
+  const mppxInstances = new Map<string, unknown>()
+  function getMppx(contract: string) {
+    let instance = mppxInstances.get(contract)
+    if (!instance) {
+      instance = Mppx.create({
+        secretKey: opts.payeeSecretKey,
+        methods: [
+          stellar.charge({
+            recipient,
+            currency: contract,
+            network: networkId,
+            feePayer: { envelopeSigner: opts.payeeSecretKey },
+          }),
+        ],
+      })
+      mppxInstances.set(contract, instance)
+    }
+    return instance
+  }
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const endpoint = req.path || req.originalUrl
+      const assetContract = resolveAssetContract(
+        opts.manifest,
+        'mpp-charge',
+        endpoint,
+        opts.assetContract,
+      )
+      const mppx = getMppx(assetContract)
       // Extract payer public key from the mppx Payment authorization header before
       // the mppx library consumes it. The Payment bearer credential JSON contains
       // a `sender` field with the payer's Stellar G... public key.
@@ -84,16 +106,29 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       }
 
       // Idempotency: a retry of an already-settled charge replays the cached
-      // receipt headers instead of settling (and billing) a second time.
-      const idempotencyKey = await paymentIdempotencyKey((name) => {
-        const v = req.headers[name.toLowerCase()]
-        return Array.isArray(v) ? v[0] : (v as string | undefined)
-      })
+      // receipt headers instead of settling (and billing) a second time. The
+      // key is scoped to this route and replays are capped + time-bounded.
+      const idempotencyKey = await paymentIdempotencyKey(
+        (name) => {
+          const v = req.headers[name.toLowerCase()]
+          return Array.isArray(v) ? v[0] : (v as string | undefined)
+        },
+        {
+          method: req.method,
+          path: req.originalUrl.split('?')[0]!,
+          amount: amountHumanReadable,
+          payTo: recipient,
+        },
+      )
       if (idempotencyKey) {
-        const cached = await seenTxStore.get(idempotencyKey)
-        if (cached) {
-          if (cached.headers) {
-            for (const [k, val] of Object.entries(cached.headers)) {
+        const replayCheck = await checkSettlementReplay(seenTxStore, idempotencyKey)
+        if (replayCheck.kind === 'spent') {
+          res.status(402).json({ error: 'Payment already used' })
+          return
+        }
+        if (replayCheck.kind === 'replay') {
+          if (replayCheck.record.headers) {
+            for (const [k, val] of Object.entries(replayCheck.record.headers)) {
               res.setHeader(k, val)
             }
           }
@@ -113,7 +148,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       )['stellar/charge']
       const result = await handler({
         amount: amountHumanReadable,
-        currency: opts.assetContract,
+        currency: assetContract,
         recipient,
         description: opts.manifest.name,
       })(fetchReq)
@@ -153,12 +188,13 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
         await seenTxStore.set(idempotencyKey, {
           txHash: reference ?? null,
           headers: receiptHeaders,
+          createdAt: Date.now(),
         })
       }
 
       if (reference && opts.onSettled) {
         Promise.resolve().then(() => opts.onSettled!(reference!, opts.amount, 'mpp-charge', payerAddress)).catch(err => {
-          console.error('[mpp-charge] onSettled callback error:', err)
+          logger('error', '[mpp-charge] onSettled callback error', { error: err })
           opts.onCallbackError?.(err, 'onSettled')
         })
       }

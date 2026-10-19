@@ -6,7 +6,7 @@ Needs Node 22 or newer.
 
 ```bash
 pnpm install                                   # from the repo root
-pnpm --filter @routedock/nulth-sdk build       # lib/aggregateSessions.ts imports it
+pnpm --filter @routedock/nulth-sdk build       # lib/dashboardMetrics.ts imports it
 cp apps/web/.env.example apps/web/.env.local
 pnpm --filter web dev
 ```
