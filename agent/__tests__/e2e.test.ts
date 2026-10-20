@@ -19,7 +19,7 @@
  *   COMMITMENT_SECRET    Ed25519 keypair for MPP session (optional)
  *   PROVIDER_A_URL       URL of price provider (default: http://localhost:3001)
  *   PROVIDER_B_URL       URL of orderbook provider (default: http://localhost:3002)
- *   AGENT_DAILY_CAP_USDC Daily spending cap in USDC (default: 0.002)
+ *   AGENT_DAILY_CAP_USDC Daily spending cap in USDC (default: 0.007)
  */
 
 import path from 'node:path'
@@ -35,7 +35,7 @@ const STELLAR_NETWORK = (process.env['STELLAR_NETWORK'] ?? 'testnet') as 'testne
 const AGENT_SECRET = process.env['AGENT_SECRET'] ?? ''
 const PROVIDER_A_URL = (process.env['PROVIDER_A_URL'] ?? 'http://localhost:3001').replace(/\/$/, '')
 const PROVIDER_B_URL = (process.env['PROVIDER_B_URL'] ?? 'http://localhost:3002').replace(/\/$/, '')
-const AGENT_DAILY_CAP_USDC = process.env['AGENT_DAILY_CAP_USDC'] ?? '0.002'
+const AGENT_DAILY_CAP_USDC = process.env['AGENT_DAILY_CAP_USDC'] ?? '0.007'
 const COMMITMENT_SECRET = process.env['COMMITMENT_SECRET'] ?? ''
 
 const TARGET_VOUCHERS = 50
@@ -188,10 +188,6 @@ async function runTests(): Promise<void> {
     log('mpp-session', `⚠ Stream error after ${voucherCount} vouchers: ${lastError.message}`)
   }
 
-  // Validate voucher consumption
-  assert(voucherCount > 0, `should have consumed at least 1 voucher, got ${voucherCount}`)
-  log('mpp-session', `✓ Consumed ${voucherCount} vouchers`)
-
   // Close the session
   const closeResult = await session.close()
 
@@ -207,13 +203,21 @@ async function runTests(): Promise<void> {
   log('mpp-session', `✓ Total paid: ${closeResult.totalPaid} USDC`)
   log('mpp-session', `✓ Vouchers issued: ${closeResult.vouchersIssued}`)
 
+  // Validate voucher consumption
+  assert.equal(
+    voucherCount,
+    TARGET_VOUCHERS,
+    `expected ${TARGET_VOUCHERS} vouchers, got ${voucherCount}${lastError ? `: ${lastError.message}` : ''}`,
+  )
+  log('mpp-session', `✓ Consumed ${voucherCount} vouchers`)
+
   // ── Test 4: Policy rejection ───────────────────────────────────────────────
   log('policy', 'Running policy rejection test...')
 
   // Calculate expected cumulative spend:
   // x402 (0.001) + mpp-charge (0.0008) + mpp-session (0.005 for 50 vouchers)
   // = 0.0068 USDC
-  // Adding another x402 (0.001) = 0.0078, which is way over cap of 0.002
+  // Adding another x402 (0.001) = 0.0078, which is way over cap of 0.007
   // So it should be rejected locally.
 
   let policyRejected = false

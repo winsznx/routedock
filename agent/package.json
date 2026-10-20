@@ -6,6 +6,7 @@
     "build": "tsc",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
+    "start:local": "node --env-file=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "test:e2e": "tsx __tests__/e2e.test.ts",
     "stress": "tsx src/stress.ts",

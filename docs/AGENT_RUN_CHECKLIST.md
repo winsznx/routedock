@@ -1,6 +1,6 @@
 # Agent Run Checklist
 
-Follow this in order to produce the 4 real Stellar testnet transaction hashes required for the README and submission.
+Follow this in order to run the reference agent and produce the real Stellar testnet transaction hashes (x402 settlement, MPP charge, channel close; the channel is pre-deployed so the agent logs `openTxHash: n/a (pre-deployed channel)` and records `NO TX` for channel open).
 
 ---
 
@@ -32,9 +32,9 @@ stellar tx new --source agent-key --network testnet \
 # Select "Stellar Testnet", paste your agent public key, request 10 USDC
 ```
 
-### 3. Confirm AGENT_VAULT_CONTRACT_ID
+### 3. Confirm AGENT_VAULT_CONTRACT_ID (Optional)
 
-The contract was deployed in Phase 1. Verify the value from `AGENT_PROGRESS.md`:
+The vault contract was deployed in Phase 1 (optional, unused by the reference agent run):
 
 ```
 AGENT_VAULT_CONTRACT_ID=CAX5IDLC2XHGQSEA2YN3LPLZ7EXLMRXYX3HFJGKFXS6B7OQXBKWO44LT
@@ -81,13 +81,14 @@ cp agent/.env.example agent/.env
 Required values in each:
 - `apps/provider-a/.dev.vars`: `STELLAR_PAYEE_SECRET`, `STELLAR_PAYEE_ADDRESS`, `OPENZEPPELIN_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
 - `apps/provider-b/.dev.vars`: Same + `CHANNEL_CONTRACT_ID`, `COMMITMENT_PUBLIC_KEY`
-- `agent/.env`: `AGENT_SECRET`, `AGENT_VAULT_CONTRACT_ID`, `PROVIDER_A_URL`, `PROVIDER_B_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`
+- `agent/.env`: `AGENT_SECRET`, `COMMITMENT_SECRET`, `PROVIDER_A_URL`, `PROVIDER_B_URL`, `AGENT_DAILY_CAP_USDC`, and optionally `STELLAR_NETWORK` and `AGENT_SPEND_STORE_PATH`. (Note: provider-b's `COMMITMENT_PUBLIC_KEY` must be the public key corresponding to the agent's `COMMITMENT_SECRET`).
 
 ---
 
 ## Build Everything
 
 ```bash
+pnpm --filter @routedock/nulth-sdk build
 pnpm --filter @routedock/routedock build
 pnpm --filter provider-a build
 pnpm --filter provider-b build
@@ -100,14 +101,14 @@ pnpm --filter agent build
 
 **Terminal 1 — Provider A:**
 ```bash
-pnpm --filter provider-a start
+pnpm --filter provider-a dev -- --port 3001
 # Verify: curl http://localhost:3001/health
 # Verify: curl http://localhost:3001/.well-known/routedock.json
 ```
 
 **Terminal 2 — Provider B:**
 ```bash
-pnpm --filter provider-b start
+pnpm --filter provider-b dev -- --port 3002
 # Verify: curl http://localhost:3002/health
 # Verify: curl http://localhost:3002/.well-known/routedock.json
 ```
@@ -119,44 +120,72 @@ pnpm --filter provider-b start
 ## Run the Agent
 
 ```bash
-pnpm --filter agent start
+pnpm --filter agent start:local
 ```
 
 The agent will:
 1. Log its address and starting USDC balance
 2. Round 1: x402 query → logs `txHash` (x402 settlement)
 3. Round 2: MPP charge query → logs `txHash` (MPP charge)
-4. Round 3: MPP session → logs channel open `txHash`, 50 vouchers, then settlement `txHash`
-5. Round 4: Policy rejection → logs rejection reason, confirms nothing on-chain
-6. Write `agent/RUN_RESULTS.md` with all 4 hashes
+4. Round 3: MPP session → logs `openTxHash: n/a (pre-deployed channel)`, streams 50 vouchers, then logs `closeTxHash` (settlement transaction)
+5. Round 4: Policy rejection → logs rejection reason (`local_daily_cap_exceeded`), confirms nothing on-chain
+6. Write `agent/RUN_RESULTS.md` with summary and transaction hashes (channel open displays `NO TX` since the channel is pre-deployed)
 
 Expected `agent/RUN_RESULTS.md` output:
+````markdown
+# RouteDock Agent Run Results
+
+**Date:** <ISO timestamp>
+**Network:** testnet
+**Agent address:** `<agent-public-key>`
+**Starting USDC balance:** <balance>
+
+## Transaction Hashes
+
 ```
-x402_settlement_tx: [HASH-1]
-mpp_charge_tx:      [HASH-2]
-channel_open_tx:    [HASH-3]
-channel_close_tx:   [HASH-4]
+  x402 settlement:       [HASH-1]
+                         → https://stellar.expert/explorer/testnet/tx/[HASH-1]
+  MPP charge:            [HASH-2]
+                         → https://stellar.expert/explorer/testnet/tx/[HASH-2]
+  Channel open:          NO TX
+  Channel close:         [HASH-3]
+                         → https://stellar.expert/explorer/testnet/tx/[HASH-3]
+  Policy rejection:      NO TX (cap enforced locally)
+```
+
+## Session Details
+
+- Vouchers consumed: 50
+- Total paid via session: 0.0050000 USDC
+- On-chain transactions for session: 2 (open + close)
+
+## Verification
+
+- x402 settlement: [view on explorer](https://stellar.expert/explorer/testnet/tx/[HASH-1])
+- MPP charge: [view on explorer](https://stellar.expert/explorer/testnet/tx/[HASH-2])
+- Channel open: PENDING
+- Channel close: [view on explorer](https://stellar.expert/explorer/testnet/tx/[HASH-3])
+- Policy rejection: NO TX confirmed (nothing broadcast to Stellar)
+````
+
+### Running again
+
+The agent's spend accumulator is stored in `~/.routedock/spend.json` (or configured via `AGENT_SPEND_STORE_PATH`) and resets automatically at UTC midnight. Before running the agent a second time on the same UTC day, delete this file or set `AGENT_SPEND_STORE_PATH` to a new path; otherwise, the second run will start with the previous run's spend already counted and fail the cap check at the initial x402 step:
+
+```bash
+rm -f ~/.routedock/spend.json
 ```
 
 ---
 
 ## After Successful Run
 
-### 7. Update README.md with real hashes
-
-Open `README.md`, find the "Live Testnet Transactions" table, replace all `[REPLACE WITH REAL HASH]` values with the 4 hashes from `agent/RUN_RESULTS.md`.
-
-### 8. Verify each hash on Stellar Expert
+### 7. Verify each hash on Stellar Expert
 
 - x402 settlement: should show USDC transfer from agent → provider-a payee
 - MPP charge: should show USDC SAC `transfer` invocation
-- Channel open: should show Soroban `initialize` invocation with USDC deposit
 - Channel close: should show Soroban `close` invocation with cumulative USDC amount
 
 ```
 https://stellar.expert/explorer/testnet/tx/[HASH]
 ```
-
-### 9. Update AGENT_PROGRESS.md
-
-Copy all 4 hashes into `AGENT_PROGRESS.md` under a "T22/T23: completed" section.

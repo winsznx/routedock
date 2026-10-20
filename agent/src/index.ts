@@ -30,7 +30,7 @@ const STELLAR_NETWORK = (process.env['STELLAR_NETWORK'] ?? 'testnet') as 'testne
 const AGENT_SECRET = process.env['AGENT_SECRET'] ?? ''
 const PROVIDER_A_URL = (process.env['PROVIDER_A_URL'] ?? 'http://localhost:3001').replace(/\/$/, '')
 const PROVIDER_B_URL = (process.env['PROVIDER_B_URL'] ?? 'http://localhost:3002').replace(/\/$/, '')
-const AGENT_DAILY_CAP_USDC = process.env['AGENT_DAILY_CAP_USDC'] ?? '0.002'
+const AGENT_DAILY_CAP_USDC = process.env['AGENT_DAILY_CAP_USDC'] ?? '0.007'
 const COMMITMENT_SECRET = process.env['COMMITMENT_SECRET'] ?? ''
 const AGENT_SPEND_STORE_PATH =
   process.env['AGENT_SPEND_STORE_PATH'] ??
@@ -218,9 +218,8 @@ async function main(): Promise<void> {
   log('mpp-session', `Channel close explorer: ${explorerLink(closeResult.closeTxHash)}`)
 
   // ── Step 5: Policy rejection ──────────────────────────────────────────────
-
-  // After steps 2+3, daily spend = 0.001 + 0.0008 = 0.0018 USDC.
-  // Daily cap = 0.002 USDC. Adding another 0.001 (x402 price) → 0.0028 > 0.002 → rejected.
+  // After steps 2+3+4, daily spend = 0.001 + 0.0008 + (50 * 0.0001) = 0.0068 USDC.
+  // Daily cap = 0.007 USDC. Adding another 0.001 (x402 price) → 0.0078 > 0.007 → rejected.
   log('policy', 'Attempting payment that exceeds daily cap...')
   let policyRejected = false
   try {
