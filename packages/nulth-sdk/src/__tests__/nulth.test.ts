@@ -143,7 +143,7 @@ function transferPreimage(asset: string, from: string, to: string, amount: bigin
   console.log('✓ policy enforcement')
 }
 
-// ── x402-compatible signer attaches proof as auth signature ───────────────────
+// ── Nulth signer attaches proof as auth signature (see #356) ───────────────────
 
 {
   const signerConfig = {
