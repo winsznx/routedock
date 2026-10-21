@@ -15,6 +15,12 @@ jobs:
         # Pinned: Rust 1.97 rejects a transmute in the transitive ethnum crate
         # (E0512). 1.94.x compiles the soroban-sdk deps cleanly.
         uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # branch 1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check contract formatting
+        run: cargo fmt --manifest-path contracts/agent-vault/Cargo.toml --check
+      - name: Lint contract
+        run: cargo clippy --manifest-path contracts/agent-vault/Cargo.toml --all-targets --features testutils -- -D warnings
       - name: Run contract tests
         run: cargo test --manifest-path contracts/agent-vault/Cargo.toml
       - name: Run contract proptest invariants

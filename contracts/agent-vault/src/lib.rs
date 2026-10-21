@@ -4,8 +4,7 @@ use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
     contract, contracterror, contractimpl,
     crypto::Hash,
-    panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, Vec,
+    panic_with_error, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -171,9 +170,7 @@ impl AgentVault {
         admin.require_auth();
         bump_instance(&env);
         validate_cap(&env, sub_cap);
-        let mut map: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
+        let mut map: Map<Address, i128> = storage.get(&LIST_KEY).unwrap_or_else(|| Map::new(&env));
         map.set(payee.clone(), sub_cap);
         storage.set(&LIST_KEY, &map);
         env.events().publish(
@@ -190,9 +187,7 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
-        let mut map: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
+        let mut map: Map<Address, i128> = storage.get(&LIST_KEY).unwrap_or_else(|| Map::new(&env));
         map.remove(payee.clone());
         storage.set(&LIST_KEY, &map);
         env.events().publish(
@@ -250,7 +245,10 @@ impl AgentVault {
         let old_cap: i128 = storage.get(&LIFETIME_CAP_KEY).unwrap_or(0);
         storage.set(&LIFETIME_CAP_KEY, &new_cap);
         env.events().publish(
-            (Symbol::new(&env, EVT_CAP_UPDATED), symbol_short!("lifetime")),
+            (
+                Symbol::new(&env, EVT_CAP_UPDATED),
+                symbol_short!("lifetime"),
+            ),
             (old_cap, new_cap),
         );
     }
@@ -268,10 +266,8 @@ impl AgentVault {
         storage.set(&EXPIRY_KEY, &new_expiry);
         // topics: (Symbol("expiry_updated"), admin)
         // data:   new_expiry
-        env.events().publish(
-            (Symbol::new(&env, EVT_EXPIRY_UPDATED), admin),
-            new_expiry,
-        );
+        env.events()
+            .publish((Symbol::new(&env, EVT_EXPIRY_UPDATED), admin), new_expiry);
     }
 
     /// Rotate the agent's Ed25519 public key. Admin only.
@@ -287,10 +283,8 @@ impl AgentVault {
         storage.set(&AGENT_KEY, &new_pk);
         // topics: (Symbol("agent_key_rotated"),)
         // data:   new_pk
-        env.events().publish(
-            (Symbol::new(&env, EVT_AGENT_KEY_ROTATED),),
-            new_pk,
-        );
+        env.events()
+            .publish((Symbol::new(&env, EVT_AGENT_KEY_ROTATED),), new_pk);
     }
 
     /// Return the vault's cumulative lifetime spend counter (stroops). Read-only.
@@ -311,7 +305,11 @@ impl AgentVault {
         bump_instance(&env);
         storage.set(&PENDING_ADMIN_KEY, &new_admin);
         env.events().publish(
-            (Symbol::new(&env, EVT_ADMIN_TRANSFER_REQUESTED), admin, new_admin),
+            (
+                Symbol::new(&env, EVT_ADMIN_TRANSFER_REQUESTED),
+                admin,
+                new_admin,
+            ),
             (),
         );
     }
@@ -330,7 +328,11 @@ impl AgentVault {
         storage.set(&ADMIN_KEY, &pending_admin);
         storage.remove(&PENDING_ADMIN_KEY);
         env.events().publish(
-            (Symbol::new(&env, EVT_ADMIN_CHANGED), old_admin, pending_admin),
+            (
+                Symbol::new(&env, EVT_ADMIN_CHANGED),
+                old_admin,
+                pending_admin,
+            ),
             (),
         );
     }
@@ -344,7 +346,8 @@ impl AgentVault {
         admin.require_auth();
         bump_instance(&env);
         storage.set(&FROZEN_KEY, &true);
-        env.events().publish((Symbol::new(&env, EVT_VAULT_FROZEN),), ());
+        env.events()
+            .publish((Symbol::new(&env, EVT_VAULT_FROZEN),), ());
     }
 
     /// Unfreeze the contract, allowing agent transfers again. Admin only.
@@ -356,7 +359,8 @@ impl AgentVault {
         admin.require_auth();
         bump_instance(&env);
         storage.set(&FROZEN_KEY, &false);
-        env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
+        env.events()
+            .publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
     }
 
     /// Propose a Wasm upgrade to `new_wasm_hash`. Admin only.
@@ -448,7 +452,10 @@ impl AgentVault {
 
     /// Return the allowed payees and their sub-caps (view-only).
     pub fn allowlist(env: Env) -> Map<Address, i128> {
-        env.storage().instance().get(&LIST_KEY).unwrap_or_else(|| Map::new(&env))
+        env.storage()
+            .instance()
+            .get(&LIST_KEY)
+            .unwrap_or_else(|| Map::new(&env))
     }
 
     /// Return the session expiry ledger (view-only).
@@ -458,7 +465,10 @@ impl AgentVault {
 
     /// Return the authorized agent's Ed25519 public key (view-only).
     pub fn agent_pubkey(env: Env) -> BytesN<32> {
-        env.storage().instance().get(&AGENT_KEY).unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
+        env.storage()
+            .instance()
+            .get(&AGENT_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized))
     }
 }
 
@@ -521,9 +531,8 @@ impl CustomAccountInterface for AgentVault {
         let mut lifetime_spend: i128 = storage
             .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
             .unwrap_or(0);
-        let allowlist: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
+        let allowlist: Map<Address, i128> =
+            storage.get(&LIST_KEY).unwrap_or_else(|| Map::new(&env));
 
         // Day bucket: one bucket per ~24 h (17 280 ledgers × ~5 s each)
         let day_bucket: u32 = env.ledger().sequence() / 17_280;
@@ -658,7 +667,7 @@ mod tests {
     use soroban_sdk::{
         auth::{ContractContext, ContractExecutable, CreateContractHostFnContext},
         testutils::{Address as _, BytesN as _, Ledger},
-        IntoVal, FromVal,
+        FromVal, IntoVal,
     };
 
     // Use ed25519-dalek for signing in tests (same pattern as Crossmint/stellar-smart-account)
@@ -677,11 +686,6 @@ mod tests {
         BytesN::<64>::from_array(env, &sig.to_bytes())
     }
 
-    fn event_topic_matches(env: &Env, topic: soroban_sdk::Val, expected: &Symbol) -> bool {
-        let sym: Symbol = topic.into_val(env);
-        sym == *expected
-    }
-
     fn setup(env: &Env) -> (AgentVaultClient<'_>, SigningKey, Address, Address) {
         let admin = Address::generate(env);
         let (agent_sk, agent_pk) = gen_keypair(env);
@@ -691,7 +695,14 @@ mod tests {
         let allowlist = Map::from_array(env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(env, &vault_id);
 
@@ -773,7 +784,10 @@ mod tests {
             Vec::from_array(&env, [Address::generate(&env).into_val(&env)]),
             Vec::from_array(
                 &env,
-                [Address::generate(&env).into_val(&env), Address::generate(&env).into_val(&env)],
+                [
+                    Address::generate(&env).into_val(&env),
+                    Address::generate(&env).into_val(&env),
+                ],
             ),
         ] {
             let contexts = Vec::from_array(&env, [malformed_transfer_context(&env, args)]);
@@ -818,8 +832,7 @@ mod tests {
         // 6_000_000 > 5_000_000 cap
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts =
-            Vec::from_array(&env, [transfer_context(&env, &provider_a, 6_000_000)]);
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &provider_a, 6_000_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -901,10 +914,7 @@ mod tests {
             sig.into_val(&env),
             &contexts,
         );
-        assert!(
-            result.is_ok(),
-            "payment at exactly the cap should succeed"
-        );
+        assert!(result.is_ok(), "payment at exactly the cap should succeed");
     }
 
     /// Test 6: daily cap boundary — payment exceeding cap by 1 stroop fails
@@ -960,7 +970,10 @@ mod tests {
             sig2.into_val(&env),
             &contexts2,
         );
-        assert!(result2.is_ok(), "second transfer within accumulated cap should succeed");
+        assert!(
+            result2.is_ok(),
+            "second transfer within accumulated cap should succeed"
+        );
     }
 
     /// Test 8: accumulated daily spend — exceeding cap on second transfer fails
@@ -1019,7 +1032,14 @@ mod tests {
         );
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
 
         // Test payment to each allowlisted address
@@ -1034,7 +1054,10 @@ mod tests {
                 sig.into_val(&env),
                 &contexts,
             );
-            assert!(result.is_ok(), "all allowlisted addresses should be accepted");
+            assert!(
+                result.is_ok(),
+                "all allowlisted addresses should be accepted"
+            );
         }
     }
 
@@ -1058,7 +1081,10 @@ mod tests {
             sig.into_val(&env),
             &contexts,
         );
-        assert!(result.is_ok(), "payment at expiry boundary ledger should succeed");
+        assert!(
+            result.is_ok(),
+            "payment at expiry boundary ledger should succeed"
+        );
     }
 
     /// Test 11: session expiry one ledger past boundary — payment rejected
@@ -1098,7 +1124,10 @@ mod tests {
         // First large transfer: 4_000_000_000_000_000 (i128 near limit)
         let payload1 = BytesN::<32>::random(&env);
         let sig1 = sign_payload(&env, &agent_sk, &payload1);
-        let contexts1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000_000_000_000)]);
+        let contexts1 = Vec::from_array(
+            &env,
+            [transfer_context(&env, &provider_a, 4_000_000_000_000_000)],
+        );
         let result1 = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
             &payload1,
@@ -1124,7 +1153,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                500_000_u32,
+                0_i128,
+            ),
         );
 
         // Day 0 (sequence 0): spend 4_000_000
@@ -1211,11 +1247,15 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
 
-        assert_eq!(matching.len(), 1, "exactly one payment_authorized event expected");
+        assert_eq!(
+            matching.len(),
+            1,
+            "exactly one payment_authorized event expected"
+        );
 
         let (_, topics, data) = &matching[0];
         let topic_payer: Address = topics.get(1).unwrap().into_val(&env);
@@ -1226,7 +1266,10 @@ mod tests {
         let data_tuple: (i128, Address, i128) = data.clone().into_val(&env);
         assert_eq!(data_tuple.0, amount, "data[0] should be amount");
         assert_eq!(data_tuple.1, token, "data[1] should be asset contract");
-        assert_eq!(data_tuple.2, amount, "data[2] should be daily_cumulative (first transfer)");
+        assert_eq!(
+            data_tuple.2, amount,
+            "data[2] should be daily_cumulative (first transfer)"
+        );
     }
 
     /// Test 15: daily_cumulative on the event reflects the accumulated spend
@@ -1240,12 +1283,14 @@ mod tests {
         let p1 = BytesN::<32>::random(&env);
         let s1 = sign_payload(&env, &agent_sk, &p1);
         let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
-        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).unwrap();
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
+            .unwrap();
 
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
         let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
-        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).unwrap();
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
+            .unwrap();
 
         let events = env.events().all();
         let evt_name = Symbol::new(&env, "payment_authorized");
@@ -1255,12 +1300,15 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt_name)
             })
             .last()
             .expect("expected at least one payment_authorized event");
         let data_tuple: (i128, Address, i128) = last.2.clone().into_val(&env);
-        assert_eq!(data_tuple.2, 3_000_000, "daily_cumulative should accumulate");
+        assert_eq!(
+            data_tuple.2, 3_000_000,
+            "daily_cumulative should accumulate"
+        );
     }
 
     /// Test 16: rejected transfer does NOT emit payment_authorized
@@ -1285,10 +1333,13 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt_name)
             })
             .count();
-        assert_eq!(count, 0, "rejected transfer must not emit payment_authorized");
+        assert_eq!(
+            count, 0,
+            "rejected transfer must not emit payment_authorized"
+        );
     }
 
     /// Test 17: session_settled event emitted with full payload
@@ -1303,7 +1354,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1330,10 +1388,14 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
-        assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
+        assert_eq!(
+            matching.len(),
+            1,
+            "exactly one session_settled event expected"
+        );
 
         let (_, topics, data) = &matching[0];
         let topic_channel: Address = topics.get(1).unwrap().into_val(&env);
@@ -1343,8 +1405,14 @@ mod tests {
 
         let data_tuple: (Address, i128, u32) = data.clone().into_val(&env);
         assert_eq!(data_tuple.0, payer, "data[0] should be payer");
-        assert_eq!(data_tuple.1, cumulative_amount, "data[1] should be cumulative_amount");
-        assert_eq!(data_tuple.2, voucher_count, "data[2] should be voucher_count");
+        assert_eq!(
+            data_tuple.1, cumulative_amount,
+            "data[1] should be cumulative_amount"
+        );
+        assert_eq!(
+            data_tuple.2, voucher_count,
+            "data[2] should be voucher_count"
+        );
     }
 
     /// Build a vault whose allowlist contains a single payee, returning the
@@ -1421,10 +1489,14 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt_name)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt_name)
             })
             .collect();
-        assert_eq!(matching.len(), 1, "exactly one session_settled event expected");
+        assert_eq!(
+            matching.len(),
+            1,
+            "exactly one session_settled event expected"
+        );
 
         let (_, topics, data) = &matching[0];
         let topic_channel: Address = topics.get(1).unwrap().into_val(&env);
@@ -1434,8 +1506,14 @@ mod tests {
 
         let data_tuple: (Address, i128, u32) = data.clone().into_val(&env);
         assert_eq!(data_tuple.0, payer, "data[0] should be payer");
-        assert_eq!(data_tuple.1, cumulative_amount, "data[1] should be cumulative_amount");
-        assert_eq!(data_tuple.2, voucher_count, "data[2] should be voucher_count");
+        assert_eq!(
+            data_tuple.1, cumulative_amount,
+            "data[1] should be cumulative_amount"
+        );
+        assert_eq!(
+            data_tuple.2, voucher_count,
+            "data[2] should be voucher_count"
+        );
     }
 
     /// Test 18b: the admin alone can no longer record a settlement.
@@ -1454,7 +1532,13 @@ mod tests {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &vault_id,
                 fn_name: "record_session_settlement",
-                args: (channel_id.clone(), payer.clone(), payee.clone(), 500_000_i128, 10_u32)
+                args: (
+                    channel_id.clone(),
+                    payer.clone(),
+                    payee.clone(),
+                    500_000_i128,
+                    10_u32,
+                )
                     .into_val(&env),
                 sub_invokes: &[],
             },
@@ -1520,7 +1604,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
 
         // 2_000_000 is within global cap but exceeds sub-cap of 1_000_000
@@ -1560,7 +1651,14 @@ mod tests {
         );
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
 
         // Pay 2_000_000 to provider_a (hits their sub-cap exactly)
@@ -1568,7 +1666,8 @@ mod tests {
         let s1 = sign_payload(&env, &agent_sk, &p1);
         let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 2_000_000)]);
         assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
+                .is_ok(),
             "provider_a at sub-cap should succeed"
         );
 
@@ -1577,7 +1676,8 @@ mod tests {
         let s2 = sign_payload(&env, &agent_sk, &p2);
         let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_b, 2_000_000)]);
         assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2).is_ok(),
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p2, s2.into_val(&env), &c2)
+                .is_ok(),
             "provider_b sub-cap is independent and should succeed"
         );
 
@@ -1606,7 +1706,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 1_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                500_000_u32,
+                0_i128,
+            ),
         );
 
         // Day 0: spend exactly the sub-cap
@@ -1614,7 +1721,8 @@ mod tests {
         let s1 = sign_payload(&env, &agent_sk, &p1);
         let c1 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
         assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1).is_ok(),
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p1, s1.into_val(&env), &c1)
+                .is_ok(),
             "first payment should succeed"
         );
 
@@ -1636,7 +1744,8 @@ mod tests {
         let s3 = sign_payload(&env, &agent_sk, &p3);
         let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
         assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3).is_ok(),
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
+                .is_ok(),
             "payment in new day bucket should succeed after per-payee reset"
         );
     }
@@ -1655,7 +1764,14 @@ mod tests {
         let allowlist = Map::from_array(env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 500_000_u32, lifetime_cap),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                500_000_u32,
+                lifetime_cap,
+            ),
         );
         let client = AgentVaultClient::new(env, &vault_id);
         (client, agent_sk, vault_id, provider_a)
@@ -1794,7 +1910,11 @@ mod tests {
         let env = Env::default();
         let (client, agent_sk, vault_id, provider_a) = setup_with_lifetime_cap(&env, 0);
 
-        assert_eq!(client.get_lifetime_spend(), 0, "initial lifetime spend is 0");
+        assert_eq!(
+            client.get_lifetime_spend(),
+            0,
+            "initial lifetime spend is 0"
+        );
 
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &agent_sk, &p);
@@ -1830,7 +1950,7 @@ mod tests {
             "rejected auth must not advance lifetime spend"
         );
     }
-/// Test 19: transfer_admin and accept_admin happy path
+    /// Test 19: transfer_admin and accept_admin happy path
     #[test]
     fn test_transfer_and_accept_admin_succeeds() {
         let env = Env::default();
@@ -1839,7 +1959,14 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1856,7 +1983,7 @@ mod tests {
             },
         }]);
         client.transfer_admin(&new_admin);
-        
+
         // 2. Accept admin
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &new_admin,
@@ -1892,12 +2019,19 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
         let new_admin = Address::generate(&env);
-        
+
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -1908,7 +2042,7 @@ mod tests {
             },
         }]);
         client.transfer_admin(&new_admin);
-        
+
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &new_admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -1943,7 +2077,14 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -1961,13 +2102,20 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
         let new_admin = Address::generate(&env);
         let stranger = Address::generate(&env);
-        
+
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &stranger,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -1990,12 +2138,19 @@ mod tests {
         let allowlist = soroban_sdk::Map::<Address, i128>::new(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
         let new_admin = Address::generate(&env);
-        
+
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -2030,7 +2185,14 @@ mod tests {
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2049,7 +2211,8 @@ mod tests {
         // Attempt a transfer, should fail
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts =
+            soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -2074,7 +2237,14 @@ mod tests {
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2105,7 +2275,8 @@ mod tests {
         // Attempt a transfer, should succeed
         let payload = BytesN::<32>::random(&env);
         let sig = sign_payload(&env, &agent_sk, &payload);
-        let contexts = soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
+        let contexts =
+            soroban_sdk::Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
 
         let result = env.try_invoke_contract_check_auth::<Error>(
             &vault_id,
@@ -2125,7 +2296,14 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                soroban_sdk::Map::<Address, i128>::new(&env),
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2149,19 +2327,29 @@ mod tests {
         let admin = Address::generate(&env);
         let (_, agent_pk) = gen_keypair(&env);
         let provider_a = Address::generate(&env);
-        
+
         let allowlist = soroban_sdk::Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk.clone(), 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk.clone(),
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
         assert_eq!(client.daily_cap(), 5_000_000_i128);
-        
+
         let fetched_allowlist = client.allowlist();
         assert_eq!(fetched_allowlist.len(), 1);
-        assert_eq!(fetched_allowlist.get(provider_a.clone()).unwrap(), 5_000_000_i128);
+        assert_eq!(
+            fetched_allowlist.get(provider_a.clone()).unwrap(),
+            5_000_000_i128
+        );
 
         assert_eq!(client.expiry_ledger(), 10_000_u32);
         assert_eq!(client.agent_pubkey(), agent_pk.clone());
@@ -2190,10 +2378,13 @@ mod tests {
             },
         }]);
         client.add_to_allowlist(&provider_b, &2_000_000_i128);
-        
+
         let updated_allowlist = client.allowlist();
         assert_eq!(updated_allowlist.len(), 2);
-        assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
+        assert_eq!(
+            updated_allowlist.get(provider_b.clone()).unwrap(),
+            2_000_000_i128
+        );
     }
 
     /// Test 32: negative transfer amount is rejected and counters stay untouched
@@ -2360,7 +2551,10 @@ mod tests {
         );
 
         assert_eq!(result.unwrap_err().unwrap(), Error::UpgradeNotReady);
-        assert_eq!(client.pending_upgrade(), Some((new_wasm_hash, ready_at_ledger)));
+        assert_eq!(
+            client.pending_upgrade(),
+            Some((new_wasm_hash, ready_at_ledger))
+        );
     }
 
     /// Execution with no proposal returns a typed error.
@@ -2401,11 +2595,9 @@ mod tests {
             .iter()
             .filter(|(address, topics, _)| {
                 *address == vault_id
-                    && topics
-                        .get(0)
-                        .map_or(false, |topic| {
-                            Symbol::from_val(&env, &topic) == Symbol::new(&env, EVT_UPGRADED)
-                        })
+                    && topics.get(0).is_some_and(|topic| {
+                        Symbol::from_val(&env, &topic) == Symbol::new(&env, EVT_UPGRADED)
+                    })
             })
             .collect();
         assert_eq!(upgraded_events.len(), 1);
@@ -2615,7 +2807,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2646,12 +2845,19 @@ mod tests {
                 *addr == vault_id
                     && topics
                         .get(0)
-                        .map_or(false, |t| Symbol::from_val(&env, &t) == evt)
+                        .is_some_and(|t| Symbol::from_val(&env, &t) == evt)
             })
             .collect();
-        assert_eq!(expiry_events.len(), 1, "exactly one expiry_updated event expected");
+        assert_eq!(
+            expiry_events.len(),
+            1,
+            "exactly one expiry_updated event expected"
+        );
         let data_expiry: u32 = expiry_events[0].2.clone().into_val(&env);
-        assert_eq!(data_expiry, 100_000, "event data should carry the new expiry");
+        assert_eq!(
+            data_expiry, 100_000,
+            "event data should carry the new expiry"
+        );
 
         assert_eq!(client.expiry_ledger(), 100_000, "expiry should be extended");
 
@@ -2675,7 +2881,14 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                Map::<Address, i128>::new(&env),
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2702,7 +2915,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2724,7 +2944,8 @@ mod tests {
         let s = sign_payload(&env, &new_sk, &p);
         let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
         assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).is_ok(),
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
+                .is_ok(),
             "payment signed with the rotated key should succeed"
         );
     }
@@ -2740,7 +2961,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(provider_a.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), old_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin.clone(),
+                old_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2761,7 +2989,8 @@ mod tests {
         let p = BytesN::<32>::random(&env);
         let s = sign_payload(&env, &old_sk, &p);
         let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 100_000)]);
-        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c).unwrap();
+        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
+            .unwrap();
     }
 
     /// Test: set_agent_pubkey from a non-admin panics.
@@ -2773,7 +3002,14 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, soroban_sdk::Map::<Address, i128>::new(&env), 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                soroban_sdk::Map::<Address, i128>::new(&env),
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2800,7 +3036,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2812,7 +3055,10 @@ mod tests {
         let signature = sign_payload(&env, &agent_sk, &payload);
         let contexts = Vec::from_array(&env, [transfer_context(&env, &payee, 100_000)]);
         let result = env.try_invoke_contract_check_auth::<Error>(
-            &vault_id, &payload, signature.into_val(&env), &contexts,
+            &vault_id,
+            &payload,
+            signature.into_val(&env),
+            &contexts,
         );
         assert_eq!(result.unwrap_err().unwrap(), Error::PayeeNotAllowed);
     }
@@ -2827,7 +3073,14 @@ mod tests {
         let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
 
@@ -2853,26 +3106,51 @@ mod tests {
         let (_, agent_pk) = gen_keypair(&env);
         let vault_id = env.register(
             AgentVault,
-            (admin.clone(), agent_pk, 5_000_000_i128, Map::<Address, i128>::new(&env), 10_000_u32, 9_000_000_i128),
+            (
+                admin.clone(),
+                agent_pk,
+                5_000_000_i128,
+                Map::<Address, i128>::new(&env),
+                10_000_u32,
+                9_000_000_i128,
+            ),
         );
         let client = AgentVaultClient::new(&env, &vault_id);
         env.mock_all_auths();
 
         client.set_daily_cap(&4_000_000_i128);
         let (_, topics, data) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "cap_updated"));
-        assert_eq!(Symbol::from_val(&env, &topics.get(1).unwrap()), symbol_short!("daily"));
-        assert_eq!(<(i128, i128)>::from_val(&env, &data), (5_000_000, 4_000_000));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "cap_updated")
+        );
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(1).unwrap()),
+            symbol_short!("daily")
+        );
+        assert_eq!(
+            <(i128, i128)>::from_val(&env, &data),
+            (5_000_000, 4_000_000)
+        );
 
         client.set_lifetime_cap(&8_000_000_i128);
         let (_, topics, data) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(1).unwrap()), symbol_short!("lifetime"));
-        assert_eq!(<(i128, i128)>::from_val(&env, &data), (9_000_000, 8_000_000));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(1).unwrap()),
+            symbol_short!("lifetime")
+        );
+        assert_eq!(
+            <(i128, i128)>::from_val(&env, &data),
+            (9_000_000, 8_000_000)
+        );
 
         let payee = Address::generate(&env);
         client.add_to_allowlist(&payee, &2_000_000_i128);
         let (_, topics, data) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "allowlist_updated"));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "allowlist_updated")
+        );
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), payee);
         assert_eq!(Option::<i128>::from_val(&env, &data), Some(2_000_000));
 
@@ -2883,22 +3161,34 @@ mod tests {
 
         client.freeze();
         let (_, topics, _) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_frozen"));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "vault_frozen")
+        );
 
         client.unfreeze();
         let (_, topics, _) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_unfrozen"));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "vault_unfrozen")
+        );
 
         let new_admin = Address::generate(&env);
         client.transfer_admin(&new_admin);
         let (_, topics, _) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "admin_transfer_requested"));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "admin_transfer_requested")
+        );
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
         assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
 
         client.accept_admin();
         let (_, topics, _) = env.events().all().last().unwrap();
-        assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "admin_changed"));
+        assert_eq!(
+            Symbol::from_val(&env, &topics.get(0).unwrap()),
+            Symbol::new(&env, "admin_changed")
+        );
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
         assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
     }
@@ -3014,7 +3304,10 @@ mod tests {
         let sig = sign_payload(&env, &agent_sk, &payload);
         let contexts = Vec::from_array(
             &env,
-            [transfer_context(&env, &provider_a, 100_000), approve_context(&env, 1_000_000)],
+            [
+                transfer_context(&env, &provider_a, 100_000),
+                approve_context(&env, 1_000_000),
+            ],
         );
 
         let result = env.try_invoke_contract_check_auth::<Error>(
@@ -3169,7 +3462,14 @@ mod tests {
 
         env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                10_000_u32,
+                0_i128,
+            ),
         );
     }
 
@@ -3297,7 +3597,8 @@ mod tests {
     /// wrong reason.
     fn decay_instance_ttl(env: &Env, vault_id: &Address) {
         let sequence = env.ledger().sequence() + TTL_DECAY_LEDGERS;
-        env.ledger().with_mut(|ledger| ledger.sequence_number = sequence);
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number = sequence);
         assert!(
             instance_ttl(env, vault_id) < INSTANCE_TTL_THRESHOLD,
             "precondition: {TTL_DECAY_LEDGERS} ledgers must take the instance TTL below the bump threshold"
@@ -3377,9 +3678,7 @@ mod tests {
         assert_refreshes_instance_ttl(&env, &vault_id, "transfer_admin", || {
             client.transfer_admin(&new_admin)
         });
-        assert_refreshes_instance_ttl(&env, &vault_id, "accept_admin", || {
-            client.accept_admin()
-        });
+        assert_refreshes_instance_ttl(&env, &vault_id, "accept_admin", || client.accept_admin());
         assert_refreshes_instance_ttl(&env, &vault_id, "freeze", || client.freeze());
         assert_refreshes_instance_ttl(&env, &vault_id, "unfreeze", || client.unfreeze());
         assert_refreshes_instance_ttl(&env, &vault_id, "propose_upgrade", || {
@@ -3396,8 +3695,9 @@ mod tests {
         // every case above advances the ledger 1.5M ledgers, which archives that
         // code entry, so a swap to it fails with `Error(Storage, InternalError)`.
         assert_refreshes_instance_ttl(&env, &vault_id, "execute_upgrade", || {
-            let new_wasm_hash =
-                env.deployer().upload_contract_wasm(Bytes::from_slice(&env, &[]));
+            let new_wasm_hash = env
+                .deployer()
+                .upload_contract_wasm(Bytes::from_slice(&env, &[]));
             client.propose_upgrade(&new_wasm_hash);
             env.ledger()
                 .set_sequence_number(env.ledger().sequence() + UPGRADE_TIMELOCK_LEDGERS);
@@ -3419,7 +3719,14 @@ mod tests {
         // Expiry beyond the fast-forward below, so the payment is still in-session.
         let vault_id = env.register(
             AgentVault,
-            (admin, agent_pk, 5_000_000_i128, allowlist, 2_000_000_u32, 0_i128),
+            (
+                admin,
+                agent_pk,
+                5_000_000_i128,
+                allowlist,
+                2_000_000_u32,
+                0_i128,
+            ),
         );
 
         // #given a vault whose instance TTL has decayed inside the bump threshold
@@ -3435,7 +3742,10 @@ mod tests {
             sig.into_val(&env),
             &contexts,
         );
-        assert!(result.is_ok(), "payment inside the session window should pass: {result:?}");
+        assert!(
+            result.is_ok(),
+            "payment inside the session window should pass: {result:?}"
+        );
 
         // #then the instance entry lives for the full extend-to TTL again
         assert_eq!(

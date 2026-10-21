@@ -65,6 +65,8 @@ pnpm --filter @routedock/routedock build
 pnpm -r --filter '!@routedock/nulth-sdk' --filter '!@routedock/routedock' build
 
 # 4. Contracts, only if you touched contracts/
+cargo fmt --manifest-path contracts/agent-vault/Cargo.toml --check
+cargo clippy --manifest-path contracts/agent-vault/Cargo.toml --all-targets --features testutils -- -D warnings
 cargo test --manifest-path contracts/agent-vault/Cargo.toml
 cargo test --manifest-path contracts/agent-vault/Cargo.toml --features testutils
 ```
