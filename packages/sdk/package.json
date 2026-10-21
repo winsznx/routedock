@@ -153,12 +153,12 @@
     "@cfworker/json-schema": "^4.0.0",
     "@noble/hashes": "^1.8.0",
     "@routedock/nulth-sdk": "workspace:*",
-    "@stellar/mpp": "^0.4.0",
+    "@stellar/mpp": "^0.7.1",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0",
     "@x402/core": "^2.9.0",
     "@x402/stellar": "^2.9.0",
-    "mppx": "^0.5.7"
+    "mppx": "^0.13.5"
   },
   "peerDependencies": {
     "express": "^4.18.0",
@@ -192,8 +192,8 @@
     "express": "^4.18.0",
     "fastify": "^5.0.0",
     "hono": "^4.12.23",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tsup": "^8.0.0",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5",
