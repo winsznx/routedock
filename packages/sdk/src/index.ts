@@ -14,7 +14,7 @@ export type {
   RouteDockLogLevel,
   RouteDockLogFields,
 } from './internal/logger.js'
-export { usdcToStroops, usdcToUnits, USDC_DECIMALS } from './internal/usdc.js'
+export { usdcToStroops, usdcToUnits, USDC_DECIMALS, USDC_ISSUERS } from './internal/usdc.js'
 export {
   normalizeManifestAssets,
   getEligibleAssets,

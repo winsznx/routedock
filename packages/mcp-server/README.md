@@ -116,7 +116,12 @@ Check the Stellar wallet balance for the configured account.
 - `asset_code` (optional): Asset code to check (e.g., "USDC")
 - `asset_issuer` (optional): Asset issuer address for non-native assets
 
-**Returns:** Balance information for the specified asset
+**Returns:** Balance information for the specified asset, with the issuer that balance belongs to.
+
+Asset codes are not unique — anyone can issue an asset named `USDC`. Without `asset_issuer`, `USDC` is
+matched to the canonical Circle issuer for the configured network and lookalikes are ignored. Any other
+code held from several issuers comes back as `ambiguous: true` with every issuer and balance listed, so the
+caller can pass `asset_issuer` instead of trusting whichever entry happened to come first.
 
 ### list_providers
 
