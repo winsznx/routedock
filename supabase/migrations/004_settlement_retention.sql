@@ -59,8 +59,9 @@ END $$;
 -- dashboard display. If storage becomes a concern, archive old rows
 -- to cold storage rather than deleting them.
 --
--- The existing idx on tx_log is not yet added; consider one if query
--- patterns warrant it (e.g. filtering by provider_url or agent_address).
+-- The tx_log index deferred here was added in 007_query_indexes.sql
+-- (created_at and mode feeds, plus the sessions-side indexes the reconciler
+-- and dashboard queries need).
 COMMENT ON TABLE tx_log IS
   'Immutable audit ledger of all payment activity. Retained indefinitely — '
   'do not delete rows. Archive to cold storage if storage costs grow.';
