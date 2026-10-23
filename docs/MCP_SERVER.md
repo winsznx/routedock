@@ -86,9 +86,16 @@ Close a session opened with `open_session`, settling the channel on-chain with t
 
 Check the Stellar wallet balance for the configured account.
 
+An asset code does not identify an asset — anyone can issue one called `USDC`. So with `asset_issuer`
+omitted, `USDC` is matched to the canonical Circle issuer for the server's network (the same
+`USDC_ISSUERS` table the SDK's trustline preflight uses) and same-coded assets from other issuers are
+ignored. Any other code held from more than one issuer is reported as `ambiguous: true` with every
+`{ issuer, balance }` pair, and the answer says to pass `asset_issuer` to narrow it down.
+
 **Use case:** Verify sufficient funds before payments, monitor account status
 
-**Returns:** Balance information for the specified asset
+**Returns:** Balance information for the specified asset, with the `issuer` the balance belongs to (and a
+`note` when the issuer was defaulted)
 
 ### 6. list_providers(tags, network)
 

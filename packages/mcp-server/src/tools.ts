@@ -108,11 +108,12 @@ export const TOOLS: Tool[] = [
         asset_code: {
           type: 'string',
           description:
-            'Optional asset code to check (e.g., "USDC"). If not specified, returns native XLM balance.',
+            'Optional asset code to check (e.g., "USDC"). If not specified, returns native XLM balance. Without asset_issuer, "USDC" is matched to the canonical Circle issuer for this network; any other code the account holds from several issuers returns all of them so you can choose one.',
         },
         asset_issuer: {
           type: 'string',
-          description: 'Optional asset issuer address for non-native assets',
+          description:
+            'Asset issuer address for non-native assets. Anyone can issue an asset with a popular code, so pass this to read a specific issuer rather than the canonical USDC one.',
         },
       },
       required: [],
