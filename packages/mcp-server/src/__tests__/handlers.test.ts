@@ -113,9 +113,11 @@ function payload(result: ToolResult): Record<string, unknown> {
   return JSON.parse(result.content[0]!.text) as Record<string, unknown>
 }
 
-/** The `providers` array of a list_providers payload. */
-function providersPayload(result: ToolResult): Record<string, unknown>[] {
-  return (payload(result).providers ?? []) as Record<string, unknown>[]
+/** The first provider of a list_providers payload, asserting there is one. */
+function firstProvider(result: ToolResult): Record<string, unknown> {
+  const providers = (payload(result).providers ?? []) as Record<string, unknown>[]
+  assert.ok(providers.length > 0, 'expected at least one provider in the payload')
+  return providers[0]!
 }
 
 /** Minimal RouteDockManifest fixture required by EstimateCostResult. */
@@ -1155,7 +1157,7 @@ describe('handleListProviders', () => {
     const deps = baseDeps({ supabase: makeSupabase(rows) })
 
     // #when listing providers
-    const [provider] = providersPayload(await handleListProviders({}, deps))
+    const provider = firstProvider(await handleListProviders({}, deps))
 
     // #then the advertised asset and verification state are visible
     assert.deepEqual(provider.assets, ['USDC'])
@@ -1179,7 +1181,7 @@ describe('handleListProviders', () => {
     const deps = baseDeps({ supabase: makeSupabase(rows) })
     const result = await handleListProviders({}, deps)
 
-    const [provider] = providersPayload(result)
+    const provider = firstProvider(result)
     assert.deepEqual(provider.assets, ['USDC', 'EURC'])
     assert.equal(provider.asset, 'USDC')
     assert.equal(provider.verified, false)
