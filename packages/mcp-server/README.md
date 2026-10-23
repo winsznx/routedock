@@ -124,9 +124,13 @@ List available RouteDock providers from the registry. Requires Supabase credenti
 
 **Parameters:**
 - `tags` (optional): Comma-separated tags for filtering (e.g., "price,stellar,dex")
-- `network` (optional): Filter by network (`testnet` or `mainnet`)
+- `network` (optional): Filter by network (`testnet` or `mainnet`). Defaults to the network this server is
+  configured with (`STELLAR_NETWORK`), so providers on the other network are not returned.
+- `limit` (optional): Maximum number of providers to return (1 to 50, default 50)
 
-**Returns:** List of matching providers with their capabilities
+**Returns:** `count`, the `network` and `limit` that were applied, a `truncated` flag, and each provider's
+capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Verified providers
+are listed first, then the newest registrations.
 
 ## Claude Desktop Configuration
 
