@@ -88,11 +88,6 @@ function parseResult(result: ToolResult): unknown {
   return JSON.parse(result.content[0]!.text)
 }
 
-/** Typed view of a handler payload, for assertions that stay off `any`. */
-function payload(result: ToolResult): Record<string, unknown> {
-  return JSON.parse(result.content[0]!.text) as Record<string, unknown>
-}
-
 /** Minimal RouteDockManifest fixture required by EstimateCostResult. */
 const FAKE_MANIFEST: RouteDockManifest = {
   routedock: '1.0',
@@ -891,6 +886,11 @@ describe('handleCheckBalance', () => {
     assert.equal(body.balance, '0')
   })
 
+  /** Typed view of a check_balance payload, so these assertions stay off `any`. */
+  function balancePayload(result: ToolResult): Record<string, unknown> {
+    return JSON.parse(result.content[0]!.text) as Record<string, unknown>
+  }
+
   it('returns the canonical USDC balance when only asset_code is given', async () => {
     // #given an account holding USDC from Circle, this server's network
     const deps = baseDeps({
@@ -902,7 +902,7 @@ describe('handleCheckBalance', () => {
 
     // #when asking for the asset by code alone
     const result = await handleCheckBalance({ asset_code: 'USDC' }, deps)
-    const body = payload(result)
+    const body = balancePayload(result)
 
     assert.equal(body.asset, 'USDC')
     assert.equal(body.balance, '100.00')
@@ -920,7 +920,7 @@ describe('handleCheckBalance', () => {
     })
 
     // #when asking for USDC without naming an issuer
-    const body = payload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
 
     // #then the canonical issuer's balance is reported, not the lookalike's
     assert.equal(body.balance, '100.00')
@@ -938,7 +938,7 @@ describe('handleCheckBalance', () => {
         { asset_code: 'USDC', asset_issuer: 'GDV4RBI44MPBORVOUHDVH34IKYHKGAVHVJFDGZ4BQ2FOCBNLNQIHSB6O', balance: '999999.00' },
       ]),
     })
-    const body = payload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
 
     assert.equal(body.balance, '0')
     assert.equal(body.issuer, USDC_ISSUERS.testnet)
@@ -953,7 +953,7 @@ describe('handleCheckBalance', () => {
         { asset_code: 'USDC', asset_issuer: USDC_ISSUERS.mainnet, balance: '250.00' },
       ]),
     })
-    const body = payload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
 
     assert.equal(body.balance, '250.00')
     assert.equal(body.issuer, USDC_ISSUERS.mainnet)
@@ -970,7 +970,7 @@ describe('handleCheckBalance', () => {
     })
 
     // #when asking for the code with no issuer
-    const body = payload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
 
     // #then nothing is silently picked: both are shown, each with its issuer
     assert.equal(body.ambiguous, true)
@@ -988,7 +988,7 @@ describe('handleCheckBalance', () => {
         { asset_code: 'USD1', asset_issuer: 'ISSUER1', balance: '10.00' },
       ]),
     })
-    const body = payload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
 
     assert.equal(body.ambiguous, undefined)
     assert.equal(body.issuer, 'ISSUER1')
@@ -1018,7 +1018,7 @@ describe('handleCheckBalance', () => {
       { asset_code: 'USDC', asset_issuer: 'ISSUER1' },
       deps,
     )
-    const body = payload(result)
+    const body = balancePayload(result)
 
     assert.equal(body.balance, '55.50')
     assert.equal(body.issuer, 'ISSUER1')
