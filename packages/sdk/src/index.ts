@@ -26,6 +26,9 @@ export * from './client/RouteDockClient.js'
 export * from './client/ModeRouter.js'
 export * from './client/x402Client.js'
 export * from './client/MppChargeClient.js'
+// The root entry must expose the same client API as the `/client` entry;
+// entry-export-parity.test.ts fails if the two lists drift again (issue #564).
+export * from './client/MppSessionClient.js'
 export * from './client/NulthVault.js'
 export * from './store/SessionStore.js'
 export * from './store/SpendStore.js'
