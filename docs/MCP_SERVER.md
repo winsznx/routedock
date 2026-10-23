@@ -90,13 +90,20 @@ Check the Stellar wallet balance for the configured account.
 
 **Returns:** Balance information for the specified asset
 
-### 6. list_providers(tags, network)
+### 6. list_providers(tags, network, limit)
 
 List available RouteDock providers from the registry, filterable by capability tags (array overlap) and network.
 
+`network` defaults to the network the server itself is configured with (`STELLAR_NETWORK`), so a testnet
+server does not surface mainnet providers the agent cannot pay. `limit` is an integer from 1 to 50
+(default 50), and rows are ordered verified-first, then most recently registered.
+
 **Use case:** Discover providers by capability, find services for specific needs
 
-**Returns:** List of matching providers with their capabilities
+**Returns:** `count`, the `network` and `limit` the query used, a `truncated` flag (true when the row cap
+was reached, so more providers may exist), and each provider's `name`, `description`, `base_url`, `modes`,
+`tags`, `verified`, and the assets it accepts — `assets` from the provider manifest plus `asset` for its
+primary one. The registry's full `manifest` JSONB is never returned.
 
 ## Quick Start
 
