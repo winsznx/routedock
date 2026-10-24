@@ -22,22 +22,28 @@ const client = new RouteDockClient({
   wallet: Keypair.fromSecret(process.env.AGENT_SECRET),
   network: 'testnet',
   spendCap: { daily: '1.00', asset: 'USDC' },
+  // Required by openSession() — signs the off-chain channel vouchers.
+  commitmentSecret: process.env.COMMITMENT_SECRET,
 })
 
 // Single call — SDK reads manifest, picks mode automatically
 const result = await client.pay('https://provider.example.com/price')
 // result.data   — response body
 // result.txHash — settlement hash (or null for session vouchers)
-// result.mode   — 'x402' | 'mpp-charge' | 'mpp-session'
+// result.mode   — 'x402' | 'mpp-charge' | 'mpp-session' | 'mpp-session-ws'
 
 // Sustained streaming access
 const session = await client.openSession('https://provider.example.com/stream/orderbook')
+let updates = 0
 for await (const update of session.stream()) {
   console.log(update)
-  if (done) break
+  if (++updates >= 10) break
 }
 await session.close() // triggers on-chain settlement
 ```
+
+`commitmentSecret` is optional in the client config, but `openSession()` throws
+`RouteDockManifestError` without it because every voucher must be signed.
 
 ### Spend cap and other assets
 
@@ -47,6 +53,7 @@ The cap is a single USDC total. If the asset selected for a payment is not
 `local_cap_asset_mismatch` before anything is paid, and nothing is added to the
 USDC total. USDC-only providers are unaffected. See
 `docs/MULTI_ASSET_SUPPORT.md`.
+
 
 ### Durable spend cap
 
@@ -76,6 +83,89 @@ const client = new RouteDockClient({
   spendStore: redisSpendStore,
 })
 ```
+
+### Trust anchor (`expectedPayee`)
+
+A manifest is self-signed by the `payee` it declares, so a signature alone does
+not prove who served it. When you learned the provider's address out of band —
+from the on-chain registry or an allowlist — pass it as `expectedPayee`. Every
+fetched manifest (including cache hits) must match it, or the client throws
+`RouteDockSignatureError` before any payment is attempted:
+
+```ts
+const client = new RouteDockClient({
+  wallet: process.env.AGENT_SECRET!,
+  network: 'mainnet',
+  expectedPayee: 'G...REGISTERED_PROVIDER_PAYEE',
+})
+```
+
+Set this whenever the provider address came from a registry or an allowlist.
+Omitting it leaves only self-signed authenticity, which is not enough for
+routing trust.
+
+### Manifest caching
+
+The client fetches `/.well-known/routedock.json` and caches it per origin for
+**60 seconds by default**. The provider can override that with
+`Cache-Control: max-age`, which wins over an `Expires` header. `Cache-Control:
+no-store` or `no-cache` disables caching, and `max-age=0` makes the entry
+immediately stale.
+
+Call `client.invalidateManifest(url)` to evict the cached copy immediately, so
+the next `pay()`, `estimateCost()`, or `openSession()` re-fetches it — useful
+after a provider announces a pricing or mode change:
+
+```ts
+client.invalidateManifest('https://provider.example.com/price')
+```
+
+### `estimateCost()` and `preflight()`
+
+Both methods are read-only and submit no transaction. Use them as an approval
+gate before paying:
+
+```ts
+const estimate = await client.estimateCost(
+  'https://provider.example.com/price',
+  { optimize: 'cost', budget_per_request: '0.002' },
+)
+// estimate.amount  — expected charge (decimal string)
+// estimate.asset   — selected payment asset
+// estimate.mode    — mode that would be used
+// estimate.manifest — full manifest for budget/routing decisions
+
+const preflight = await client.preflight(
+  estimate.manifest,
+  estimate.mode,
+  'https://provider.example.com/price',
+)
+// preflight.hasTrustline — payer has the required trustline (throws otherwise)
+// preflight.asset, preflight.modes, preflight.regions, preflight.capabilities
+```
+
+`preflight()` verifies the payer's trustline on Horizon and surfaces the
+manifest's regions, latency hints, and capabilities. A missing trustline
+throws `RouteDockTrustlineError` with an exact `stellar tx new ... change-trust`
+remediation command.
+
+### Manifest signatures (`signature_version` 2)
+
+Providers must sign manifests with `signManifest` from this SDK. It sets
+`signature_version: '2'`, which covers nested fields recursively; legacy
+signatures did not, so clients reject any manifest whose `signature_version`
+is not `'2'` with `RouteDockSignatureError`. Unsigned manifests are rejected
+too:
+
+```ts
+import { signManifest } from '@routedock/routedock'
+
+const signed = signManifest(manifest, process.env.STELLAR_PAYEE_SECRET!)
+```
+
+`routedock()` and `routedockHono()` already call `signManifest` with
+`payeeSecretKey`, so this is only needed when producing a signed manifest
+outside the middleware.
 
 On Node you can use the file-backed store instead. It depends on `node:fs`, so it
 lives in a Node-only entry point and is **not** exported from `/client`:
@@ -138,7 +228,7 @@ For `mpp-session` mode, the middleware exposes three hooks that fire at each sta
 ```ts
 app.use('/stream', routedock({
   modes: ['mpp-session'],
-  pricing: { 'mpp-session': { rate: '0.0001', channelContract: CHANNEL_CONTRACT } },
+  pricing: { 'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_FACTORY } },
   asset: 'USDC',
   assetContract: USDC_ASSET_CONTRACT,
   payee: PAYEE_ADDRESS,
@@ -148,37 +238,43 @@ app.use('/stream', routedock({
   commitmentPublicKey: COMMITMENT_PUBLIC_KEY,
 
   // Fires once when the first voucher is verified for a new session
-  onSessionOpen: async (channelId) => {
+  onSessionOpen: async (channelId, payer) => {
     await db.from('sessions').insert({
       channel_id: channelId,
+      payer,
       status: 'open',
       voucher_count: 0,
     })
   },
 
-  // Fires after each verified ed25519 commitment (off-chain, no tx fee)
-  onVoucher: async (voucherIndex, cumulativeAmount) => {
+  // Fires after each verified ed25519 commitment (off-chain, no tx fee).
+  // cumulativeAmount is a decimal string — keep it as a string in the DB.
+  onVoucher: async (channelId, voucherIndex, cumulativeAmount, signature) => {
     await db.from('sessions').update({
       voucher_count: voucherIndex,
-      cumulative_amount: parseFloat(cumulativeAmount),
+      cumulative_amount: cumulativeAmount,
+      last_signature: signature,
     }).eq('channel_id', channelId)
   },
 
-  // Fires after the on-chain channel close settles the cumulative amount
-  onSettled: async (txHash, totalPaid, mode) => {
+  // Fires after the on-chain channel close settles the cumulative amount.
+  // onSettled receives no channel ID, so filter on the configured factory —
+  // the handler reports that same value as channelId to the other hooks.
+  onSettled: async (txHash, totalPaid, mode, payer) => {
     await db.from('sessions').update({
       status: 'closed',
       settlement_tx_hash: txHash,
-    }).eq('channel_id', channelId)
+      payer,
+    }).eq('channel_id', CHANNEL_FACTORY)
   },
 }))
 ```
 
 | Hook | When it fires | On-chain? |
 |---|---|---|
-| `onSessionOpen(channelId)` | First verified voucher in a new session | No |
-| `onVoucher(index, cumulativeAmount)` | Each verified ed25519 commitment | No |
-| `onSettled(txHash, amount, mode)` | Channel close transaction confirmed | Yes |
+| `onSessionOpen(channelId, payer)` | First verified voucher in a new session | No |
+| `onVoucher(channelId, voucherIndex, cumulativeAmount, signature)` | Each verified ed25519 commitment | No |
+| `onSettled(txHash, amount, mode, payer)` | Channel close transaction confirmed | Yes |
 
 ## Running a provider in production
 
@@ -681,14 +777,49 @@ try {
 
 ## Mode Selection Logic
 
-The `ModeRouter` uses this decision tree (deterministic, no randomness):
+`ModeRouter` selects deterministically — there is no randomness. The rules, in
+order:
 
-1. If `{ sustained: true }` passed AND manifest supports `mpp-session` → session
-2. Else if manifest supports `mpp-charge` AND network is Stellar → MPP charge (lower fees)
-3. Else if manifest supports `x402` → x402 with facilitator
-4. Else throw `RouteDockNoSupportedModeError`
+1. **`forceMode`** is authoritative. If the manifest does not advertise it, the
+   client throws `RouteDockNoSupportedModeError`. A forced mode listed in
+   `deprecated_modes` is still used, with a warning.
+2. **Active modes are considered before deprecated ones.** Modes listed in
+   `deprecated_modes` are only tried as a compatibility fallback, and selecting
+   one logs a warning. If neither pass can select a mode, the client throws
+   `RouteDockNoSupportedModeError`.
+3. **Sustained sessions** (`sustained: true` or `session: true`):
+   - `transport: 'websocket'` prefers `mpp-session-ws`, falling back to
+     `mpp-session` if the provider does not advertise the WebSocket variant.
+   - With `transport` omitted (or `'sse'`), `mpp-session` is preferred, falling
+     back to `mpp-session-ws`.
+4. **Cost optimization** (`optimize: 'cost'`) compares the per-request modes
+   the provider advertises (`x402` and `mpp-charge`) and picks the cheapest.
+   `budget_per_request` adds a ceiling: candidates above it are excluded, and
+   if every candidate is over budget the client throws
+   `RouteDockPolicyRejectError('budget_per_request_exceeded')`. A malformed
+   `budget_per_request` throws
+   `RouteDockPolicyRejectError('invalid_budget_per_request')` rather than
+   silently disabling the ceiling.
+5. **Default order** when nothing above applies: `mpp-charge`, then `x402`.
+   If the provider supports neither, the client throws
+   `RouteDockNoSupportedModeError`.
 
-Override with `{ forceMode: 'x402' }` to bypass auto-selection.
+```ts
+// Inspect the session mode selection without paying.
+const estimate = await client.estimateCost(url, {
+  sustained: true,
+  transport: 'websocket',
+})
+
+// Cheapest per-request mode within a ceiling.
+await client.pay(url, { optimize: 'cost', budget_per_request: '0.002' })
+
+// Bypass auto-selection.
+await client.pay(url, { forceMode: 'x402' })
+
+// For sustained access, openSession() takes the mode directly.
+const session = await client.openSession(url, { mode: 'mpp-session-ws' })
+```
 
 ## Dispute Resolution
 
