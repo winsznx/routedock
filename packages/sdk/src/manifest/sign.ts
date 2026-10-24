@@ -110,7 +110,15 @@ export function verifyManifestSignature(
     )
   }
 
-  const keypair = Keypair.fromPublicKey(manifest.payee)
+  let keypair: Keypair
+  try {
+    keypair = Keypair.fromPublicKey(manifest.payee)
+  } catch (err) {
+    throw new RouteDockSignatureError(
+      `Manifest payee ${manifest.payee} is not a valid Stellar public key`,
+      { cause: err },
+    )
+  }
   const digest = manifestDigest(manifest)
   let sigBytes: Uint8Array
   try {

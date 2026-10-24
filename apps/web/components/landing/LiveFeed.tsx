@@ -11,12 +11,8 @@ function isPaymentMode(mode: string | null): mode is 'x402' | 'mpp-charge' | 'mp
   return mode === 'x402' || mode === 'mpp-charge' || mode === 'mpp-session'
 }
 
-interface LiveFeedProps {
-  initialEntries?: TxLogEntry[]
-}
-
-export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
-  const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
+export function LiveFeed() {
+  const [entries, setEntries] = useState<TxLogEntry[]>([])
   const [feedFailed, setFeedFailed] = useState(false)
 
   useEffect(() => {
@@ -48,7 +44,7 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
       <div className="rounded-2xl border border-white/5 bg-[#101A33] p-6">
         <div className="flex items-center gap-2 mb-4">
           {!feedFailed && (
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
           )}
           <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
             Live Feed
@@ -67,7 +63,7 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
     <div className="rounded-2xl border border-white/5 bg-[#101A33] p-6">
       <div className="flex items-center gap-2 mb-4">
         {!feedFailed && (
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
         )}
         <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
           Live Feed — {networkLabel()}

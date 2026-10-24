@@ -15,10 +15,58 @@ jobs:
         # Pinned: Rust 1.97 rejects a transmute in the transitive ethnum crate
         # (E0512). 1.94.x compiles the soroban-sdk deps cleanly.
         uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # branch 1.94.1
+      - name: Drop committed contract snapshots (#551)
+        # Start from an empty snapshot directory so the gate below sees every
+        # committed file that the tests regenerate. Without this, a stale file
+        # (for a renamed or removed test) stays tracked and the drift check
+        # passes while the committed snapshot is wrong.
+        run: rm -rf contracts/agent-vault/test_snapshots
       - name: Run contract tests
         run: cargo test --manifest-path contracts/agent-vault/Cargo.toml
       - name: Run contract proptest invariants
         run: cargo test --manifest-path contracts/agent-vault/Cargo.toml --features testutils
+      - name: Check contract snapshots are up to date (#551)
+        # Snapshot files record the agent public key and full env state, so
+        # they must match committed files exactly: a diff here means contract
+        # behavior changed without regenerating snapshots, or a new test ran
+        # without committing its snapshot. Deletions catch stale files that no
+        # test regenerates now that the directory starts empty.
+        run: |
+          drift=$(git status --porcelain -- contracts/agent-vault/test_snapshots)
+          if [ -n "$drift" ]; then
+            echo '::error::contracts/agent-vault/test_snapshots drifted from the committed files.'
+            echo 'Run: cargo test --manifest-path contracts/agent-vault/Cargo.toml'
+            echo 'then `git add contracts/agent-vault/test_snapshots` and commit it in this PR.'
+            echo "$drift"
+            git --no-pager diff --stat -- contracts/agent-vault/test_snapshots
+            exit 1
+          fi
+
+  contract-wasm:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      AGENT_VAULT_WASM: ${{ github.workspace }}/target/wasm32v1-none/release/agent_vault.wasm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Rust and Soroban target
+        uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # branch 1.94.1
+        with:
+          targets: wasm32v1-none
+      - name: Build release Wasm, enforce size budget and summarize SHA-256
+        run: bash scripts/build-vault-wasm.sh
+      - name: Test bootstrap and current Wasm upgrades with all invariants
+        run: cargo test --locked --manifest-path contracts/agent-vault/Cargo.toml --features testutils -- --include-ignored
+      - name: Upload tested Wasm and build provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-vault-wasm-${{ github.sha }}
+          path: |
+            target/wasm32v1-none/release/agent_vault.wasm
+            target/wasm32v1-none/release/agent_vault.wasm.sha256
+            target/wasm32v1-none/release/agent_vault.wasm.json
+          if-no-files-found: error
+          retention-days: 90
 
   sdk-tests:
     runs-on: ubuntu-latest
@@ -78,6 +126,11 @@ jobs:
           npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/nulth-sdk
           npx --yes @arethetypeswrong/cli@0.18.5 --pack packages/sdk
 
+      - name: Check package hygiene and entry points
+        run: |
+          node --test scripts/check-pack.test.mjs
+          bash scripts/check-pack.sh
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -96,15 +149,44 @@ jobs:
       - name: Typecheck all packages
         run: pnpm -r typecheck
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Report production dependency advisories
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          pnpm audit --prod --audit-level=high > audit-report.txt 2>&1
+          status=$?
+          {
+            echo '### Production dependency audit'
+            echo '```text'
+            cat audit-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat audit-report.txt
+          exit "$status"
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run actionlint
-        uses: reviewdog/action-actionlint@3cbf14efd750961dba35fccbf00f9e14028cb1f5 # v1.80.2
+        uses: reviewdog/action-actionlint@419a49378266e892f40c773b4f2fc6de9aa87499 # v1.80.4
         with:
           fail_level: error
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Test E2E provider failure diagnostics
@@ -112,13 +194,13 @@ jobs:
       - name: Guard release.yml permissions
         # release.yml has twice regressed to missing the permissions that make
         # Changesets and the release watchdog work (#255, fixed in 8f3d82b).
-        # Fail fast if either goes missing again.
+        # Fail fast if release publishing or provenance permissions go missing.
         # Matches only real YAML keys, anchored to start-of-line indentation.
         # A substring grep also matches the explanatory comments above the
         # permissions block in release.yml, so it would pass even with the
         # block deleted.
         run: |
-          for perm in "contents" "pull-requests"; do
+          for perm in "contents" "pull-requests" "id-token"; do
             if ! grep -qE "^[[:space:]]+${perm}:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
               echo "::error file=.github/workflows/release.yml::missing required permission '${perm}: write'"
               exit 1
@@ -129,16 +211,13 @@ jobs:
             exit 1
           fi
 
+      - name: Test release permission guard
+        run: node --test scripts/release-permissions.test.mjs
+
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Guard unpublished SDK package name
-        run: |
-          if git grep -n '@routedock/[s]dk' -- ':!pnpm-lock.yaml' ':!*CHANGELOG.md' ':!.changeset'; then
-            echo "::error::found the old SDK package name. The package is published as @routedock/routedock."
-            exit 1
-          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -146,5 +225,17 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
+      - name: Legacy package name guard
+        # The package is published as @routedock/routedock. The old unpublished
+        # name (the one with "sdk" as the last path segment) does not exist on
+        # npm; keep it out of the tree except in CHANGELOG.md and MIGRATION.md,
+        # which record history. The [d] keeps this guard from matching itself.
+        run: |
+          if grep -rn "@routedock/s[d]k" \
+              --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+              --exclude=CHANGELOG.md --exclude=MIGRATION.md .; then
+            echo "Found legacy package name references (use @routedock/routedock instead)"
+            exit 1
+          fi
       - name: Lint
         run: pnpm -r lint

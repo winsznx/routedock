@@ -49,9 +49,19 @@ mock.module('@stellar/mpp/channel/server', {
       closeCalls.push({ amount: opts.amount, signature: opts.signature })
       return 'mock-close-tx-hash'
     },
-    // mppChannel: the orphan/close paths never use mppx methods, so an empty
-    // method list is enough — the test drives voucher state via `commit`.
     stellar: () => [],
+  },
+})
+
+const actualMppxServer = await import('mppx/server')
+mock.module('mppx/server', {
+  namedExports: {
+    ...actualMppxServer,
+    Mppx: {
+      create: () => ({
+        channel: () => async () => ({ status: 200 }),
+      }),
+    },
   },
 })
 
@@ -105,24 +115,39 @@ function buildApp(handlers: {
   onVoucher?: (channelId: string, voucherIndex: number, cumulativeAmount: string, signature: string) => Promise<void>
   onOrphaned?: (channelId: string, info: { cumulativeAmount: string; lastSignature: string; voucherCount: number; reason: string }) => Promise<void>
   idleTimeoutMs?: number
+  sessionStore?: Parameters<typeof routedockHono>[0]['sessionStore']
 }): { app: Hono; commit: Commit } {
   closeCalls = []
   const app = new Hono()
-  app.use(
-    '*',
-    routedockHono({
-      asset: 'USDC',
-      assetContract: ASSET_CONTRACT,
-      payee: payeeKeypair.publicKey(),
-      network: 'testnet',
-      payeeSecretKey: payeeKeypair.secret(),
-      commitmentPublicKey: commitKeypair.publicKey(),
-      manifest,
-      modes: ['mpp-session'],
-      pricing: { 'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT } },
-      ...handlers,
-    }),
-  )
+  const opts: Parameters<typeof routedockHono>[0] = {
+    asset: 'USDC',
+    assetContract: ASSET_CONTRACT,
+    payee: payeeKeypair.publicKey(),
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    commitmentPublicKey: commitKeypair.publicKey(),
+    manifest,
+    modes: ['mpp-session'],
+    pricing: { 'mpp-session': { rate: '0.0001', channelFactory: CHANNEL_CONTRACT } },
+  }
+  if (handlers.onSessionOpen) opts.onSessionOpen = handlers.onSessionOpen
+  if (handlers.onVoucher) opts.onVoucher = handlers.onVoucher
+  if (handlers.onOrphaned) opts.onOrphaned = handlers.onOrphaned
+  if (typeof handlers.idleTimeoutMs === 'number') opts.idleTimeoutMs = handlers.idleTimeoutMs
+  if (handlers.sessionStore) opts.sessionStore = handlers.sessionStore
+
+  app.use('*', routedockHono(opts))
+  app.get('/price', (c) => {
+    return new Promise<Response>((resolve: (r: Response) => void) => {
+      if (c.req.raw.signal.aborted) {
+        resolve(c.text('aborted', 200))
+        return
+      }
+      c.req.raw.signal.addEventListener('abort', () => {
+        resolve(c.text('aborted', 200))
+      })
+    })
+  })
   assert.ok(lastCommit, 'onVerifiedCredential mock should have captured commit during construction')
   const commit = lastCommit!
   return { app, commit }
@@ -268,5 +293,140 @@ describe('routedockHono — voucher state only from verified credentials', () =>
     assert.equal(closeCalls.length, 0)
     const json = await res.json() as { closeTxHash: unknown }
     assert.equal(json.closeTxHash, null)
+  })
+
+  it('persists voucherCount and sessionOpened across rebuilds with a shared Store (issue #556)', async () => {
+    const storeMap = new Map<string, unknown>()
+    const sharedStore = {
+      async get(k: string) { return storeMap.get(k) },
+      async put(k: string, v: unknown) { storeMap.set(k, v) },
+      async delete(k: string) { storeMap.delete(k) },
+      update(k: string, fn: (v: unknown) => unknown) { storeMap.set(k, fn(storeMap.get(k))) },
+    }
+
+    const sessionOpens: string[] = []
+    const voucherCalls: Array<{ voucherIndex: number; amount: string }> = []
+
+    // 1. Build first instance on sharedStore and commit N (3) vouchers
+    const instance1 = buildApp({
+      sessionStore: sharedStore,
+      onSessionOpen: async (_channelId, payer) => { sessionOpens.push(payer ?? '') },
+      onVoucher: async (_id, idx, amount) => { voucherCalls.push({ voucherIndex: idx, amount }) },
+    })
+
+    await instance1.commit({
+      payload: { amount: '1000', signature: '11'.repeat(32) },
+      source: payerKeypair.publicKey(),
+    })
+    await instance1.commit({ payload: { amount: '2000', signature: '22'.repeat(32) } })
+    await instance1.commit({ payload: { amount: '3000', signature: '33'.repeat(32) } })
+
+    assert.equal(sessionOpens.length, 1, 'onSessionOpen should fire on first voucher')
+    assert.equal(voucherCalls.length, 3)
+    assert.equal(voucherCalls[2]?.voucherIndex, 3)
+
+    // 2. Build second routedockHono on the SAME store (simulating DO eviction and rebuild)
+    const instance2 = buildApp({
+      sessionStore: sharedStore,
+      onSessionOpen: async (_channelId, payer) => { sessionOpens.push(payer ?? '') },
+      onVoucher: async (_id, idx, amount) => { voucherCalls.push({ voucherIndex: idx, amount }) },
+    })
+
+    // Commit voucher N+1 (4th voucher)
+    await instance2.commit({ payload: { amount: '4000', signature: '44'.repeat(32) } })
+
+    // onSessionOpen must NOT fire again (must have fired exactly once overall)
+    assert.equal(sessionOpens.length, 1, 'onSessionOpen must only fire once across DO rebuilds')
+    // onVoucher must report index N+1 (4)
+    assert.equal(voucherCalls.length, 4)
+    assert.equal(voucherCalls[3]?.voucherIndex, 4, 'onVoucher must report index N+1 after rebuild')
+    assert.equal(voucherCalls[3]?.amount, '0.0004000')
+  })
+
+  it('flagOrphan after a rebuild still calls onOrphaned for an open session (issue #556)', async () => {
+    const storeMap = new Map<string, unknown>()
+    const sharedStore = {
+      async get(k: string) { return storeMap.get(k) },
+      async put(k: string, v: unknown) { storeMap.set(k, v) },
+      async delete(k: string) { storeMap.delete(k) },
+      update(k: string, fn: (v: unknown) => unknown) { storeMap.set(k, fn(storeMap.get(k))) },
+    }
+
+    // 1. Build first instance and commit 2 vouchers
+    const instance1 = buildApp({ sessionStore: sharedStore })
+    await instance1.commit({ payload: { amount: '1000', signature: '11'.repeat(32) } })
+    await instance1.commit({ payload: { amount: '2500', signature: '25'.repeat(32) } })
+
+    // 2. Build second instance on the SAME store, with onOrphaned and idleTimeoutMs
+    let orphanInfo: { cumulativeAmount: string; lastSignature: string; voucherCount: number; reason: string } | undefined
+    let resolveOrphaned!: () => void
+    const orphanedPromise = new Promise<void>((resolve) => { resolveOrphaned = resolve })
+
+    const instance2 = buildApp({
+      sessionStore: sharedStore,
+      idleTimeoutMs: 30,
+      onOrphaned: async (_channelId, info) => {
+        orphanInfo = info
+        resolveOrphaned()
+      },
+    })
+
+    // Simulate an ongoing in-flight request on instance2 (e.g. streaming or polling)
+    const controller = new AbortController()
+    const reqPromise = instance2.app.request('/price', {
+      method: 'GET',
+      signal: controller.signal,
+    })
+
+    // Yield to let the request pass through payment middleware and arm the abort guard
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Abort connection mid-stream to trigger armAbortGuard -> flagOrphan('connection-closed')
+    controller.abort()
+    await reqPromise
+
+    await Promise.race([
+      orphanedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('onOrphaned never fired on rebuilt instance')), 1000)),
+    ])
+
+    assert.ok(orphanInfo, 'onOrphaned must be called after rebuild')
+    assert.equal(orphanInfo.voucherCount, 2, 'voucherCount must reflect the persisted vouchers')
+    assert.equal(orphanInfo.cumulativeAmount, '0.0002500')
+    assert.equal(orphanInfo.lastSignature, '25'.repeat(32))
+    assert.equal(orphanInfo.reason, 'connection-closed')
+  })
+
+  it('handleDelete after a rebuild cleanly settles and deletes persisted session bookkeeping', async () => {
+    const storeMap = new Map<string, unknown>()
+    const sharedStore = {
+      async get(k: string) { return storeMap.get(k) },
+      async put(k: string, v: unknown) { storeMap.set(k, v) },
+      async delete(k: string) { storeMap.delete(k) },
+      update(k: string, fn: (v: unknown) => unknown) { storeMap.set(k, fn(storeMap.get(k))) },
+    }
+
+    const instance1 = buildApp({ sessionStore: sharedStore })
+    await instance1.commit({ payload: { amount: '5000', signature: '55'.repeat(32) } })
+
+    // Verify record was persisted
+    const voucherKey = `routedock:session:voucher:${CHANNEL_CONTRACT}`
+    assert.ok(storeMap.has(voucherKey))
+
+    // Build second instance on same store
+    const instance2 = buildApp({ sessionStore: sharedStore })
+
+    // DELETE on instance2
+    const res = await instance2.app.request('/price', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: '5000', signature: '55'.repeat(32) }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(closeCalls.length, 1)
+    assert.equal(closeCalls[0]?.amount, 5000n)
+
+    // Store record should now be deleted
+    assert.equal(storeMap.has(voucherKey), false, 'persisted session record should be deleted on close')
   })
 })

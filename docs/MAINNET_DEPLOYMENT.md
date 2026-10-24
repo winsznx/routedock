@@ -184,12 +184,43 @@ Note: `AGENT_DAILY_CAP_USDC` is the SDK's local client-side daily cap in decimal
 
 New deployments enforce a fixed 17,280-ledger delay (approximately one day) from the first proposal. Upgrades on a contract still running the previous Wasm require one unavoidable bootstrap invocation through its old immediate `upgrade` entry point; the old deployed code cannot enforce a rule it does not contain. After that transition, use the new flow exclusively:
 
-1. Build and independently review the target Wasm, then upload it and record its exact 32-byte hash.
+1. Choose the reviewed **main commit** and open its successful **CI → contract-wasm** job. The job summary records the tested commit, release size, and raw Wasm SHA-256. Download `agent-vault-wasm-<full-commit-sha>` from that run's artifacts and independently review the code. Verify the artifact using the commands below, then upload those exact Wasm bytes and record the returned 32-byte hash.
 2. Call `propose_upgrade(new_wasm_hash)` with the vault admin. Record the `upgrade_proposed` event and verify `pending_upgrade` returns the expected hash and `ready_at_ledger`.
 3. Notify vault operators and governed payers, link the reviewed build, and allow the full ledger delay. Rescheduling replaces the target and restarts the delay.
 4. If the proposal is no longer approved, call `cancel_upgrade` before execution and verify `upgrade_cancelled` plus an empty `pending_upgrade`.
 5. At or after `ready_at_ledger`, call `execute_upgrade()` with the vault admin. Verify the system executable update and custom `upgraded` event contain the approved hash.
 6. Re-check `daily_cap`, `allowlist`, `agent_pubkey`, and `expiry_ledger`, then run a capped authorization smoke test before restoring traffic.
+
+Verify a downloaded artifact before upload (GitHub CLI example):
+
+```bash
+gh run download <CI_RUN_ID> --repo winsznx/routedock \
+  --name agent-vault-wasm-<FULL_COMMIT_SHA> --dir reviewed-vault
+cd reviewed-vault
+sha256sum --check agent_vault.wasm.sha256
+cat agent_vault.wasm.json
+sha256sum agent_vault.wasm
+```
+
+Check that the metadata `commit` is the reviewed commit and `dirty` is `false`;
+compare the locally calculated SHA-256 to the **contract-wasm job summary**, not
+just the checksum file bundled with the download. A PR run builds GitHub's
+synthetic merge commit, so use the successful main-branch run for the final
+merged commit when deploying. The artifact expires after 90 days; if unavailable,
+rerun CI for that exact commit, or rebuild it with the documented pinned toolchain
+and locked dependencies and independently verify the result.
+
+The raw Wasm SHA-256 (64 hex characters / 32 bytes) must match the hash returned
+by the upload, the `new_wasm_hash` in `upgrade_proposed`, and the hash returned by
+`pending_upgrade()`. Normalize the event's byte encoding to hex before comparing.
+Stop or cancel if any differ. The GitHub artifact archive digest is a different
+hash and must not be used as the contract hash. Use the downloaded CI Wasm for
+a proposed CI hash; local rebuilds are not guaranteed byte-identical across
+environments. Do not optimize or otherwise
+modify the Wasm after verification; changed bytes require a new reviewed hash.
+Keep the CI run URL, commit, local checksum, and proposal event in the upgrade
+record throughout the full timelock. This also applies to the one-time bootstrap
+through the old `upgrade` entry point.
 
 The timelock provides notice for code replacement only. The same admin can still rotate keys and change policy settings; use hardware-backed custody, alerts, and tested operator procedures.
 
@@ -301,6 +332,10 @@ wrangler secret put CHANNEL_CONTRACT_ID
 wrangler secret put COMMITMENT_PUBLIC_KEY
 wrangler secret put SUPABASE_SERVICE_KEY
 wrangler secret put USDC_ASSET_CONTRACT
+# Optional — agent vault contract (the same AGENT_VAULT_CONTRACT_ID from the
+# vault deploy step above). When set, the provider records session_settled on
+# the vault after each clean mpp-session close.
+wrangler secret put AGENT_VAULT_CONTRACT_ID
 ```
 
 Deploy Provider B:

@@ -4,7 +4,8 @@ name: Provider Watchdog
 # actually serving. e2e.yml runs against locally started Workers and skips
 # entirely without AGENT_SECRET, which the repo does not have. The last outage
 # went unnoticed for three weeks (#287), so this runs every six hours and files
-# (or comments on) a single deduplicated issue on failure.
+# (or comments on) a single deduplicated issue on failure, and closes that issue
+# when a later run finds the providers healthy again.
 #
 # No secrets required: all three checks are unauthenticated GETs.
 
@@ -75,6 +76,15 @@ jobs:
 
           if [ ! -s "$REPORT_FILE" ]; then
             echo "Both providers healthy."
+            # A green run means any outage the alarm was opened for has passed.
+            # Close the alarm (same recovery-close approach as PR #462 for the
+            # release watchdog) so the next outage opens a fresh issue instead
+            # of commenting on one that already looks "known".
+            for n in $(gh issue list --state open --label provider \
+              --search "Provider health check is failing in:title" \
+              --json number --jq '.[].number'); do
+              gh issue close "$n" --comment "$(printf 'Providers healthy again as of the six-hourly watchdog. Recovered as of [workflow run](%s/%s/actions/runs/%s).\n\nIf this alarm was closed while a provider is still unhealthy, re-run the Provider Watchdog workflow or open a fresh issue.' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+            done
             exit 0
           fi
 

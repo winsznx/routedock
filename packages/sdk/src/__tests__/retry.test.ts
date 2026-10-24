@@ -5,6 +5,7 @@ import {
   RouteDockManifestError,
   RouteDockFacilitatorError,
   RouteDockNetworkError,
+  httpStatusToError,
   parseRetryAfterMs,
 } from '../errors.js'
 import { withRetry, backoffDelayMs, DEFAULT_RETRY_POLICY } from '../internal/retry.js'
@@ -314,6 +315,111 @@ describe('withRetry', () => {
       (err: unknown) => err instanceof TypeError,
     )
     assert.equal(calls, 1)
+  })
+})
+
+describe('withRetry — Retry-After is capped by maxDelayMs', () => {
+  /** Run `fn` with setTimeout stubbed so retry sleeps are recorded, not waited. */
+  async function recordDelays(fn: () => Promise<unknown>): Promise<{ delays: number[]; error: unknown }> {
+    const delays: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((cb: () => void, ms?: number) => {
+      delays.push(ms ?? 0)
+      return originalSetTimeout(cb, 0)
+    }) as typeof setTimeout
+    let error: unknown
+    try {
+      await fn()
+    } catch (err) {
+      error = err
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+    return { delays, error }
+  }
+
+  it('clamps a large retryAfterMs to a custom maxDelayMs and keeps the raw hint on the error', async () => {
+    const { delays, error } = await recordDelays(() =>
+      withRetry(
+        () => {
+          throw new RouteDockFacilitatorError('busy', 503, { retryAfterMs: 3_600_000 })
+        },
+        { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 1_000 },
+      ),
+    )
+    assert.deepEqual(delays, [1_000, 1_000])
+    assert.ok(error instanceof RouteDockFacilitatorError)
+    assert.equal(error.retryAfterMs, 3_600_000, 'raw server hint is left untouched')
+  })
+
+  it('clamps to the 30s default when no policy is given', async () => {
+    const { delays, error } = await recordDelays(() =>
+      withRetry(() => {
+        throw new RouteDockFacilitatorError('busy', 503, { retryAfterMs: 3_600_000 })
+      }),
+    )
+    assert.deepEqual(delays, [30_000, 30_000, 30_000])
+    assert.ok(error instanceof RouteDockFacilitatorError)
+  })
+
+  it('clamps a Retry-After header carried through httpStatusToError (end to end)', async () => {
+    const { delays, error } = await recordDelays(() =>
+      withRetry(() => {
+        throw httpStatusToError(
+          'busy',
+          503,
+          new Response(null, { status: 503, headers: { 'Retry-After': '86400' } }),
+        )
+      }),
+    )
+    assert.deepEqual(delays, [30_000, 30_000, 30_000])
+    assert.ok(error instanceof RouteDockFacilitatorError)
+    assert.equal(error.retryAfterMs, 86_400_000)
+  })
+
+  it('still honors a Retry-After below maxDelayMs exactly', async () => {
+    const { delays } = await recordDelays(() =>
+      withRetry(
+        () => {
+          throw new RouteDockFacilitatorError('busy', 429, { retryAfterMs: 750 })
+        },
+        { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 1_000 },
+      ),
+    )
+    assert.deepEqual(delays, [750, 750])
+  })
+
+  it('does not clamp a Retry-After equal to maxDelayMs', async () => {
+    const { delays } = await recordDelays(() =>
+      withRetry(
+        () => {
+          throw new RouteDockFacilitatorError('busy', 429, { retryAfterMs: 1_000 })
+        },
+        { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 1_000 },
+      ),
+    )
+    assert.deepEqual(delays, [1_000])
+  })
+
+  it('passes the clamped delay to onRetry as nextDelayMs', async () => {
+    const seen: number[] = []
+    const { delays } = await recordDelays(() =>
+      withRetry(
+        () => {
+          throw new RouteDockFacilitatorError('busy', 503, { retryAfterMs: 3_600_000 })
+        },
+        {
+          maxAttempts: 3,
+          baseDelayMs: 1,
+          maxDelayMs: 1_000,
+          onRetry: (_attempt, _err, nextDelayMs) => {
+            seen.push(nextDelayMs)
+          },
+        },
+      ),
+    )
+    assert.deepEqual(seen, [1_000, 1_000])
+    assert.deepEqual(delays, [1_000, 1_000])
   })
 })
 

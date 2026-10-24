@@ -31,8 +31,7 @@ const ORCHESTRATOR_SECRET = process.env['ORCHESTRATOR_SECRET'] ?? ''
 const SPECIALIST_SECRET = process.env['SPECIALIST_SECRET'] ?? ''
 const START_SPECIALIST = process.env['START_MOCK_SPECIALIST'] !== 'false'
 const SPECIALIST_PORT = 3200
-const SPECIALIST_URL =
-    process.env['SPECIALIST_URL'] ?? `http://localhost:${SPECIALIST_PORT}`
+const SPECIALIST_URL = (process.env['SPECIALIST_URL'] ?? `http://localhost:${SPECIALIST_PORT}`).replace(/\/$/, '')
 
 // USDC on Stellar testnet
 const USDC_CONTRACT: string =
@@ -69,7 +68,7 @@ function buildSpecialistServer(specialistSecret: string): Hono {
                 facilitator: 'https://channels.openzeppelin.com/x402',
             },
         },
-        endpoints: { summarise: { method: 'POST', path: '/summarise' } },
+        endpoints: { summarise: { method: 'GET', path: '/summarise' } },
         tags: ['summarise', 'nlp', 'text'],
     }
 
@@ -90,9 +89,8 @@ function buildSpecialistServer(specialistSecret: string): Hono {
         }),
     )
 
-    app.post('/summarise', async (c) => {
-        const body = (await c.req.json<{ text?: string }>().catch(() => ({}))) as { text?: string }
-        const text = body.text ?? ''
+    app.get('/summarise', async (c) => {
+        const text = c.req.query('text') ?? ''
         // Canned summarisation — swap for a real LLM call in production.
         const words = text.trim().split(/\s+/).slice(0, 6).join(' ')
         const summary = words.length > 0 ? `Summary: "${words}…"` : 'Summary: (empty input)'
@@ -156,7 +154,10 @@ async function main(): Promise<void> {
 
         // Pay the specialist using x402. The orchestrator handles the full
         // 402 → sign → retry cycle automatically.
-        const result = await orchestrator.pay(specialistUrl, { forceMode: 'x402' })
+        // client.pay() sends a GET request with no body, so pass the chunk text in the query string.
+        const url = new URL('/summarise', SPECIALIST_URL)
+        url.searchParams.set('text', chunk)
+        const result = await orchestrator.pay(url.toString(), { forceMode: 'x402' })
         const data = result.data as { summary?: string; chars?: number }
 
         console.log(`     ${data.summary}`)

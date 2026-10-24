@@ -7,6 +7,7 @@ import { signManifest } from '../manifest/sign.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
 import type { RouteDockLogger } from '../internal/logger.js'
+import type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 
 export interface RouteDockMiddlewareOptions {
   modes: PaymentMode[]
@@ -61,6 +62,12 @@ export interface RouteDockMiddlewareOptions {
    * callback failures, orphaned sessions). Defaults to a console-backed logger.
    */
   logger?: RouteDockLogger
+  /**
+   * Record `session_settled` on the agent vault after each clean mpp-session
+   * close. Falls back to the deprecated `AGENT_VAULT_CONTRACT`/
+   * `AGENT_VAULT_CONTRACT_ID` env vars when unset.
+   */
+  vaultSettlement?: VaultSettlementConfig
 }
 
 /**
@@ -155,6 +162,7 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.onOrphaned ? { onOrphaned: opts.onOrphaned } : {}),
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
           ...(opts.logger ? { logger: opts.logger } : {}),
+          ...(opts.vaultSettlement ? { vaultSettlement: opts.vaultSettlement } : {}),
         }),
       )
     }
@@ -223,3 +231,5 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
       .catch((err) => next(err))
   }
 }
+
+export type { VaultSettlementConfig } from '../internal/vaultConfig.js'

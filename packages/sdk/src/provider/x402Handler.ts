@@ -21,6 +21,7 @@ import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
   checkSettlementReplay,
+  recordSettlement,
   type SeenTxStore,
 } from './SeenTxStore.js'
 import { readSettleResult } from './settleResult.js'
@@ -259,7 +260,12 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         if (typeof paymentResponse === 'string') {
           headers['X-Payment-Response'] = paymentResponse
         }
-        await seenTxStore.set(idempotencyKey, { txHash, headers, createdAt: Date.now() })
+        await recordSettlement(
+          seenTxStore,
+          idempotencyKey,
+          { txHash, headers, createdAt: Date.now() },
+          { logger, label: '[x402]', onCallbackError: opts.onCallbackError },
+        )
       }
 
       if (txHash && opts.onSettled) {

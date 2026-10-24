@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { getSupabaseBrowserClient, type TxLogEntry } from '@/lib/supabase'
 import { mergeTxEntries } from '@/lib/mergeTxEntries'
 import { ModeBadge } from '@/components/shared/ModeBadge'
@@ -28,6 +28,7 @@ interface TxFeedProps {
 }
 
 export function TxFeed({ initialEntries = [] }: TxFeedProps) {
+  const reducedMotion = useReducedMotion()
   const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
   const [paused, setPaused] = useState(false)
 
@@ -124,7 +125,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
         {entries.length === 0 ? (
           <div className="px-5 py-8 text-center">
             <span className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-muted)] animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-muted)] motion-safe:animate-pulse" />
               Waiting for transactions...
             </span>
           </div>
@@ -134,10 +135,10 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
               {entries.map((entry) => (
                 <motion.li
                   key={entry.id}
-                  initial={{ opacity: 0, y: -8 }}
+                  initial={reducedMotion ? false : { opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
+                  exit={{ opacity: reducedMotion ? 1 : 0 }}
+                  transition={{ duration: reducedMotion ? 0 : 0.2 }}
                   className="px-5 py-3 flex items-start gap-3"
                 >
                   <div className="shrink-0 pt-0.5">

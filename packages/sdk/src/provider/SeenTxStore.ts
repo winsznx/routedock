@@ -102,6 +102,37 @@ export type SettlementReplayCheck =
   | { kind: 'spent' }
 
 /**
+ * Record a settlement so a retry of the same payment is deduped.
+ *
+ * Call this only AFTER the payment has settled. By then the funds have moved,
+ * so a failing store write must not turn a paid request into a 500: the
+ * failure is logged and reported through `onCallbackError(err, 'seenTxStore.set')`
+ * and the request carries on to `onSettled` and the route. Never throws.
+ */
+export async function recordSettlement(
+  store: SeenTxStore,
+  key: string,
+  record: SettlementRecord,
+  ctx: {
+    logger: RouteDockLogger
+    /** Log prefix, e.g. `[x402]` or `[mpp-charge]`. */
+    label: string
+    onCallbackError?: ((err: unknown, cb: string) => void) | undefined
+  },
+): Promise<void> {
+  try {
+    await store.set(key, record)
+  } catch (err) {
+    ctx.logger('error', `${ctx.label} seenTxStore.set failed after settlement`, { error: err })
+    try {
+      ctx.onCallbackError?.(err, 'seenTxStore.set')
+    } catch (cbErr) {
+      ctx.logger('error', `${ctx.label} onCallbackError threw`, { error: cbErr })
+    }
+  }
+}
+
+/**
  * Decide what a payment bearing `key` should do.
  *
  * - `miss`  — no cached settlement; fall through to decode and settle.

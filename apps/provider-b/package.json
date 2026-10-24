@@ -18,7 +18,7 @@
     "hono": "^4.12.23"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
+    "@cloudflare/workers-types": "^5.20261019.1",
     "@types/node": "^20.0.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",

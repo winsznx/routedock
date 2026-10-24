@@ -39,6 +39,7 @@ This mechanism gives users notice before the enforcement code changes. It does *
 
 - Rust 1.94.1 for the repository's locked Soroban dependency graph
 - `wasm32v1-none` target for release builds
+- Bash and Python 3 for the pinned Wasm build and checksum script
 - Stellar CLI (`stellar`)
 - Soroban SDK 22
 
@@ -50,6 +51,46 @@ Run the native test suite from the repository root:
 cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml
 cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml --features testutils
 ```
+
+**Snapshot rule:** `cargo test` writes `contracts/agent-vault/test_snapshots/tests/*.json`, which are
+committed to the repo and checked in CI. The test key generator is seeded deterministically, so a
+re-run produces byte-identical snapshots. CI deletes `contracts/agent-vault/test_snapshots` before
+the first test run, so a committed snapshot that no test regenerates fails the check as a deletion.
+If CI fails with “test_snapshots drifted”:
+
+1. Re-run `cargo +1.94.1 test --manifest-path contracts/agent-vault/Cargo.toml`.
+2. Commit the changed, added, or deleted snapshot files together with your contract change.
+
+Never hand-edit a snapshot.
+
+The three real Wasm upgrade tests are explicitly marked `ignored` in a native-only
+run, with a message explaining the required build. To run **all** tests, including
+the old immediate-upgrade bootstrap and current-to-current state-retention paths:
+
+```bash
+rustup target add wasm32v1-none --toolchain 1.94.1
+bash scripts/build-vault-wasm.sh
+AGENT_VAULT_WASM="$PWD/contracts/agent-vault/target/wasm32v1-none/release/agent_vault.wasm" \
+  cargo +1.94.1 test --locked --manifest-path contracts/agent-vault/Cargo.toml \
+  --features testutils -- --include-ignored
+```
+
+`AGENT_VAULT_WASM` is read at test runtime. An absent/unreadable path or the old
+fixture fails the explicitly requested Wasm tests; it never silently substitutes
+a stale fixture. Rebuild after changing contract source. The build script honors
+`CARGO_TARGET_DIR` (relative to the repository root) and prints the matching test
+command. Do not commit the generated current Wasm.
+
+The `contract-wasm` CI job builds the release target with Rust 1.94.1 and the
+locked dependencies, enforces a **65,536-byte** budget (below Soroban's 128 KiB
+contract-code ceiling), prints the byte size and SHA-256 in its job summary, runs
+all tests against those bytes, and uploads `agent-vault-wasm-<commit>` for 90 days.
+The artifact contains the Wasm, a `.wasm.sha256` checksum file and `.wasm.json`
+metadata (commit, dirty-worktree flag, compiler, target, profile, size and hash).
+For pull requests the commit is GitHub's tested merge commit; a push to `main`
+produces the deployment artifact for that exact main commit. See the
+[upgrade runbook](../docs/MAINNET_DEPLOYMENT.md#timelocked-wasm-upgrade-runbook)
+for verification before proposing an upgrade.
 
 Build and deploy the contract:
 

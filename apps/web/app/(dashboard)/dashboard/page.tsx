@@ -1,12 +1,13 @@
-import type { Metadata } from 'next'
+import { pageMetadata } from '@/lib/metadata'
 import { networkLabel } from '@/lib/explorer'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
-  title: 'Dashboard',
-  description: `Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar ${networkLabel()}.`,
-}
+export const metadata = pageMetadata(
+  'Dashboard',
+  `Live view of RouteDock payment sessions, transactions, and voucher activity on Stellar ${networkLabel()}.`,
+  '/dashboard',
+)
 
 import { getSupabaseServerClient, SESSION_COLUMNS } from '@/lib/supabase'
 import { DashboardHeader } from '@/components/layout/DashboardHeader'

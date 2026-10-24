@@ -1,0 +1,60 @@
+diff --git a/dist/axios.js b/dist/axios.js
+index 96d843841298d5a5c1c5a48a8d28f8bd274e437b..ee418b89f379f88996669e9a3d356f698a0735e6 100644
+--- a/dist/axios.js
++++ b/dist/axios.js
+@@ -4367,7 +4367,6 @@
+ 
+   var DEFAULT_CHUNK_SIZE = 64 * 1024;
+   var DEFAULT_REQUEST_OPTIONS = {
+-    cache: 'default',
+     redirect: 'follow',
+     referrer: 'about:client',
+     referrerPolicy: '',
+diff --git a/dist/browser/axios.cjs b/dist/browser/axios.cjs
+index 9b10fc398b7eceedd525f367d6aafed33af3b761..f7a80c1cab9f4f47dde276158a49c2559c6e5194 100644
+--- a/dist/browser/axios.cjs
++++ b/dist/browser/axios.cjs
+@@ -4218,7 +4218,6 @@ const VERSION = "1.20.0";
+ const DEFAULT_CHUNK_SIZE = 64 * 1024;
+ 
+ const DEFAULT_REQUEST_OPTIONS = {
+-  cache: 'default',
+   redirect: 'follow',
+   referrer: 'about:client',
+   referrerPolicy: '',
+diff --git a/dist/esm/axios.js b/dist/esm/axios.js
+index 1d7d2e039d1477d595eb70b23241009036d5e19a..759f1a91e0d4946e448a965d9156c29f6a2510e4 100644
+--- a/dist/esm/axios.js
++++ b/dist/esm/axios.js
+@@ -4216,7 +4216,6 @@ const VERSION$1 = "1.20.0";
+ const DEFAULT_CHUNK_SIZE = 64 * 1024;
+ 
+ const DEFAULT_REQUEST_OPTIONS = {
+-  cache: 'default',
+   redirect: 'follow',
+   referrer: 'about:client',
+   referrerPolicy: '',
+diff --git a/dist/node/axios.cjs b/dist/node/axios.cjs
+index 5ed2c86d31510a4784cc9c0e591ff4ba18afe2bf..50d5126751ab68cc5c3b365156090595f343446e 100644
+--- a/dist/node/axios.cjs
++++ b/dist/node/axios.cjs
+@@ -5538,7 +5538,6 @@ const trackStream = (stream, chunkSize, onProgress, onFinish) => {
+ 
+ const DEFAULT_CHUNK_SIZE = 64 * 1024;
+ const DEFAULT_REQUEST_OPTIONS = {
+-  cache: 'default',
+   redirect: 'follow',
+   referrer: 'about:client',
+   referrerPolicy: '',
+diff --git a/lib/adapters/fetch.js b/lib/adapters/fetch.js
+index b1069c70a90f212b1c954d31d02a616d3b131fd0..01fd60c25470aea95a977a5c2b2587bb3812610f 100644
+--- a/lib/adapters/fetch.js
++++ b/lib/adapters/fetch.js
+@@ -18,7 +18,6 @@ import { toByteStringHeaderObject } from '../helpers/sanitizeHeaderValue.js';
+ const DEFAULT_CHUNK_SIZE = 64 * 1024;
+ 
+ const DEFAULT_REQUEST_OPTIONS = {
+-  cache: 'default',
+   redirect: 'follow',
+   referrer: 'about:client',
+   referrerPolicy: '',

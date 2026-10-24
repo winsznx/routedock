@@ -162,6 +162,8 @@ In all adapters, `asset` and `assetContract` middleware options are optional whe
 
 - **`client.preflight(manifest, mode?, endpoint?)`**:
   Selects the eligible asset for `mode` and `endpoint` and runs the trustline preflight against that asset. Native assets like `XLM` are verified against the account's native balance. If no asset is eligible for the specified mode/endpoint, `preflight()` throws a `RouteDockManifestError` rather than silently falling back to the root asset.
+- **`client.preflight(url)`**:
+  Fetches and validates the provider manifest, then returns the supported `modes`, an estimated `costs` entry per mode (amount, billing unit, selected asset, and `min_deposit` for session modes), and `compliance` flags (`deprecated_modes`, manifest `sunset_at`, and `endpoint_deprecated` / `endpoint_sunset_at` for the URL path). It moves no money and does not check the payer's trustline. Throws the same manifest errors as `pay()` and `estimateCost()` for unreachable, invalid, or sunset manifests and endpoints.
 - **`client.pay(url, options?)`**:
   Resolves mode and endpoint, selects the eligible asset via `selectAsset(manifest, mode, url)`, verifies the trustline, and executes payment. Throws `RouteDockManifestError` if no eligible asset is configured.
 - **`client.estimateCost(url, options?)`**:

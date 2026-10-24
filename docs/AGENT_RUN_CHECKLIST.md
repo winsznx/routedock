@@ -80,7 +80,7 @@ cp agent/.env.example agent/.env
 
 Required values in each:
 - `apps/provider-a/.dev.vars`: `STELLAR_PAYEE_SECRET`, `STELLAR_PAYEE_ADDRESS`, `OPENZEPPELIN_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
-- `apps/provider-b/.dev.vars`: Same + `CHANNEL_CONTRACT_ID`, `COMMITMENT_PUBLIC_KEY`
+- `apps/provider-b/.dev.vars`: Same + `CHANNEL_CONTRACT_ID`, `COMMITMENT_PUBLIC_KEY`, `AGENT_VAULT_CONTRACT_ID` *(optional — records `session_settled` on the vault after each clean mpp-session close)*
 - `agent/.env`: `AGENT_SECRET`, `AGENT_VAULT_CONTRACT_ID`, `PROVIDER_A_URL`, `PROVIDER_B_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`
 
 ---

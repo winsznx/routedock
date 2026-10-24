@@ -27,6 +27,7 @@ cp apps/provider-b/.dev.vars.example apps/provider-b/.dev.vars
   - `CHANNEL_CONTRACT_ID`: Deployed state channel contract ID.
   - `COMMITMENT_PUBLIC_KEY`: Commitment signer public key (*required; the `ChannelSession` Durable Object throws without it*).
   - `USDC_ASSET_CONTRACT`: Address of the USDC asset contract on the target network. (*Note: Not in `.dev.vars.example`; add this before bulk upload.*)
+  - `AGENT_VAULT_CONTRACT_ID` *(optional)*: Agent vault contract (C...) that records `session_settled` after each clean mpp-session close. Omit to skip the vault audit trail.
   - `SUPABASE_URL` *(optional)*: Database URL if using the registry.
   - `SUPABASE_SERVICE_KEY` *(optional)*: Service key for Supabase registry access.
 

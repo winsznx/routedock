@@ -19,7 +19,7 @@ export function MetricCard({ label, value, sublabel, icon, live }: MetricCardPro
           {icon}
           {live && (
             <span
-              className="h-2 w-2 rounded-full bg-[var(--status-success)] animate-pulse"
+              className="h-2 w-2 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse"
               aria-hidden="true"
             />
           )}

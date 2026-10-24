@@ -35,7 +35,7 @@ export function PublicFooter() {
           </div>
 
           {/* Links */}
-          <nav className="flex flex-wrap gap-x-6 gap-y-2">
+          <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2">
             {links.map((link) => (
               <a
                 key={link.label}

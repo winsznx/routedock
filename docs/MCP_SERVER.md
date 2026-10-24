@@ -121,6 +121,7 @@ Add to `claude_desktop_config.json`:
       "env": {
         "STELLAR_SECRET": "S...",
         "STELLAR_NETWORK": "testnet",
+        "ROUTEDOCK_DAILY_CAP": "10",
         "COMMITMENT_SECRET": "S...",
         "SUPABASE_URL": "https://...",
         "SUPABASE_KEY": "..."
@@ -160,11 +161,18 @@ All tools return structured error responses:
 
 ### Environment Variables
 
-- `STELLAR_SECRET`: Required - Wallet secret key
-- `STELLAR_NETWORK`: Required - "testnet" or "mainnet"
-- `COMMITMENT_SECRET`: Optional - For session mode
-- `SUPABASE_URL`: Optional - For provider registry
-- `SUPABASE_KEY`: Optional - For provider registry
+- `STELLAR_SECRET`: Required - Wallet secret key (can also be provided via `ROUTEDOCK_WALLET_SECRET`).
+- `STELLAR_NETWORK`: Optional - Stellar network to use. Allowed values:
+  - `"testnet"` (default)
+  - `"mainnet"`
+  - `"pubnet"` or `"public"` (accepted as aliases for `"mainnet"` with a warning)
+  Any other value will cause the server to exit immediately with an error naming the allowed values.
+- `ROUTEDOCK_DAILY_CAP`: Required - Maximum daily spend in USDC to prevent unbounded spending (e.g. `"10"`).
+- `COMMITMENT_SECRET`: Optional - Wallet secret for opening payment channels in session mode.
+- `SUPABASE_URL`: Optional - Supabase project URL for the provider registry.
+- `SUPABASE_KEY`: Optional - Supabase anon key for the provider registry (use anon key, not service-role key).
+- `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Custom path for the spend tracking file (defaults to `~/.routedock/spend.json`).
+- `ROUTEDOCK_ENV_FILE`: Optional - Path to an external `.env` file to load secrets from.
 
 ### Security
 

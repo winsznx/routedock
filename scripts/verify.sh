@@ -34,10 +34,17 @@ pnpm install --frozen-lockfile --prefer-offline >/dev/null 2>&1 \
   || fail "pnpm-lock.yaml is out of date with a package.json. Run 'pnpm install' at the root and commit the lockfile."
 echo "  ok"
 
-step "no references to the unpublished package name"
-if git grep -n '@routedock/[s]dk' -- ':!pnpm-lock.yaml' ':!*CHANGELOG.md' ':!.changeset'; then
-  fail "found the old SDK package name. The package is published as @routedock/routedock."
+step "no legacy package name references"
+# The package is published as @routedock/routedock. The old unpublised name
+# (the one with "sdk" as the last path segment) does not exist on npm, so any
+# copy-paste from it fails. The [d] keeps this guard from matching itself.
+# CHANGELOG.md and MIGRATION.md keep historical references.
+if grep -rn "@routedock/s[d]k" \
+    --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+    --exclude=CHANGELOG.md --exclude=MIGRATION.md .; then
+  fail "Found legacy @routedock/s[d]k references (use @routedock/routedock instead)"
 fi
+echo "  ok"
 
 step "build sdk packages"
 pnpm --filter @routedock/nulth-sdk build >/dev/null || fail "@routedock/nulth-sdk failed to build"
@@ -48,6 +55,9 @@ step "runtime-neutral bundles"
 # client, react and provider/hono must not reach node:* built-ins or Buffer.
 node scripts/check-runtime-neutral.mjs --self-test >/dev/null && node scripts/check-runtime-neutral.mjs \
   || fail "a runtime-neutral entry imports a Node built-in or Buffer (see above)"
+
+step "typecheck Nulth README examples"
+pnpm --filter @routedock/nulth-sdk check:readme || fail "Nulth README examples do not typecheck"
 
 step "typecheck all packages"
 pnpm -r typecheck || fail "typecheck failed"

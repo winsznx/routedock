@@ -68,7 +68,8 @@ export default {
 
     console.log(
       `[reconcile] orphaned=${stats.orphanedCount} recovered=${stats.recoveredCount} ` +
-        `skipped=${stats.skippedCount} failed=${stats.failedCount}`,
+        `skipped=${stats.skippedCount} failed=${stats.failedCount} ` +
+        `already_closed=${stats.alreadyClosedCount} terminal=${stats.terminalCount}`,
     )
     for (const { channelId, reason } of stats.errors) {
       console.error(`[reconcile] close failed for ${channelId}: ${reason}`)

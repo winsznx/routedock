@@ -118,6 +118,7 @@ function closingSession(
     payee: payeeKeypair.publicKey(),
     status: 'closing',
     updated_at: '2026-01-01T00:00:00.000Z',
+    reconcile_attempts: 0,
     ...overrides,
   }
 }
@@ -271,4 +272,136 @@ test('reconcileAbandonedSessions recovers closing session to closed with settlem
   assert.equal(store[0]?.status, 'closed')
   assert.equal(store[0]?.settlement_tx_hash, 'test_settlement_tx_hash_123')
   assert.equal(onRecoveredCalled, true)
+})
+
+test('reconcileAbandonedSessions failure increments attempts, stores the error, and bumps updated_at', async () => {
+  const payeeKeypair = Keypair.random()
+  const { supabase, store } = makeSupabaseMock([closingSession(payeeKeypair)])
+
+  const stats = await reconcileAbandonedSessions({
+    supabase,
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async () => {
+      throw new Error('bad signature')
+    },
+  })
+
+  assert.equal(stats.failedCount, 1)
+  assert.equal(stats.terminalCount, 0)
+  assert.equal(store[0]?.status, 'closing')
+  assert.equal(store[0]?.reconcile_attempts, 1)
+  assert.equal(store[0]?.last_reconcile_error, 'bad signature')
+  assert.ok(String(store[0]?.updated_at) > '2026-01-01T00:00:00.000Z')
+})
+
+test('reconcileAbandonedSessions moves a row to failed after the attempt limit and stops retrying', async () => {
+  const payeeKeypair = Keypair.random()
+  const { supabase, store } = makeSupabaseMock([closingSession(payeeKeypair)])
+  let closeCalls = 0
+  const opts = {
+    supabase,
+    network: 'testnet' as const,
+    payeeSecretKey: payeeKeypair.secret(),
+    maxReconcileAttempts: 3,
+    channelClose: async () => {
+      closeCalls++
+      throw new Error('bad signature')
+    },
+  }
+
+  const terminalCounts: number[] = []
+  for (let run = 0; run < 3; run++) {
+    terminalCounts.push((await reconcileAbandonedSessions(opts)).terminalCount)
+  }
+
+  assert.deepEqual(terminalCounts, [0, 0, 1])
+  assert.equal(store[0]?.status, 'failed')
+  assert.equal(store[0]?.reconcile_attempts, 3)
+
+  const after = await reconcileAbandonedSessions(opts)
+  assert.equal(after.orphanedCount, 0)
+  assert.equal(closeCalls, 3)
+})
+
+test('reconcileAbandonedSessions defaults the attempt limit to 5', async () => {
+  const payeeKeypair = Keypair.random()
+  const { supabase, store } = makeSupabaseMock([closingSession(payeeKeypair)])
+  const opts = {
+    supabase,
+    network: 'testnet' as const,
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async (): Promise<string> => {
+      throw new Error('bad signature')
+    },
+  }
+
+  for (let run = 0; run < 4; run++) await reconcileAbandonedSessions(opts)
+  assert.equal(store[0]?.status, 'closing')
+  const last = await reconcileAbandonedSessions(opts)
+  assert.equal(last.terminalCount, 1)
+  assert.equal(store[0]?.status, 'failed')
+})
+
+test('100 dead rows no longer block a fresh recoverable row', async () => {
+  const payeeKeypair = Keypair.random()
+  const deadRows = Array.from({ length: 100 }, (_, i) =>
+    closingSession(payeeKeypair, {
+      channel_id: `CDEAD${String(i).padStart(3, '0')}`,
+      channel_contract: `CDEAD${String(i).padStart(3, '0')}`,
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }),
+  )
+  const fresh = closingSession(payeeKeypair, {
+    channel_id: 'CFRESH',
+    channel_contract: 'CFRESH',
+    updated_at: '2026-01-02T00:00:00.000Z',
+  })
+  const { supabase, store } = makeSupabaseMock([...deadRows, fresh])
+  const attempted: string[] = []
+  const opts = {
+    supabase,
+    network: 'testnet' as const,
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async ({ channel }: { channel: string }): Promise<string> => {
+      attempted.push(channel)
+      if (channel.startsWith('CDEAD')) throw new Error('bad signature')
+      return 'fresh-tx'
+    },
+  }
+
+  const first = await reconcileAbandonedSessions(opts)
+  assert.equal(first.orphanedCount, 100)
+  assert.ok(!attempted.includes('CFRESH'))
+
+  const second = await reconcileAbandonedSessions(opts)
+  assert.ok(attempted.includes('CFRESH'))
+  assert.equal(second.recoveredCount, 1)
+  assert.equal(store.find((row) => row.channel_id === 'CFRESH')?.status, 'closed')
+})
+
+test('reconcileAbandonedSessions marks a row closed when the channel is already closed on-chain', async () => {
+  const payeeKeypair = Keypair.random()
+  const { supabase, store } = makeSupabaseMock([closingSession(payeeKeypair)])
+  let recovered = false
+
+  const stats = await reconcileAbandonedSessions({
+    supabase,
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async () => {
+      throw new Error('channel has been closed')
+    },
+    onRecovered: async () => {
+      recovered = true
+    },
+  })
+
+  assert.equal(stats.alreadyClosedCount, 1)
+  assert.equal(stats.failedCount, 0)
+  assert.equal(stats.recoveredCount, 0)
+  assert.equal(stats.terminalCount, 0)
+  assert.equal(recovered, false)
+  assert.equal(store[0]?.status, 'closed')
+  assert.match(String(store[0]?.last_reconcile_error), /already closed/)
 })

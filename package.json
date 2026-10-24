@@ -8,7 +8,7 @@
     "lint": "pnpm -r lint",
     "stress:test": "pnpm --filter agent stress",
     "version": "changeset version",
-    "release": "pnpm run release:build && changeset publish",
+    "release": "pnpm run release:build && bash scripts/check-pack.sh && changeset publish",
     "release:build": "pnpm --filter @routedock/nulth-sdk build && pnpm --filter @routedock/routedock build && pnpm --filter @routedock/mcp-server build",
     "check:runtime": "node scripts/check-runtime-neutral.mjs",
     "verify": "bash scripts/verify.sh",
@@ -25,5 +25,15 @@
   "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22"
+  },
+  "pnpm": {
+    "overrides": {
+      "axios@>=1.0.0 <1.20.0": "^1.20.0",
+      "@x402/stellar": "2.9.0",
+      "@x402/core": "2.9.0"
+    },
+    "patchedDependencies": {
+      "axios@1.20.0": "patches/axios@1.20.0.patch"
+    }
   }
 }

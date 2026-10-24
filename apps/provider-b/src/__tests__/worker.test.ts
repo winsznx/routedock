@@ -154,7 +154,7 @@ describe('provider-b worker payment path & Durable Object routes', () => {
   })
 
   describe('scheduled() reconciliation logging', () => {
-    const emptyStats = { orphanedCount: 0, recoveredCount: 0, skippedCount: 0, failedCount: 0, errors: [] }
+    const emptyStats = { orphanedCount: 0, recoveredCount: 0, skippedCount: 0, failedCount: 0, alreadyClosedCount: 0, terminalCount: 0, errors: [] }
 
     function cronEnv(reconcileSessions: () => Promise<unknown>): Env {
       const mockDOBinding = {
@@ -223,6 +223,14 @@ describe('provider-b worker payment path & Durable Object routes', () => {
       assert.match(first, /CCHANNELONE.*tx_bad_seq/)
       assert.match(second, /CCHANNELTWO.*tx_insufficient_fee/)
       assert.equal(spies.warn.mock.callCount(), 0)
+    })
+
+    it('logs the count of rows moved to the terminal state', async () => {
+      const spies = spyOnConsole()
+
+      await worker.scheduled({}, cronEnv(async () => ({ ...emptyStats, orphanedCount: 1, failedCount: 1, terminalCount: 1, errors: [{ channelId: 'C1', reason: 'boom' }] })))
+
+      assert.match(onlyLine(loggedText(spies.log)), /terminal=1/)
     })
 
     it('logs the summary as a heartbeat when nothing was orphaned', async () => {

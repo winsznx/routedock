@@ -1,12 +1,14 @@
-import type { Metadata } from 'next'
+import { pageMetadata } from '@/lib/metadata'
 import Link from 'next/link'
 import { ArrowLeft, Package, Server, Bot, Shield, Search, Terminal, type LucideIcon } from 'lucide-react'
+import { DocsSectionNav } from '@/components/layout/DocsSectionNav'
 import { DOCS_MANIFEST_EXAMPLE } from '@/lib/docsManifestExample'
 
-export const metadata: Metadata = {
-  title: 'Docs',
-  description: 'RouteDock SDK documentation — agent client, provider middleware, manifest standard, and contract account policies.',
-}
+export const metadata = pageMetadata(
+  'Docs',
+  'RouteDock SDK documentation — agent client, provider middleware, manifest standard, and contract account policies.',
+  '/docs',
+)
 
 function Section({ id, icon: Icon, title, children }: { id: string; icon: LucideIcon; title: string; children: React.ReactNode }) {
   return (
@@ -60,24 +62,10 @@ export default function DocsPage() {
         </div>
 
         <div className="lg:grid lg:grid-cols-[220px_1fr] lg:gap-12">
-          {/* Sidebar nav */}
-          <nav className="hidden lg:block sticky top-24 self-start">
-            <ul className="space-y-1">
-              {NAV.map((item) => (
-                <li key={item.id}>
-                  <a
-                    href={`#${item.id}`}
-                    className="block rounded-md px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
-                  >
-                    {item.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <DocsSectionNav sections={NAV} />
 
           {/* Content */}
-          <div className="space-y-16">
+          <div className="min-w-0 space-y-16">
             <div>
               <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Documentation</h1>
               <p className="text-[var(--text-secondary)]">
@@ -280,17 +268,36 @@ fastify.get('/price', async () => ({ price: '0.199', pair: 'XLM/USDC' }))`}</Cod
             <Section id="contract-account" icon={Shield} title="Contract Account (Agent Vault)">
               <p>
                 The agent vault at <InlineCode>contracts/agent-vault/</InlineCode> uses the
-                Crossmint <InlineCode>stellar-smart-account</InlineCode> pattern. Three policies run
+                Crossmint <InlineCode>stellar-smart-account</InlineCode> pattern. Five policies run
                 inside <InlineCode>__check_auth</InlineCode>:
               </p>
               <ul className="list-disc list-inside space-y-2 pl-1">
-                <li><strong>Daily cap</strong> — rejects if <InlineCode>current_day_spend + amount {'>'} daily_cap</InlineCode></li>
+                <li><strong>Daily cap</strong> — limits total spend per 17,280-ledger day bucket</li>
                 <li><strong>Endpoint allowlist</strong> — rejects transfers to addresses not in the stored allowlist</li>
                 <li><strong>Session key expiry</strong> — rejects if the current ledger exceeds the expiry ledger</li>
+                <li><strong>Per-payee daily sub-cap</strong> — limits spend to each allowlisted payee within the same day bucket</li>
+                <li><strong>Lifetime cap</strong> — limits cumulative spend across day buckets; <InlineCode>0</InlineCode> means unlimited</li>
+                <li><strong>Freeze switch</strong> — rejects payment authorization with <InlineCode>ContractFrozen</InlineCode> while frozen</li>
+                <li><strong>Default deny</strong> — rejects every authorization context other than a <InlineCode>transfer</InlineCode> call with <InlineCode>UnauthorizedFunction</InlineCode></li>
               </ul>
               <p className="mt-3">
-                These are consensus-layer guarantees — Soroban rejects the transaction before broadcast.
-                The agent cannot overspend even if the SDK is compromised.
+                The admin can rotate the agent key, extend or change expiry, change caps and the
+                allowlist, and freeze or unfreeze the vault. Upgrades use <InlineCode>propose_upgrade</InlineCode>,{' '}
+                <InlineCode>execute_upgrade</InlineCode>, and <InlineCode>cancel_upgrade</InlineCode>,
+                with a 17,280-ledger timelock before execution. Operators should monitor{' '}
+                <InlineCode>upgrade_proposed</InlineCode> and protect the admin key.
+              </p>
+              <p className="mt-3">
+                Policies are checked in <InlineCode>__check_auth</InlineCode> during simulation and
+                on-chain execution. A transaction that violates them fails; skipping simulation can
+                still submit a failing transaction and incur a fee. These checks depend on the
+                configured policies and a safe admin key. The current transfer check does not bind
+                the token contract or require <InlineCode>from</InlineCode> to be the vault
+                (tracked in <a href="https://github.com/winsznx/routedock/issues/334" className="underline">#334</a>).
+              </p>
+              <p className="mt-3">
+                See the <a href="https://github.com/winsznx/routedock/blob/main/contracts/README.md" className="underline">contract README</a> for
+                constructor arguments, amount units, and deployment details.
               </p>
             </Section>
 

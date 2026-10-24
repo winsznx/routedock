@@ -1,8 +1,4 @@
-export const dynamic = 'force-dynamic'
-
 import { Zap, Repeat2, Waves, Radio, GitBranch, Timer, Shield } from 'lucide-react'
-import { getSupabaseServerClient } from '@/lib/supabase'
-import type { TxLogEntry } from '@/lib/supabase'
 import { PublicNav } from '@/components/layout/PublicNav'
 import { PublicFooter } from '@/components/layout/PublicFooter'
 import { HeroCodeBlock } from '@/components/landing/HeroCodeBlock'
@@ -10,31 +6,9 @@ import { ModeCard } from '@/components/landing/ModeCard'
 import { LiveFeed } from '@/components/landing/LiveFeed'
 import { FadeInUp } from '@/components/landing/FadeInUp'
 
-async function fetchInitialFeed(): Promise<TxLogEntry[]> {
-  try {
-    const supabase = getSupabaseServerClient()
-    const { data, error } = await supabase
-      .from('tx_log')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5)
-
-    if (error) {
-      console.error('[landing] failed to load tx_log:', error.message)
-    }
-    return (data ?? []) as TxLogEntry[]
-  } catch (err) {
-    console.error(
-      '[landing] failed to load tx_log:',
-      err instanceof Error ? err.message : String(err),
-    )
-    return []
-  }
-}
-
-export default async function LandingPage() {
-  const initialFeed = await fetchInitialFeed()
-
+// Rendered statically. LiveFeed loads and polls tx_log in the browser, so the
+// page needs no server-side Supabase query and its TTFB doesn't depend on it.
+export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)]">
       <PublicNav />
@@ -281,7 +255,7 @@ export default async function LandingPage() {
             </p>
           </FadeInUp>
           <FadeInUp delay={0.06}>
-            <LiveFeed initialEntries={initialFeed} />
+            <LiveFeed />
           </FadeInUp>
         </div>
       </section>

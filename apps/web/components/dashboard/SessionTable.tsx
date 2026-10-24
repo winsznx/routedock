@@ -9,12 +9,13 @@ import { TxHashLink } from '@/components/shared/TxHashLink'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-type StatusVariant = 'success' | 'warning' | 'neutral'
+type StatusVariant = 'success' | 'warning' | 'neutral' | 'error'
 
 const STATUS_VARIANT: Record<Session['status'], StatusVariant> = {
   open: 'success',
   closing: 'warning',
   closed: 'neutral',
+  failed: 'error',
 }
 
 interface SessionTableProps {
@@ -133,7 +134,7 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1.5">
                       {session.status === 'open' && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
                       )}
                       <Badge variant={STATUS_VARIANT[session.status]}>
                         {session.status}

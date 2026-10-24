@@ -11,7 +11,7 @@ export function DashboardHeader() {
               Route<span className="text-[var(--accent)]">Dock</span>
             </span>
             <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-[var(--status-success)]/30 bg-[var(--status-success)]/10 px-2.5 py-0.5 text-xs font-medium text-[var(--status-success)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
               {networkLabel()} Live
             </span>
           </div>

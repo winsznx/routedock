@@ -4,7 +4,7 @@ import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
-import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult } from '../types.js'
+import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
@@ -276,16 +276,33 @@ export class RouteDockClient {
   }
 
   /**
-   * Check that the payer has a trustline for the payment asset and surface
-   * manifest metadata (regions, latency hints, capabilities). Safe to
-   * call before committing to a payment — for approval gates and manual
-   * trustline remediation.
+   * Check a provider before committing to a payment. Neither form submits a
+   * transaction or moves money.
+   *
+   * - `preflight(url)` fetches and validates the provider's manifest and
+   *   returns the supported modes, the estimated cost per mode, and
+   *   deprecation/sunset flags. It does not check the payer's trustline.
+   *   Throws the same manifest errors as `pay()` / `estimateCost()` when the
+   *   manifest is unreachable, invalid, unsupported by this SDK version, or
+   *   sunset (including a sunset endpoint matching the URL path).
+   * - `preflight(manifest, mode?, endpoint?)` checks that the payer has a
+   *   trustline for the payment asset and surfaces manifest metadata
+   *   (regions, latency hints, capabilities). For approval gates and manual
+   *   trustline remediation.
    */
-  async preflight(
+  preflight(url: string): Promise<UrlPreflightResult>
+  preflight(
     manifest: RouteDockManifest,
     mode?: PaymentMode,
     endpoint?: string,
-  ): Promise<PreflightResult> {
+  ): Promise<PreflightResult>
+  async preflight(
+    target: string | RouteDockManifest,
+    mode?: PaymentMode,
+    endpoint?: string,
+  ): Promise<PreflightResult | UrlPreflightResult> {
+    if (typeof target === 'string') return this._preflightUrl(target)
+    const manifest = target
     assertManifestValid(manifest)
     const selectedAsset = mode
       ? selectAsset(manifest, mode, endpoint).asset
@@ -298,6 +315,49 @@ export class RouteDockClient {
       ...(manifest.regions && { regions: manifest.regions }),
       ...(manifest.latency_hints && { latency_hints: manifest.latency_hints }),
       ...(manifest.capabilities && { capabilities: manifest.capabilities }),
+    }
+  }
+
+  /** Manifest-only preflight for a URL — no trustline check, no payment. */
+  private async _preflightUrl(url: string): Promise<UrlPreflightResult> {
+    const baseUrl = new URL(url).origin
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    assertEndpointActive(manifest, url)
+
+    const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
+      const asset = selectAsset(manifest, mode, url).asset
+      switch (mode) {
+        case 'x402':
+        case 'mpp-charge': {
+          const pricing = manifest.pricing[mode]!
+          return { mode, amount: pricing.amount, per: 'request', asset }
+        }
+        case 'mpp-session':
+        case 'mpp-session-ws': {
+          const pricing = manifest.pricing[mode]!
+          return { mode, amount: pricing.rate, per: 'voucher', asset, min_deposit: pricing.min_deposit }
+        }
+        default:
+          throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
+      }
+    })
+
+    const pathname = new URL(url).pathname
+    const matches = Object.values(manifest.endpoints).filter((descriptor) => descriptor.path === pathname)
+    const endpointSunsets = matches
+      .map((descriptor) => descriptor.sunset_at)
+      .filter((value): value is string => typeof value === 'string')
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+
+    return {
+      modes: manifest.modes,
+      costs,
+      compliance: {
+        deprecated_modes: manifest.deprecated_modes ?? [],
+        ...(manifest.sunset_at && { sunset_at: manifest.sunset_at }),
+        endpoint_deprecated: matches.some((descriptor) => descriptor.deprecated === true),
+        ...(endpointSunsets[0] && { endpoint_sunset_at: endpointSunsets[0] }),
+      },
     }
   }
 

@@ -2,6 +2,10 @@ STELLAR_PAYEE_SECRET="S..."           # throwaway testnet secret key
 STELLAR_PAYEE_ADDRESS="G..."          # its public key
 CHANNEL_CONTRACT_ID="C..."            # deployed channel contract
 COMMITMENT_PUBLIC_KEY="G..."          # commitment signer public key
+# Optional — omit to skip the vault audit trail. When set, the provider
+# records session_settled on this agent vault after each clean mpp-session
+# close (same variable the deployment docs use).
+AGENT_VAULT_CONTRACT_ID=""
 # Optional on testnet, where it falls back to the testnet USDC SAC.
 # Required on mainnet (STELLAR_NETWORK=mainnet) — the provider refuses to
 # serve without it.

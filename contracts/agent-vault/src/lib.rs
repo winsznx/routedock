@@ -663,21 +663,59 @@ mod tests {
 
     // Use ed25519-dalek for signing in tests (same pattern as Crossmint/stellar-smart-account)
     extern crate std;
+    use std::cell::Cell;
     use ed25519_dalek::{Signer as _, SigningKey};
-    use rand::rngs::OsRng;
+    use rand::{rngs::StdRng, SeedableRng};
 
-    // Built with:
-    //   cargo build --manifest-path contracts/agent-vault/Cargo.toml \
-    //     --target wasm32v1-none --release
-    // Not wasm32-unknown-unknown: on Rust 1.94 that target emits
-    // reference-types, which the soroban-env-host 22 test VM rejects on
-    // upload with "reference-types not enabled: zero byte expected".
-    const VAULT_WASM: &[u8] = include_bytes!("../testdata/agent_vault.wasm");
+    /// Per-test-thread counter for key seeds. Snapshot files record the agent
+    /// public key, so a fresh `OsRng` key on every run rewrote every committed
+    /// `test_snapshots/tests/*.json` (#551).
+    ///
+    /// Seeding must not depend on the order tests happen to run in: the test
+    /// harness executes them on parallel threads, so a process-wide counter
+    /// hands a different ordinal to a given test from run to run and the
+    /// snapshots drift again. The seed combines the test thread's name (the
+    /// harness names it after the test) with a thread-local ordinal, which
+    /// keeps keys distinct within a test and identical across runs.
+    std::thread_local! {
+        static KEY_SEED_COUNTER: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Build the next deterministic seed for the current test.
+    fn next_key_seed() -> u64 {
+        let ordinal = KEY_SEED_COUNTER.with(|counter| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            next
+        });
+
+        // FNV-1a over the current test's name.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        if let Some(name) = std::thread::current().name() {
+            for byte in name.as_bytes() {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+
+        hash ^ ordinal.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+    }
 
     fn gen_keypair(env: &Env) -> (SigningKey, BytesN<32>) {
-        let sk = SigningKey::generate(&mut OsRng);
+        let mut rng = StdRng::seed_from_u64(next_key_seed());
+        let sk = SigningKey::generate(&mut rng);
         let pk = BytesN::<32>::from_array(env, &sk.verifying_key().to_bytes());
         (sk, pk)
+    }
+
+    /// A fixed 32-byte value for tests that need a hash-like argument.
+    ///
+    /// `BytesN::random` draws from the env RNG, whose output differs between
+    /// runs. Any random value that ends up in recorded auth args therefore
+    /// makes the committed snapshot drift — the same failure mode #551 fixed
+    /// for the agent key.
+    fn fixed_hash(env: &Env, tag: u8) -> BytesN<32> {
+        BytesN::from_array(env, &[tag; 32])
     }
 
     fn sign_payload(env: &Env, sk: &SigningKey, payload: &BytesN<32>) -> BytesN<64> {
@@ -2309,7 +2347,7 @@ mod tests {
         assert_eq!(client.pending_upgrade(), None);
         assert_eq!(client.upgrade_timelock_ledgers(), UPGRADE_TIMELOCK_LEDGERS);
 
-        let new_wasm_hash = BytesN::<32>::random(&env);
+        let new_wasm_hash = fixed_hash(&env, 1);
         client.propose_upgrade(&new_wasm_hash);
 
         let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
@@ -2336,11 +2374,11 @@ mod tests {
         env.mock_all_auths();
         env.ledger().set_sequence_number(1_000);
 
-        let old_hash = BytesN::<32>::random(&env);
+        let old_hash = fixed_hash(&env, 1);
         client.propose_upgrade(&old_hash);
         env.ledger().set_sequence_number(2_000);
 
-        let new_hash = BytesN::<32>::random(&env);
+        let new_hash = fixed_hash(&env, 2);
         client.propose_upgrade(&new_hash);
 
         assert_eq!(
@@ -2356,7 +2394,7 @@ mod tests {
         let (client, _agent_sk, vault_id, _provider_a) = setup(&env);
         env.mock_all_auths();
         env.ledger().set_sequence_number(1_000);
-        let new_wasm_hash = BytesN::<32>::random(&env);
+        let new_wasm_hash = fixed_hash(&env, 1);
         client.propose_upgrade(&new_wasm_hash);
 
         let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
@@ -2434,7 +2472,7 @@ mod tests {
         let (client, _agent_sk, vault_id, _provider_a) = setup(&env);
         env.mock_all_auths();
         env.ledger().set_sequence_number(1_000);
-        let missing_hash = BytesN::<32>::random(&env);
+        let missing_hash = fixed_hash(&env, 0xee);
         client.propose_upgrade(&missing_hash);
 
         env.ledger()
@@ -2471,7 +2509,7 @@ mod tests {
         let (client, _agent_sk, _vault_id, _provider_a) = setup(&env);
         env.mock_all_auths();
         env.ledger().set_sequence_number(1_000);
-        let new_wasm_hash = BytesN::<32>::random(&env);
+        let new_wasm_hash = fixed_hash(&env, 1);
         let ready_at_ledger = 1_000 + UPGRADE_TIMELOCK_LEDGERS;
         client.propose_upgrade(&new_wasm_hash);
 
@@ -2527,7 +2565,7 @@ mod tests {
         let client = AgentVaultClient::new(&env, &vault_id);
 
         let non_admin = Address::generate(&env);
-        let new_wasm_hash = env.deployer().upload_contract_wasm(VAULT_WASM);
+        let new_wasm_hash = fixed_hash(&env, 1);
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
             address: &non_admin,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -2560,7 +2598,7 @@ mod tests {
         );
         let client = AgentVaultClient::new(&env, &vault_id);
         env.mock_all_auths();
-        client.propose_upgrade(&BytesN::<32>::random(&env));
+        client.propose_upgrade(&fixed_hash(&env, 1));
         env.ledger().set_sequence_number(UPGRADE_TIMELOCK_LEDGERS);
 
         let non_admin = Address::generate(&env);
@@ -2596,7 +2634,7 @@ mod tests {
         );
         let client = AgentVaultClient::new(&env, &vault_id);
         env.mock_all_auths();
-        client.propose_upgrade(&BytesN::<32>::random(&env));
+        client.propose_upgrade(&fixed_hash(&env, 1));
 
         let non_admin = Address::generate(&env);
         env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -2609,92 +2647,6 @@ mod tests {
             },
         }]);
         client.cancel_upgrade();
-    }
-
-    /// Test 40: executing a ready proposal by the admin swaps the wasm, emits
-    /// `upgraded` with the new hash, and leaves every other piece of instance
-    /// state untouched.
-    #[test]
-    fn test_execute_upgrade_by_admin_swaps_wasm_and_keeps_state() {
-        use soroban_sdk::testutils::Events;
-
-        let env = Env::default();
-        let (client, agent_sk, vault_id, provider_a) = setup_with_lifetime_cap(&env, 0);
-
-        // Make one successful payment so lifetime spend is non-zero before the upgrade.
-        let p = BytesN::<32>::random(&env);
-        let s = sign_payload(&env, &agent_sk, &p);
-        let c = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_500_000)]);
-        env.try_invoke_contract_check_auth::<Error>(&vault_id, &p, s.into_val(&env), &c)
-            .unwrap();
-        assert_eq!(client.get_lifetime_spend(), 1_500_000, "sanity: spend recorded before upgrade");
-
-        let admin: Address = env.as_contract(&vault_id, || {
-            env.storage().instance().get::<_, Address>(&ADMIN_KEY).unwrap()
-        });
-        let daily_cap_before = client.daily_cap();
-        let allowlist_before = client.allowlist();
-        let expiry_before = client.expiry_ledger();
-        let agent_pubkey_before = client.agent_pubkey();
-        let lifetime_spend_before = client.get_lifetime_spend();
-
-        // A Wasm code entry lives min_persistent_entry_ttl (4,096) ledgers by default,
-        // which is shorter than the 17,280-ledger notice period, so raise it to keep the
-        // target resident until execution. On-chain this is the bumpFootprint a deployer
-        // issues for the code entry during the notice period.
-        env.ledger()
-            .set_min_persistent_entry_ttl(UPGRADE_TIMELOCK_LEDGERS + 1);
-        let new_wasm_hash = env.deployer().upload_contract_wasm(VAULT_WASM);
-
-        env.mock_all_auths();
-        client.propose_upgrade(&new_wasm_hash);
-        let ready_at_ledger = env.ledger().sequence() + UPGRADE_TIMELOCK_LEDGERS;
-        assert_eq!(
-            client.pending_upgrade(),
-            Some((new_wasm_hash.clone(), ready_at_ledger)),
-        );
-
-        env.ledger().set_sequence_number(ready_at_ledger);
-        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-            address: &admin,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &vault_id,
-                fn_name: "execute_upgrade",
-                args: ().into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        client.execute_upgrade();
-
-        let evt = Symbol::new(&env, "upgraded");
-        let upgraded_events: std::vec::Vec<_> = env
-            .events()
-            .all()
-            .iter()
-            .filter(|(addr, topics, _)| {
-                *addr == vault_id
-                    && topics.get(0).map_or(false, |t| Symbol::from_val(&env, &t) == evt)
-            })
-            .collect();
-        assert_eq!(upgraded_events.len(), 1, "exactly one upgraded event expected");
-        let data_hash: BytesN<32> = upgraded_events[0].2.clone().into_val(&env);
-        assert_eq!(data_hash, new_wasm_hash, "event data should carry the uploaded hash");
-        // Read the storage slot directly: the fixture Wasm is the pre-timelock build, so
-        // it has no `pending_upgrade` entrypoint to call after the swap.
-        let pending_after: Option<(BytesN<32>, u32)> = env.as_contract(&vault_id, || {
-            env.storage().instance().get(&PENDING_UPGRADE_KEY)
-        });
-        assert_eq!(pending_after, None, "proposal must be cleared on execution");
-
-        assert_eq!(client.daily_cap(), daily_cap_before, "daily cap must survive the upgrade");
-        assert_eq!(client.allowlist(), allowlist_before, "allowlist must survive the upgrade");
-        assert_eq!(client.expiry_ledger(), expiry_before, "expiry must survive the upgrade");
-        assert_eq!(client.agent_pubkey(), agent_pubkey_before, "agent pubkey must survive the upgrade");
-        assert_eq!(client.get_lifetime_spend(), lifetime_spend_before, "lifetime spend must survive the upgrade");
-        let admin_after: Address = env.as_contract(&vault_id, || {
-            env.storage().instance().get::<_, Address>(&ADMIN_KEY).unwrap()
-        });
-        assert_eq!(admin_after, admin, "admin must survive the upgrade");
     }
 
     /// Test: admin extends expiry after it lapsed — payments succeed again.
@@ -3466,7 +3418,7 @@ mod tests {
             client.set_expiry(&2_000_000_u32)
         });
         assert_refreshes_instance_ttl(&env, &vault_id, "set_agent_pubkey", || {
-            client.set_agent_pubkey(&BytesN::<32>::random(&env))
+            client.set_agent_pubkey(&fixed_hash(&env, 0x7a))
         });
         assert_refreshes_instance_ttl(&env, &vault_id, "transfer_admin", || {
             client.transfer_admin(&new_admin)
@@ -3477,7 +3429,7 @@ mod tests {
         assert_refreshes_instance_ttl(&env, &vault_id, "freeze", || client.freeze());
         assert_refreshes_instance_ttl(&env, &vault_id, "unfreeze", || client.unfreeze());
         assert_refreshes_instance_ttl(&env, &vault_id, "propose_upgrade", || {
-            client.propose_upgrade(&BytesN::<32>::random(&env))
+            client.propose_upgrade(&fixed_hash(&env, 1))
         });
         assert_refreshes_instance_ttl(&env, &vault_id, "cancel_upgrade", || {
             client.cancel_upgrade()
@@ -3485,7 +3437,7 @@ mod tests {
         // Last: swapping the executable rewrites the instance entry, so
         // `execute_upgrade` is the one entrypoint that bumps after its work
         // rather than right after the auth check. An empty wasm is uploaded here
-        // rather than reusing the `VAULT_WASM` fixture: that fixture hashes to
+        // rather than reusing the previous-release fixture: that fixture hashes to
         // the same code key as the wasm this test's vault is already running, and
         // every case above advances the ledger 1.5M ledgers, which archives that
         // code entry, so a swap to it fails with `Error(Storage, InternalError)`.
@@ -3646,3 +3598,6 @@ mod prop_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod upgrade_tests;

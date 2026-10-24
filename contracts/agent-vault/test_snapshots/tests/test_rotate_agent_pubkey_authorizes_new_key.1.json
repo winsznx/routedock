@@ -16,7 +16,7 @@
               "function_name": "set_agent_pubkey",
               "args": [
                 {
-                  "bytes": "6be32a25a93476ac5a676748c10c97cfeff380214c3f5241dddae8f322f8780c"
+                  "bytes": "e3c37eff142d37e42ee314f3f045bfa71e0fdfa7916366e0d3a898fca8b88329"
                 }
               ]
             }
@@ -240,7 +240,7 @@
                           "symbol": "agentpk"
                         },
                         "val": {
-                          "bytes": "6be32a25a93476ac5a676748c10c97cfeff380214c3f5241dddae8f322f8780c"
+                          "bytes": "e3c37eff142d37e42ee314f3f045bfa71e0fdfa7916366e0d3a898fca8b88329"
                         }
                       },
                       {

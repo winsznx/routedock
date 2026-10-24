@@ -19,7 +19,7 @@ function createManifest(overrides: Partial<RouteDockManifest> = {}): RouteDockMa
     modes: ['x402', 'mpp-charge'],
     network: 'testnet',
     asset: 'USDC',
-    asset_contract: 'CTESTASSETCONTRACT',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     payee: signingKey.publicKey(),
     pricing: {
       x402: {
@@ -87,14 +87,14 @@ function startManifestServer(
       'mpp-session': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },
       'mpp-session-ws': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },
@@ -112,7 +112,7 @@ function startManifestServer(
       'mpp-session': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },
@@ -130,7 +130,7 @@ function startManifestServer(
       'mpp-session-ws': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },
@@ -147,7 +147,7 @@ function startManifestServer(
       'mpp-session-ws': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },
@@ -176,7 +176,7 @@ function startManifestServer(
       'mpp-session': {
         rate: '0.001',
         per: 'voucher',
-        channel_factory: 'CTESTCHANNELFACTORY',
+        channel_factory: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
         min_deposit: '0.10',
         refund_waiting_period_ledgers: 17280,
       },

@@ -2,6 +2,10 @@
 
 Model Context Protocol (MCP) server for RouteDock Stellar payments. Exposes RouteDock's payment functionality as standardized tools that LLM agents can use directly.
 
+## Requirements
+
+Node.js **22 or newer**, matching the supported runtime of all RouteDock npm packages.
+
 ## Overview
 
 This MCP server implements the thesis that base payment infrastructure should be built for machines, not humans. Instead of requiring every LLM agent to implement the full RouteDock SDK, agents can simply connect to this MCP server and use standardized tools:
@@ -36,7 +40,7 @@ Create a `.env` file (e.g., `~/.routedock/.env`):
 ```bash
 # Required
 STELLAR_SECRET="SDU5..."  # Use a dedicated low-balance testnet key for safety
-STELLAR_NETWORK="testnet"  # or "mainnet"
+STELLAR_NETWORK="testnet"  # "testnet" (default) or "mainnet" (aliases: "pubnet", "public")
 ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
 
 # Optional (for session mode)

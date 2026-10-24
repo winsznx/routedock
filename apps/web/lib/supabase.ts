@@ -60,7 +60,7 @@ export interface Session {
   payer: string
   /** Decimal USDC as text, e.g. "0.0000005" — see {@link SESSION_COLUMNS}. */
   cumulative_amount: string
-  status: 'open' | 'closing' | 'closed'
+  status: 'open' | 'closing' | 'closed' | 'failed'
   network: string
   opened_at: string
   updated_at: string

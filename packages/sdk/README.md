@@ -2,6 +2,10 @@
 
 Unified payment execution layer for autonomous agents on Stellar. One SDK for x402, MPP charge, and MPP session — mode selected automatically from the provider's `routedock.json` manifest.
 
+## Requirements
+
+Node.js **22 or newer**, matching the supported runtime of all RouteDock npm packages.
+
 ## Install
 
 ```bash

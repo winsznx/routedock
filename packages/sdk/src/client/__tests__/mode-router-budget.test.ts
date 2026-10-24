@@ -15,7 +15,7 @@ function createManifest(
     modes,
     network: 'testnet',
     asset: 'USDC',
-    asset_contract: 'CTESTASSETCONTRACT',
+    asset_contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     payee: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
     pricing,
     endpoints: {},

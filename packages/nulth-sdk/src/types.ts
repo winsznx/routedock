@@ -55,6 +55,13 @@ export interface NulthAuthSignature {
   proof: NulthProof
 }
 
+/** Consumer-supplied diagnostic sink, compatible with RouteDockLogger. */
+export type NulthLogger = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  fields?: Record<string, unknown>,
+) => void
+
 export interface NulthClientConfig {
   /** Nulth smart account contract address (C...) — the payer */
   nulthAccount: string
@@ -68,6 +75,19 @@ export interface NulthClientConfig {
   policy: NulthPolicyState
   /** Optional verifier contract deployed alongside the Nulth account */
   verifierContract?: string
+  /** Log sink for the mock-prover warning. Defaults to no-op (silent). */
+  logger?: NulthLogger
+}
+
+/** Invalid network or prover configuration, distinct from policy failures. */
+export class NulthConfigError extends Error {
+  readonly code: 'unsupported_prover' | 'unsupported_network'
+
+  constructor(code: NulthConfigError['code'], message: string) {
+    super(message)
+    this.name = 'NulthConfigError'
+    this.code = code
+  }
 }
 
 export class NulthPolicyError extends Error {

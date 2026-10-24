@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AreaChart,
   Area,
@@ -12,18 +12,14 @@ import {
 } from 'recharts'
 import type { TooltipContentProps } from 'recharts/types/component/Tooltip'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
-
-interface ChartPoint {
-  minute: string
-  vouchers: number
-}
+import { buildVoucherSnapshot } from '@/lib/voucherChart'
 
 function CustomTooltip(props: TooltipContentProps) {
-  const { active, payload, label } = props
+  const { active, payload } = props
   if (!active || !payload?.length) return null
   return (
     <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-overlay)] p-2 text-xs shadow-lg">
-      <p className="text-[var(--text-muted)] mb-0.5">{String(label)}</p>
+      <p className="text-[var(--text-muted)] mb-0.5">{String(payload[0]?.payload.fullTimestamp)}</p>
       <p className="font-mono text-[var(--text-primary)]">
         {payload[0]?.value as number} vouchers
       </p>
@@ -32,68 +28,56 @@ function CustomTooltip(props: TooltipContentProps) {
 }
 
 export function VoucherChart() {
-  const [data, setData] = useState<ChartPoint[]>([])
+  const [snapshot, setSnapshot] = useState<ReturnType<typeof buildVoucherSnapshot>>({ points: [], summary: '' })
+  const [loading, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
-
-  const fetchData = useCallback(async () => {
-    const supabase = getSupabaseBrowserClient()
-    const { data: rows, error } = await supabase
-      .from('public_sessions')
-      .select('opened_at, voucher_count')
-      .not('voucher_count', 'eq', 0)
-      .order('opened_at', { ascending: false })
-      .limit(500)
-
-    if (error) {
-      // Keep whatever is already on screen: a single failed poll must not wipe a
-      // chart that had loaded.
-      console.warn('[voucher-chart] failed to load public_sessions:', error.message)
-      setLoadFailed(true)
-      return
-    }
-    setLoadFailed(false)
-
-    if (!rows || rows.length === 0) {
-      setData([])
-      return
-    }
-
-    // Group by minute, cumulative voucher count
-    const byMinute = new Map<string, number>()
-    for (const row of rows as { opened_at: string; voucher_count: number }[]) {
-      const minute = new Date(row.opened_at).toISOString().slice(0, 16)
-      byMinute.set(minute, (byMinute.get(minute) ?? 0) + (row.voucher_count ?? 0))
-    }
-
-    let cumulative = 0
-    const points: ChartPoint[] = Array.from(byMinute.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([iso, count]) => {
-        cumulative += count
-        const [, time] = iso.split('T')
-        return { minute: time ?? iso, vouchers: cumulative }
-      })
-
-    setData(points)
-  }, [])
+  const data = snapshot.points
 
   useEffect(() => {
+    let cancelled = false
+    let fetching = false
+    const fetchData = async () => {
+      if (fetching) return
+      fetching = true
+      try {
+        const { data: rows, error } = await getSupabaseBrowserClient()
+          .from('public_sessions')
+          .select('opened_at, voucher_count')
+          .not('voucher_count', 'eq', 0)
+          .order('opened_at', { ascending: false })
+          .limit(500)
+        if (error) throw error
+        if (!cancelled) {
+          setSnapshot(buildVoucherSnapshot(rows ?? []))
+          setLoadFailed(false)
+        }
+      } catch {
+        // A failed refresh must preserve the last successful snapshot.
+        if (!cancelled) setLoadFailed(true)
+      } finally {
+        fetching = false
+        if (!cancelled) setLoading(false)
+      }
+    }
     const initialFetch = setTimeout(() => void fetchData(), 0)
     const interval = setInterval(() => void fetchData(), 30_000)
     return () => {
+      cancelled = true
       clearTimeout(initialFetch)
       clearInterval(interval)
     }
-  }, [fetchData])
+  }, [])
 
   if (data.length === 0) {
     return (
       <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-5">
         <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-6">
-          Voucher Accumulation
+          Voucher Snapshot
         </h2>
-        <div className="flex items-center justify-center h-40">
-          {loadFailed ? (
+        <div aria-busy={loading} className="flex items-center justify-center h-40">
+          {loading ? (
+            <p role="status" className="text-sm text-[var(--text-muted)]">Loading session data…</p>
+          ) : loadFailed ? (
             <p className="text-sm text-[var(--status-error)]">
               {"Couldn't load session data"}
             </p>
@@ -108,8 +92,13 @@ export function VoucherChart() {
   return (
     <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-5">
       <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-6">
-        Voucher Accumulation
+        Voucher Snapshot
       </h2>
+      <p className="mb-3 text-xs text-[var(--text-muted)]">
+        Current totals for up to 500 sessions with vouchers, grouped by opening time in your local time zone.
+        This is not a timeline of voucher arrivals.
+      </p>
+      <p className="sr-only">{snapshot.summary}</p>
       {loadFailed && (
         <p className="mb-3 text-xs text-[var(--status-error)]">
           {"Couldn't refresh session data. Showing the last loaded points."}
@@ -129,7 +118,8 @@ export function VoucherChart() {
             vertical={false}
           />
           <XAxis
-            dataKey="minute"
+            dataKey="label"
+            interval="preserveStartEnd"
             tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
             axisLine={false}
             tickLine={false}
@@ -141,11 +131,12 @@ export function VoucherChart() {
           />
           <Tooltip content={(p) => <CustomTooltip {...p} />} />
           <Area
-            type="monotone"
+            type="stepAfter"
             dataKey="vouchers"
             stroke="var(--accent)"
             strokeWidth={2}
             fill="url(#accentFill)"
+            isAnimationActive={false}
             dot={false}
             activeDot={{ r: 3, fill: 'var(--accent)' }}
           />

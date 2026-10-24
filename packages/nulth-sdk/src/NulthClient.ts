@@ -14,7 +14,7 @@ import type {
   NulthProof,
   PaymentAuthContext,
 } from './types.js'
-import { NulthPolicyError } from './types.js'
+import { NulthConfigError, NulthPolicyError } from './types.js'
 
 export class NulthClient {
   private policy: NulthPolicyState
@@ -24,16 +24,21 @@ export class NulthClient {
     this.policy = { ...config.policy }
     this.prover = config.prover ?? DEFAULT_PROVER
     if (this.prover !== 'mock') {
-      throw new Error(
+      throw new NulthConfigError(
+        'unsupported_prover',
         `NulthClient: unknown prover backend ${String(config.prover)}; only 'mock' is implemented`,
       )
     }
     if (config.network !== 'testnet') {
-      throw new Error(
+      throw new NulthConfigError(
+        'unsupported_network',
         `NulthClient cannot use the insecure mock prover on mainnet; a production prover is required (network must be 'testnet', got ${String(config.network)})`,
       )
     }
-    console.warn('NulthClient is using the insecure mock prover; proofs are not cryptographically sound')
+    config.logger?.(
+      'warn',
+      'NulthClient is using the insecure mock prover; proofs are not cryptographically sound',
+    )
   }
 
   get nulthAccount(): string {

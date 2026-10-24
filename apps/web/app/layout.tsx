@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono, IBM_Plex_Mono } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
+import { metadataBase } from '@/lib/metadata'
+import { MotionProvider } from '@/components/layout/MotionProvider'
 import './globals.css'
 
 const geistSans = Geist({
@@ -26,7 +28,8 @@ export const metadata: Metadata = {
   },
   description:
     'x402, MPP charge, MPP session, and MPP session over WebSocket — unified behind client.pay(url). One interface. Four payment modes. Zero hardcoding.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://www.routedock.xyz'),
+  metadataBase: metadataBase(),
+  alternates: { canonical: '/' },
   openGraph: {
     title: 'RouteDock — Unified Agent Payment Execution on Stellar',
     description: 'One SDK for x402, MPP charge, MPP session, and MPP session over WebSocket on Stellar. Agents pay for services with a single function call.',
@@ -39,9 +42,6 @@ export const metadata: Metadata = {
     title: 'RouteDock',
     description: 'Unified payment execution for autonomous agents on Stellar.',
     images: ['/og.png'],
-  },
-  icons: {
-    icon: '/logo.svg',
   },
 }
 
@@ -63,7 +63,7 @@ export default function RootLayout({
           storageKey="routedock-theme"
           enableSystem={false}
         >
-          {children}
+          <MotionProvider>{children}</MotionProvider>
         </ThemeProvider>
       </body>
     </html>

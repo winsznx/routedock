@@ -38,6 +38,8 @@ export interface SessionReconcilerOptions {
   onRecovered?: (channelId: string, txHash: string, totalPaid: string) => Promise<void>
   /** Injectable for testing. Defaults to @stellar/mpp/channel/server close() */
   channelClose?: ChannelCloseFn
+  /** Failed close attempts before a row is moved to the terminal `failed` status. Default 5. */
+  maxReconcileAttempts?: number
 }
 
 export interface ReconciliationStats {
@@ -45,8 +47,17 @@ export interface ReconciliationStats {
   recoveredCount: number
   skippedCount: number
   failedCount: number
+  /** Rows whose channel was already closed on-chain; marked `closed` without a new close. */
+  alreadyClosedCount: number
+  /** Rows moved to the terminal `failed` status this run (attempt limit reached). */
+  terminalCount: number
   errors: Array<{ channelId: string; reason: string }>
 }
+
+const DEFAULT_MAX_RECONCILE_ATTEMPTS = 5
+
+/** Matches the "channel already closed" wording mapped in mppCompatibility. */
+const ALREADY_CLOSED_PATTERN = /channel has been closed|channel is closed|already closed|finalized/i
 
 export function decimalToStroops(amountStr: string): bigint {
   return usdcToStroops(amountStr)
@@ -64,8 +75,11 @@ export async function reconcileAbandonedSessions(
     recoveredCount: 0,
     skippedCount: 0,
     failedCount: 0,
+    alreadyClosedCount: 0,
+    terminalCount: 0,
     errors: [],
   }
+  const maxAttempts = opts.maxReconcileAttempts ?? DEFAULT_MAX_RECONCILE_ATTEMPTS
 
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const networkId = MPP_NETWORK[opts.network]
@@ -74,7 +88,7 @@ export async function reconcileAbandonedSessions(
     // Query for sessions in "closing" state with no settlement_tx_hash
     const { data: closingSessions, error } = await opts.supabase
       .from('sessions')
-      .select('channel_id, channel_contract, cumulative_amount, last_signature, settlement_tx_hash')
+      .select('channel_id, channel_contract, cumulative_amount, last_signature, settlement_tx_hash, reconcile_attempts')
       .eq('status', 'closing')
       .eq('network', opts.network)
       .eq('payee', payeeKeypair.publicKey())
@@ -147,11 +161,51 @@ export async function reconcileAbandonedSessions(
           await opts.onRecovered(channelId, closeTxHash, totalPaid)
         }
       } catch (err) {
+        const reason = formatMppError(err)
+
+        // A lost status update (or a DELETE close) leaves the channel closed
+        // on-chain while the row is still `closing`. Self-heal instead of
+        // retrying a close that can never succeed.
+        if (ALREADY_CLOSED_PATTERN.test(reason)) {
+          const { error: closeError } = await opts.supabase
+            .from('sessions')
+            .update({
+              status: 'closed',
+              last_reconcile_error: `channel already closed on-chain: ${reason}`,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('channel_id', session.channel_id)
+
+          if (!closeError) {
+            stats.alreadyClosedCount++
+            continue
+          }
+        }
+
         stats.failedCount++
-        stats.errors.push({
-          channelId: session.channel_id,
-          reason: formatMppError(err),
-        })
+        stats.errors.push({ channelId: session.channel_id, reason })
+
+        // Record the failure and move the row to the back of the queue.
+        const attempts = (Number(session.reconcile_attempts) || 0) + 1
+        const terminal = attempts >= maxAttempts
+        const { error: bookkeepingError } = await opts.supabase
+          .from('sessions')
+          .update({
+            reconcile_attempts: attempts,
+            last_reconcile_error: reason,
+            updated_at: new Date().toISOString(),
+            ...(terminal ? { status: 'failed' } : {}),
+          })
+          .eq('channel_id', session.channel_id)
+
+        if (bookkeepingError) {
+          stats.errors.push({
+            channelId: session.channel_id,
+            reason: `Failed to record reconcile failure: ${bookkeepingError.message}`,
+          })
+        } else if (terminal) {
+          stats.terminalCount++
+        }
       }
     }
 
@@ -186,7 +240,8 @@ export async function runStartupReconciliation(
     log(
       'info',
       `[SessionReconciler] Found ${stats.orphanedCount} orphaned session(s). ` +
-      `Recovered: ${stats.recoveredCount}, Skipped: ${stats.skippedCount}, Failed: ${stats.failedCount}`,
+      `Recovered: ${stats.recoveredCount}, Skipped: ${stats.skippedCount}, Failed: ${stats.failedCount}, ` +
+      `Already closed: ${stats.alreadyClosedCount}, Moved to failed: ${stats.terminalCount}`,
     )
 
     if (stats.errors.length > 0) {
