@@ -153,11 +153,16 @@ async function main(): Promise<void> {
         console.log(`#${String(i + 1).padStart(2, '0')} input="${chunk.slice(0, 60)}…"`)
 
         // Pay the specialist using x402. The orchestrator handles the full
-        // 402 → sign → retry cycle automatically.
-        // client.pay() sends a GET request with no body, so pass the chunk text in the query string.
-        const url = new URL('/summarise', SPECIALIST_URL)
-        url.searchParams.set('text', chunk)
-        const result = await orchestrator.pay(url.toString(), { forceMode: 'x402' })
+        // 402 → sign → retry cycle automatically, replaying the POST body on
+        // the unpaid probe and the paid request.
+        const result = await orchestrator.pay(specialistUrl, {
+            forceMode: 'x402',
+            request: {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ text: chunk }),
+            },
+        })
         const data = result.data as { summary?: string; chars?: number }
 
         console.log(`     ${data.summary}`)

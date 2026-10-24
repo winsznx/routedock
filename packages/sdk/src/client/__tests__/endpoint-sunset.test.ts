@@ -326,6 +326,101 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
   console.log('✓ Test 8: shared paths reject only when every descriptor has sunset')
 }
 
+// ── Test 9a: the caller's method scopes the sunset check ─────────────────────
+
+{
+  const past = new Date(Date.now() - 60_000).toISOString()
+  const server = await startTestServer(
+    endpointManifest({
+      inferGet: { method: 'GET', path: '/infer', sunset_at: past },
+      inferPost: { method: 'POST', path: '/infer' },
+    }),
+  )
+
+  try {
+    const client = new RouteDockClient({ wallet: Keypair.random(), network: 'testnet' })
+    stubSubClients(client)
+
+    // The POST descriptor is still active, so paying it must work even though
+    // the GET descriptor sharing the path has sunset.
+    const result = await client.pay(`${server.url}/infer`, {
+      request: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'hello' }),
+      },
+    })
+    assert.equal(result.txHash, 'deadbeef')
+
+    await assert.rejects(
+      () => client.pay(`${server.url}/infer`, { request: { method: 'GET' } }),
+      (error: unknown) => error instanceof RouteDockManifestSunsetError,
+      'the sunset GET descriptor must still be refused',
+    )
+
+    console.log('✓ Test 9a: a sunset GET does not block an active POST on the same path')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 9b: a sunset method is refused while its sibling method still pays ───
+
+{
+  const past = new Date(Date.now() - 60_000).toISOString()
+  const server = await startTestServer(
+    endpointManifest({
+      inferGet: { method: 'GET', path: '/infer' },
+      inferPost: { method: 'POST', path: '/infer', sunset_at: past },
+    }),
+  )
+
+  try {
+    const client = new RouteDockClient({ wallet: Keypair.random(), network: 'testnet' })
+    stubSubClients(client)
+
+    await assert.rejects(
+      () =>
+        client.pay(`${server.url}/infer`, {
+          request: { method: 'POST', body: '{}' },
+        }),
+      (error: unknown) => error instanceof RouteDockManifestSunsetError,
+    )
+
+    const result = await client.pay(`${server.url}/infer`)
+    assert.equal(result.txHash, 'deadbeef', 'the active GET descriptor still pays')
+
+    console.log('✓ Test 9b: a sunset POST is refused while the GET sibling still pays')
+  } finally {
+    await server.close()
+  }
+}
+
+// ── Test 9c: a method the manifest does not declare keeps path-level behavior ─
+
+{
+  const past = new Date(Date.now() - 60_000).toISOString()
+  const server = await startTestServer(
+    endpointManifest({ price: { method: 'GET', path: '/price', sunset_at: past } }),
+  )
+
+  try {
+    const client = new RouteDockClient({ wallet: Keypair.random(), network: 'testnet' })
+    stubSubClients(client)
+
+    // No POST /price descriptor exists, so the path is unlisted for POST and
+    // the sunset GET descriptor cannot speak for it.
+    const result = await client.pay(`${server.url}/price`, {
+      request: { method: 'POST', body: '{}' },
+    })
+    assert.equal(result.txHash, 'deadbeef')
+
+    console.log('✓ Test 9c: an undeclared method for a path keeps unlisted-path behavior')
+  } finally {
+    await server.close()
+  }
+}
+
 // ── Test 9: a cached manifest is re-checked against the current clock ─────────
 
 {
