@@ -21,17 +21,17 @@ import { resolveAssetContract } from './config.js'
  * The mpp-session provider, hosted inside a single Durable Object.
  *
  * This is not an optimisation, it is a correctness requirement. The SDK's
- * session middleware keeps `lastCumulativeAmount`, `voucherCount`,
- * `lastSignatureHex` and `sessionPayerAddress` in closure scope, and the mppx
- * channel store it builds is `Store.memory()`. That was sound on Railway,
- * where one process served an entire session.
+ * session middleware tracks the highest voucher — its cumulative amount,
+ * signature, payer, voucher count and opened flag — in handler state, and the
+ * mppx channel store it builds is whatever the host injects. That was sound on
+ * Railway, where one process served an entire session.
  *
  * On plain Workers it is not: MppSessionClient issues one HTTP request per
  * voucher, so voucher N and voucher N+1 routinely land in different isolates.
- * A fresh isolate starts at `lastCumulativeAmount = 0n` with an empty
- * signature, and the DELETE close path then falls back to trusting the
- * client-supplied amount and signature instead of the provider's own tracked
- * values. That is the exact protection the SDK added, defeated by the runtime.
+ * A fresh isolate starts with no tracked voucher, and the DELETE close path
+ * then falls back to trusting the client-supplied amount and signature instead
+ * of the provider's own tracked values. That is the exact protection the SDK
+ * added, defeated by the runtime.
  *
  * A Durable Object restores the single-process assumption the SDK is written
  * against: one instance per channel contract, serialized execution, and memory
@@ -40,6 +40,10 @@ import { resolveAssetContract } from './config.js'
  * The SDK receives a store backed by this object's persistent storage, so mppx
  * channel state, verified voucher records (amount, signature, payer), and
  * session bookkeeping (voucherCount, sessionOpened) survive isolate eviction.
+ * The DELETE close path also floors at mppx's cumulative entry in that store,
+ * so a close can never broadcast below the highest stored voucher even when no
+ * routedock record exists (a session opened across an SDK upgrade, or a failed
+ * record write).
  *
  * Transient in-memory state: in-flight request abort guards and idle timers are
  * scoped to active requests and recreated or rearmed as new requests arrive.

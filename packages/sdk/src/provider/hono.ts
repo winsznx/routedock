@@ -495,7 +495,7 @@ export function mppSessionWsVerified(c: { get: (key: string) => unknown }): bool
 /** Contexts the shared session state is invoked with (subset of hono's Context). */
 interface DeleteContext {
   req: { json(): Promise<unknown> }
-  json: (data: unknown) => Response
+  json: (data: unknown, status?: number) => Response
 }
 interface SignalContext {
   req: { raw: { signal?: AbortSignal } }
@@ -535,6 +535,10 @@ function createMppSessionHandlerState(
   const voucherRecordKey = `routedock:session:voucher:${sessionPricing.channelFactory}`
 
   const innerStore = opts.sessionStore ?? Store.memory()
+  // mppx's own cumulative entry for this channel — the highest voucher it has
+  // verified, written through wrappedStore independently of routedock's
+  // record. It is the only floor a handler with no record can read.
+  const cumulativeKey = `stellar:channel:cumulative:${sessionPricing.channelFactory}`
   // The last voucher mppx actually verified — amount, its signature, and the
   // payer it named. Only `commit` (called after a successful verify) may set
   // this; nothing derived from an unverified header may reach it.
@@ -599,6 +603,20 @@ function createMppSessionHandlerState(
       return null
     }
     return record
+  }
+
+  // mppx's cumulative amount for this channel, or null when there is no
+  // readable entry (no voucher verified yet, or the store read failed).
+  async function readStoredCumulative(): Promise<bigint | null> {
+    try {
+      // Same shape check as MppSessionHandler's isVoucherStoreValue, inlined so
+      // this module doesn't load MppSessionHandler's runtime imports.
+      const raw = (await innerStore.get(cumulativeKey)) as { amount?: unknown } | null | undefined
+      const amount = typeof raw === 'object' && raw !== null ? raw.amount : undefined
+      return typeof amount === 'string' && /^\d+$/.test(amount) ? BigInt(amount) : null
+    } catch {
+      return null
+    }
   }
 
   // Flag an open-but-unsettled session for the reconciler. Idempotent.
@@ -745,6 +763,22 @@ function createMppSessionHandlerState(
       }
 
       if (closeAmount > 0n && closeSig) {
+        // Floor: a DELETE close must never broadcast below the highest voucher
+        // mppx verified for this channel. The routedock record normally covers
+        // this, but a rebuilt instance with no record (a session opened before
+        // the record existed, or a failed record write) has nothing else to
+        // compare against. The entry is read only — it belongs to mppx.
+        const storedCumulative = await readStoredCumulative()
+        if (storedCumulative !== null && closeAmount < storedCumulative) {
+          return c.json(
+            {
+              closeTxHash: null,
+              error: 'close amount below the highest verified voucher',
+            },
+            409,
+          )
+        }
+
         const closeTxHash = await channelClose({
           channel: sessionPricing.channelFactory,
           amount: closeAmount,
