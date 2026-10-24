@@ -15,6 +15,9 @@ export const HORIZON_URLS = {
 export type Network = keyof typeof USDC_ISSUERS
 
 export const SESSION_RATE = '0.0001'
+export const WS_SNAPSHOT_INTERVAL_MS = 5_000
+/** One SESSION_RATE voucher buys one minute of WebSocket snapshots. */
+export const WS_SNAPSHOTS_PER_VOUCHER = 12
 export const MIN_DEPOSIT = '0.10'
 export const REFUND_WAITING_PERIOD_LEDGERS = 17280
 
