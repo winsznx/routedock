@@ -7,6 +7,36 @@ on:
     branches: [ main ]
 
 jobs:
+  # Release is the only job that installs with --frozen-lockfile, and it runs on
+  # push to main rather than on pull_request. A package.json that drifts from
+  # pnpm-lock.yaml, or a workspace install hook that fails, therefore passes
+  # every PR check and only goes red in Release, where nothing publishes to npm
+  # and no PR's check set shows it. That is exactly how #544 reached main.
+  # Run the same install here so it fails on the pull request instead.
+  install-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install with the flags Release uses
+        run: pnpm install --frozen-lockfile
+      - name: Assert the install left the checkout alone
+        # The root `prepare` hook points core.hooksPath at .githooks when it
+        # runs, and is deliberately skipped when CI is set. A workspace install
+        # hook mutating the checkout on CI is the class of change that broke
+        # Release in #544, so fail loudly rather than deferring to a push.
+        run: |
+          hooks_path="$(git config --local --get core.hooksPath || true)"
+          if [ -n "${hooks_path}" ]; then
+            echo "::error::pnpm install set core.hooksPath='${hooks_path}' on CI; an install hook is doing side effects that Release will hit on push"
+            exit 1
+          fi
+          echo "no install hook mutated the checkout"
+
   contract-tests:
     runs-on: ubuntu-latest
     steps:
