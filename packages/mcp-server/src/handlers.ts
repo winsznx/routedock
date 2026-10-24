@@ -64,6 +64,8 @@ export interface HandlerDeps {
     from: (table: string) => {
       select: (cols: string) => SupabaseQueryBuilder
     }
+    /** Calls a SQL function; used by list_providers when `query` is set. */
+    rpc?: (fn: string, args?: Record<string, unknown>) => PromiseLike<SupabaseQueryResult>
   } | null
   /** Raw Stellar secret key — used by check_balance to derive the public key. */
   stellarSecret: string
@@ -550,12 +552,20 @@ export async function handleCheckBalance(
 export interface ListProvidersArgs {
   tags?: string
   network?: 'testnet' | 'mainnet'
+  /** Free-text capability search, e.g. "streaming price feed". */
+  query?: string
 }
 
 /**
- * Query the Supabase provider registry with optional tag-overlap and network
- * filters.  Tags column is a TEXT[] with a GIN index — we use .overlaps(), not
- * full-text search.
+ * Query the Supabase provider registry.
+ *
+ * Without `query`, apply the optional tag-overlap and network filters. The
+ * tags column is a TEXT[] with a GIN index — we use .overlaps(), not full-text
+ * search.
+ *
+ * With `query`, call the `search_providers` SQL function, which ranks verified
+ * providers by trigram similarity of name and description. `tags`, if also
+ * given, then narrows the ranked results to providers sharing any of them.
  */
 export async function handleListProviders(
   args: ListProvidersArgs,
@@ -563,11 +573,16 @@ export async function handleListProviders(
 ): Promise<ToolResult> {
   const { tags, network } = args
   const { supabase } = deps
+  const searchText = args.query?.trim()
 
   if (!supabase) {
     return err(
       'SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access',
     )
+  }
+
+  if (searchText) {
+    return searchProviders(searchText, tags, network, supabase)
   }
 
   // Build query — start with the full select, apply filters progressively.
@@ -596,10 +611,50 @@ export async function handleListProviders(
 
   const rows = data ?? []
 
+  return providersResult(rows)
+}
+
+function parseTagList(tags: string | undefined): string[] {
+  return (tags ?? '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+}
+
+async function searchProviders(
+  searchText: string,
+  tags: string | undefined,
+  network: 'testnet' | 'mainnet' | undefined,
+  supabase: NonNullable<HandlerDeps['supabase']>,
+): Promise<ToolResult> {
+  if (!supabase.rpc) {
+    return err('Provider search is not available: the Supabase client does not support rpc()')
+  }
+
+  const { data, error } = await supabase.rpc('search_providers', {
+    query: searchText,
+    network: network ?? null,
+    verified_only: true,
+    max_results: 20,
+  })
+
+  if (error) {
+    return err(`Failed to search providers: ${error.message}`)
+  }
+
+  const tagList = parseTagList(tags)
+  const rows = (data ?? []).filter(
+    (p: ProviderRow) => tagList.length === 0 || p.tags.some((t) => tagList.includes(t)),
+  )
+
+  return providersResult(rows)
+}
+
+function providersResult(rows: ProviderRow[]): ToolResult {
   return ok({
     success: true,
     count: rows.length,
-    providers: rows.map((p: ProviderRow) => ({
+    providers: rows.map((p) => ({
       name: p.name,
       description: p.description,
       network: p.network,

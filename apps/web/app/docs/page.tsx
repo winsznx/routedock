@@ -303,14 +303,16 @@ fastify.get('/price', async () => ({ price: '0.199', pair: 'XLM/USDC' }))`}</Cod
 
             <Section id="discovery" icon={Search} title="Discovery Registry">
               <p>
-                The Supabase <InlineCode>providers</InlineCode> table indexes manifests with
-                <InlineCode>pg_trgm</InlineCode> trigram search. Agents can query by capability:
+                The Supabase <InlineCode>providers</InlineCode> table indexes provider names and
+                descriptions with <InlineCode>pg_trgm</InlineCode> trigram indexes, and the{' '}
+                <InlineCode>search_providers</InlineCode> function exposes them as fuzzy search.
+                Agents can find providers by capability description:
               </p>
-              <Code>{`SELECT * FROM providers
-WHERE name % 'streaming price feed'
-ORDER BY similarity(name, 'streaming price feed') DESC`}</Code>
+              <Code>{`const providers = await registry.searchProviders('streaming price feed')`}</Code>
               <p>
-                Tags, description, and manifest JSON are all indexed. No exact keyword matching required.
+                Results are ranked by how closely the name and description match, and an exact tag
+                match ranks higher. MCP agents pass the same text as the <InlineCode>query</InlineCode>{' '}
+                argument of <InlineCode>list_providers</InlineCode>. No exact keyword matching required.
               </p>
             </Section>
 

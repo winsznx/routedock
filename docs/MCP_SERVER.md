@@ -90,9 +90,14 @@ Check the Stellar wallet balance for the configured account.
 
 **Returns:** Balance information for the specified asset
 
-### 6. list_providers(tags, network)
+### 6. list_providers(tags, network, query)
 
-List available RouteDock providers from the registry, filterable by capability tags (array overlap) and network.
+List available RouteDock providers from the registry, filterable by capability tags (array overlap) and network, or searchable by free-text capability.
+
+**Parameters:**
+- `tags` (optional): Comma-separated tags; returns providers matching any of them.
+- `network` (optional): `testnet` or `mainnet`.
+- `query` (optional): Free-text capability search such as `streaming price feed`. Calls the registry's `search_providers` function and returns verified providers ranked by similarity to their name and description. When `tags` is also given, results are narrowed to providers with any of those tags. Requires migration `007_search_providers.sql`.
 
 **Use case:** Discover providers by capability, find services for specific needs
 

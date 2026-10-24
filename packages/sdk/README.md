@@ -408,6 +408,26 @@ ctx.waitUntil(
 
 This writes to the `providers` table from migration `001_init.sql`.
 
+### Finding providers
+
+`ProviderRegistry.searchProviders` finds providers by free-text capability
+instead of exact tag. It calls the `search_providers` SQL function from
+migration `007_search_providers.sql`, which ranks verified providers on the
+registry's network by trigram similarity of name and description, and ranks an
+exact tag match higher:
+
+```ts
+const providers = await registry.searchProviders('streaming price feed', {
+  limit: 10, // default 20, at most 50
+  includeUnverified: false, // default
+})
+```
+
+If Supabase isn't configured or the call fails, it falls back to the on-chain
+registry and keeps providers whose tags contain a word from the query or whose
+endpoint contains the query. A search that succeeds with no matches returns an
+empty array.
+
 ### Serving `mpp-session-ws`
 
 `mpp-session-ws` upgrades the HTTP connection to a WebSocket after the

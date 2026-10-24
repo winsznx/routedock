@@ -121,10 +121,15 @@ export const TOOLS: Tool[] = [
   {
     name: 'list_providers',
     description:
-      'List available RouteDock providers from the registry. Can filter by capability tags (returns providers matching any of the given tags) and by network.',
+      'List available RouteDock providers from the registry. Can filter by capability tags (returns providers matching any of the given tags) and by network, or search by free-text capability with `query`.',
     inputSchema: {
       type: 'object',
       properties: {
+        query: {
+          type: 'string',
+          description:
+            'Free-text capability search, ranked by similarity to provider name and description (e.g., "streaming price feed"). Returns verified providers only. If tags is also given, results are narrowed to providers with any of those tags.',
+        },
         tags: {
           type: 'string',
           description: 'Comma-separated tags to filter providers (e.g., "price,stellar,dex")',
