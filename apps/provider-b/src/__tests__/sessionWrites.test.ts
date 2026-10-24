@@ -204,5 +204,6 @@ describe('provider-b sessionWrites', () => {
     assert.equal(rows[1]!['settlement_tx_hash'], 'old-hash')
     assert.equal(inserts.length, 1)
     assert.equal(inserts[0]!.table, 'tx_log')
+    assert.equal(inserts[0]!.payload['channel_id'], CHANNEL_ID)
   })
 })

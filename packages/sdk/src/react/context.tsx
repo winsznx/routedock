@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { createContext, useContext, type ReactNode } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { RouteDockClient } from '../client/RouteDockClient.js'

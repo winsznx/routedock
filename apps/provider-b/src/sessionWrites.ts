@@ -127,6 +127,7 @@ export function createSessionWriters(
         tx_hash: txHash,
         amount: parseFloat(totalPaid),
         mode,
+        channel_id: channelContract,
         network,
         provider_url: providerUrl,
         agent_address: payer,
