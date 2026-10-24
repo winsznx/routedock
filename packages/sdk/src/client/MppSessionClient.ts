@@ -37,6 +37,11 @@ import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { consoleLogger, type RouteDockLogger } from '../internal/logger.js'
 import { usdcToStroops } from '../internal/usdc.js'
 import { bytesToHex, bytesToUtf8 } from '../internal/encoding.js'
+import {
+  prepareRequest,
+  toRequestInit,
+  type PreparedRequest,
+} from '../internal/request.js'
 
 const MIN_REFUND_WAITING_PERIOD = 17_280
 const STREAM_CLEANUP_TIMEOUT_MS = 3_000
@@ -375,7 +380,9 @@ export class MppSessionClient {
       m: WsMppxLike,
       createCredential: GuardedCredentialCreator,
       onSigned: () => void,
-    ): AsyncIterable<unknown> => this.streamWebSocket(u, m, createCredential, onSigned)
+      request: PreparedRequest,
+    ): AsyncIterable<unknown> =>
+      this.streamWebSocket(u, m, createCredential, onSigned, request)
 
     const mppx = Mppx.create({
       polyfill: false,
@@ -468,6 +475,10 @@ export class MppSessionClient {
       },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        // Buffer the caller's request once per stream so every voucher request
+        // and every retry sends the same method/headers/body.
+        const prepared = await prepareRequest(options?.request)
+
         // Check the local daily spend cap before issuing a voucher over either
         // transport. The WebSocket path signs a credential before the HTTP probe
         // becomes a live stream, so it must run before any network request.
@@ -484,7 +495,13 @@ export class MppSessionClient {
           const onSigned = (): void => {
             vouchersIssued++
           }
-          for await (const item of streamWs(url, mppx, createGuardedCredential, onSigned)) {
+          for await (const item of streamWs(
+            url,
+            mppx,
+            createGuardedCredential,
+            onSigned,
+            prepared,
+          )) {
             yield item
           }
           return
@@ -512,7 +529,13 @@ export class MppSessionClient {
           withRetry(async () => {
             let resp: Response
             try {
-              resp = await mppx.fetch(url, { signal: abortController.signal })
+              // mppx swaps any caller Authorization header for the signed
+              // voucher credential, so the payment header always wins. The
+              // abort signal stays on the same request.
+              resp = await mppx.fetch(url, {
+                ...toRequestInit(prepared),
+                signal: abortController.signal,
+              })
             } catch (err) {
               if (abortController.signal.aborted) {
                 throw err
@@ -956,13 +979,16 @@ export class MppSessionClient {
     url: string,
     mppx: WsMppxLike,
     createCredential: GuardedCredentialCreator,
-    onSigned?: () => void,
+    onSigned: (() => void) | undefined,
+    request: PreparedRequest,
   ): AsyncIterable<unknown> {
     // ── 1 + 2: channel establishment + voucher negotiation over HTTP ────────
-    const request: RequestInit = { method: 'GET' }
+    // The caller's method/body apply to this probe only; the WebSocket upgrade
+    // below is always a GET handshake.
+    const probeInit = toRequestInit(request)
     let probe: Response
     try {
-      probe = await mppx.rawFetch(url, request)
+      probe = await mppx.rawFetch(url, probeInit)
     } catch (err) {
       throw wrapFetchError(err, 'Voucher request')
     }

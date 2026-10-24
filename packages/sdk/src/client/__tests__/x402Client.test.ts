@@ -69,6 +69,61 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+const paymentRequired = {
+  x402Version: 2,
+  resource: { url: 'https://api.test/infer' },
+  accepts: [
+    {
+      scheme: 'exact',
+      network: 'stellar:testnet' as const,
+      asset: manifest.asset_contract,
+      amount: '10000',
+      payTo: manifest.payee,
+      maxTimeoutSeconds: 60,
+      extra: {},
+    },
+  ],
+}
+
+/**
+ * Replace the real x402 signing client: building a payment payload needs a
+ * live facilitator, and these tests only exercise HTTP request propagation.
+ */
+function stubSigning(client: X402Client): void {
+  ;(client as any).httpClient = {
+    createPaymentPayload: async () => ({
+      x402Version: 2,
+      resource: paymentRequired.resource,
+      accepted: paymentRequired.accepts[0],
+      payload: { signature: 'fake' },
+    }),
+    encodePaymentSignatureHeader: () => ({ 'PAYMENT-SIGNATURE': 'sdk-payment' }),
+  }
+}
+
+function jsonPaymentRequired(): Response {
+  return new Response(null, {
+    status: 402,
+    headers: { 'X-Payment-Requirements': encodePaymentRequiredHeader(paymentRequired) },
+  })
+}
+
+function jsonOk(data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+/** Snapshot a Headers object as a plain record for header comparisons. */
+function headerRecord(headers: Headers): Record<string, string> {
+  const record: Record<string, string> = {}
+  headers.forEach((value, name) => {
+    record[name] = value
+  })
+  return record
+}
+
 function makePayload(accepted: PaymentRequirements = baseRequirements): PaymentPayload {
   return { x402Version: 2, accepted, payload: {} }
 }
@@ -119,6 +174,136 @@ test('X402Client - free 200 response returns amount: "0"', async () => {
     assert.equal(result.txHash, null)
     assert.equal(result.mode, 'x402')
     assert.deepEqual(result.data, { status: 'ok', free: true })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - POST method and body are replayed on the probe and the paid request', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet')
+  stubSigning(client)
+  const originalFetch = globalThis.fetch
+  const calls: Array<{ url: string; init: RequestInit }> = []
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init: init ?? {} })
+    return calls.length === 1 ? jsonPaymentRequired() : jsonOk({ prediction: 42 })
+  }) as typeof fetch
+
+  const body = JSON.stringify({ prompt: 'hello' })
+  try {
+    const result = await client.pay('https://api.test/infer', manifest, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-trace-id': 'trace-1' },
+      body,
+    })
+
+    assert.deepEqual(result.data, { prediction: 42 })
+    assert.equal(calls.length, 2, 'expected one probe and one paid request')
+
+    for (const [index, call] of calls.entries()) {
+      assert.equal(call.url, 'https://api.test/infer')
+      assert.equal(call.init.method, 'POST', `attempt ${index + 1} must use POST`)
+      assert.equal(
+        new Headers(call.init.headers).get('content-type'),
+        'application/json',
+        `attempt ${index + 1} must keep caller headers`,
+      )
+      assert.equal(
+        new Headers(call.init.headers).get('x-trace-id'),
+        'trace-1',
+        `attempt ${index + 1} must keep caller headers`,
+      )
+      assert.equal(
+        await new Response(call.init.body).text(),
+        body,
+        `attempt ${index + 1} must send the same body`,
+      )
+    }
+
+    assert.equal(
+      new Headers(calls[0]!.init.headers).get('x-preferred-mode'),
+      'x402',
+      'probe must carry the SDK mode hint',
+    )
+    assert.equal(
+      new Headers(calls[1]!.init.headers).get('payment-signature'),
+      'sdk-payment',
+      'paid request must carry the SDK payment header',
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - caller headers cannot override SDK payment or mode headers', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet')
+  stubSigning(client)
+  const originalFetch = globalThis.fetch
+  const calls: RequestInit[] = []
+
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(init ?? {})
+    return calls.length === 1 ? jsonPaymentRequired() : jsonOk({ ok: true })
+  }) as typeof fetch
+
+  try {
+    await client.pay('https://api.test/infer', manifest, {
+      method: 'POST',
+      headers: {
+        'X-Preferred-Mode': 'mpp-charge',
+        'PAYMENT-SIGNATURE': 'caller-forged',
+      },
+      body: '{}',
+    })
+
+    assert.equal(new Headers(calls[0]!.headers).get('x-preferred-mode'), 'x402')
+    assert.equal(new Headers(calls[1]!.headers).get('payment-signature'), 'sdk-payment')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('X402Client - retries resend the same buffered body', async () => {
+  const client = new X402Client(keypair.secret(), 'testnet', {
+    maxAttempts: 2,
+    baseDelayMs: 1,
+    maxDelayMs: 2,
+  })
+  stubSigning(client)
+  const originalFetch = globalThis.fetch
+  const calls: Array<{ method?: string; body: string }> = []
+
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    // Drain the body before failing, mimicking a transport that consumed it.
+    const body = await new Response(init?.body).text()
+    calls.push({ ...(init?.method ? { method: init.method } : {}), body })
+    if (calls.length === 1) throw new TypeError('fetch failed')
+    return calls.length === 2 ? jsonPaymentRequired() : jsonOk({ ok: true })
+  }) as typeof fetch
+
+  const body = JSON.stringify({ prompt: 'retry me' })
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(body))
+      controller.close()
+    },
+  })
+
+  try {
+    const result = await client.pay('https://api.test/infer', manifest, {
+      method: 'POST',
+      body: stream,
+    })
+
+    assert.deepEqual(result.data, { ok: true })
+    assert.equal(calls.length, 3, 'expected a failed attempt, a probe and a paid request')
+    assert.deepEqual(
+      calls.slice(1).map((call) => call.body),
+      [body, body],
+      'the probe and retry must send the same bytes as the first attempt',
+    )
+    assert.ok(calls.every((call) => call.method === 'POST'))
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -247,9 +432,9 @@ test('X402Client - paid request always 500: signs once, resends identical header
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
-      paidHeaders.push(headers)
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) {
+      paidHeaders.push(headerRecord(headers))
       return new Response('bad', { status: 500 })
     }
     return paymentRequiredResponse()
@@ -284,9 +469,9 @@ test('X402Client - paid request network failure is retried without re-signing', 
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
-      paidHeaders.push(headers)
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) {
+      paidHeaders.push(headerRecord(headers))
       paidAttempts++
       if (paidAttempts === 1) throw new TypeError('fetch failed')
       return jsonResponse({ ok: true })
@@ -315,8 +500,8 @@ test('X402Client - unpaid probe 503 then 402 is retried, then signs once', async
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) {
       paidRequests++
       return jsonResponse({ ok: true })
     }
@@ -345,8 +530,8 @@ test('X402Client - paid retry returning 402 rejects without a second signature',
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) {
       paidRequests++
       return new Response('payment required again', { status: 402 })
     }
@@ -385,8 +570,8 @@ async function payAgainstRejection(
   let paidRequests = 0
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) {
       paidRequests++
       return paid()
     }
@@ -619,8 +804,8 @@ test('X402Client - reports the amount actually signed, not the manifest price', 
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) return jsonResponse({ ok: true })
+    const headers = new Headers(init?.headers)
+    if (headers.get('PAYMENT-SIGNATURE')) return jsonResponse({ ok: true })
     return paymentRequiredResponse([{ ...baseRequirements, amount: '50000' }])
   }) as typeof fetch
 
@@ -731,8 +916,8 @@ test('X402Client - paid 200 with empty X-Payment-Response transaction yields nul
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = headerRecord(new Headers(init?.headers))
+    if (headers['payment-signature']) {
       return settledResponse({
         'X-Payment-Response': encodePaymentResponseHeader({
           success: true,
@@ -766,8 +951,8 @@ test('X402Client - paid 200 with success: false yields null txHash and logs the 
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = headerRecord(new Headers(init?.headers))
+    if (headers['payment-signature']) {
       return settledResponse({
         'X-Payment-Response': encodePaymentResponseHeader({
           success: false,
@@ -799,8 +984,8 @@ test('X402Client - paid 200 with undecodable X-Payment-Response yields null txHa
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = headerRecord(new Headers(init?.headers))
+    if (headers['payment-signature']) {
       return settledResponse({ 'X-Payment-Response': 'not base64!!' })
     }
     return paymentRequiredResponse()
@@ -820,8 +1005,8 @@ test('X402Client - paid 200 with a real transaction hash passes through', async 
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) {
+    const headers = headerRecord(new Headers(init?.headers))
+    if (headers['payment-signature']) {
       return settledResponse({
         'X-Payment-Response': encodePaymentResponseHeader({
           success: true,
@@ -858,8 +1043,8 @@ test('X402Client - debug diagnostics trace probe, paid response, and header stat
   const originalFetch = globalThis.fetch
 
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    if (headers['PAYMENT-SIGNATURE']) return settledResponse({})
+    const headers = headerRecord(new Headers(init?.headers))
+    if (headers['payment-signature']) return settledResponse({})
     return paymentRequiredResponse()
   }) as typeof fetch
 

@@ -79,8 +79,25 @@ function response(
   })
 }
 
+interface CapturedFetch {
+  url: string
+  method?: string
+  headers: Headers
+  body?: string
+}
+
+/** Every mppx.fetch call, with its request resolved for assertions. */
+let capturedFetches: CapturedFetch[] = []
+
 const fakeMppx = {
-  fetch: async (): Promise<Response> => {
+  fetch: async (url: string, init?: RequestInit): Promise<Response> => {
+    const body = init?.body === undefined ? undefined : await new Response(init.body).text()
+    capturedFetches.push({
+      url: String(url),
+      headers: new Headers(init?.headers),
+      ...(init?.method ? { method: init.method } : {}),
+      ...(body !== undefined ? { body } : {}),
+    })
     if (mppxScript.fetchError) {
       throw mppxScript.fetchError
     }
@@ -111,8 +128,8 @@ const fakeMppx = {
     )
   },
   rawFetch: async (_url: string, init?: RequestInit): Promise<Response> => {
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    rawFetchAuthHeaders.push(headers['Authorization'])
+    const headers = new Headers(init?.headers)
+    rawFetchAuthHeaders.push(headers.get('Authorization') ?? undefined)
     const status = mppxScript.rawFetchStatus ?? mppxScript.fetchStatus ?? 200
     return status === 200 ? response({ ok: true }, 200) : response(mppxScript.rejectBody ?? { error: 'fail' }, status)
   },
@@ -225,6 +242,41 @@ describe('MppChargeClient — success path', () => {
     const result = await client.pay('https://provider.test/price', buildManifest())
     assert.equal(result.txHash, null)
     assert.deepEqual(result.data, { ok: true })
+  })
+})
+
+describe('MppChargeClient — request passthrough', () => {
+  it('sends the caller POST method, headers and body to the payment-aware fetch', async () => {
+    mppxScript = { fetchStatus: 200 }
+    capturedFetches = []
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    const body = JSON.stringify({ prompt: 'hello' })
+
+    const result = await client.pay('https://provider.test/infer', buildManifest(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-trace-id': 'trace-1' },
+      body,
+    })
+
+    assert.deepEqual(result.data, { ok: true })
+    assert.equal(capturedFetches.length, 1)
+    const [call] = capturedFetches
+    assert.equal(call!.url, 'https://provider.test/infer')
+    assert.equal(call!.method, 'POST')
+    assert.equal(call!.headers.get('content-type'), 'application/json')
+    assert.equal(call!.headers.get('x-trace-id'), 'trace-1')
+    assert.equal(call!.body, body)
+  })
+
+  it('defaults to GET with no body when no request is supplied', async () => {
+    mppxScript = { fetchStatus: 200 }
+    capturedFetches = []
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+
+    await client.pay('https://provider.test/price', buildManifest())
+
+    assert.equal(capturedFetches[0]!.method, 'GET')
+    assert.equal(capturedFetches[0]!.body, undefined)
   })
 })
 
@@ -383,12 +435,12 @@ describe('MppChargeClient — retry policy', () => {
     let attempts = 0
     mppxScript = {}
     const originalFetch = fakeMppx.fetch
-    fakeMppx.fetch = async () => {
+    fakeMppx.fetch = async (url: string, init?: RequestInit) => {
       attempts++
       if (attempts < 3) {
         throw new TypeError('transient failure')
       }
-      return originalFetch()
+      return originalFetch(url, init)
     }
     try {
       const client = new MppChargeClient(Keypair.random(), 'testnet', {

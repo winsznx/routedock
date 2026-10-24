@@ -1,4 +1,5 @@
-import type { RouteDockManifest, PaymentMode } from '../types.js'
+import { Validator, type Schema } from '@cfworker/json-schema'
+import type { RouteDockManifest, PaymentMode, PaymentRequest } from '../types.js'
 import {
   RouteDockError,
   RouteDockManifestError,
@@ -82,21 +83,35 @@ function assertManifestActive(manifest: RouteDockManifest, baseUrl: string): voi
 
 /**
  * Enforce the per-endpoint `deprecated` and `sunset_at` metadata for the URL
- * being paid. `pay()` never learns the HTTP method, so a path shared by more
- * than one descriptor (e.g. GET and POST on `/infer`) is refused only when
- * every matching descriptor has sunset. Paths the manifest does not list keep
- * today's behavior. Query strings and hashes are ignored because only
- * `URL.pathname` is compared.
+ * being paid.
+ *
+ * When the caller's HTTP method is known (`method`), only descriptors for that
+ * method can speak for the request, so a sunset GET `/infer` no longer blocks
+ * an active POST `/infer` (and vice versa). Without a method — `estimateCost()`
+ * before a request is chosen, or `openSession()` — a shared path is refused
+ * only when every matching descriptor has sunset. Paths the manifest does not
+ * list, and (method-known) method/path pairs it does not declare, keep today's
+ * behavior. Query strings and hashes are ignored because only `URL.pathname`
+ * is compared.
  */
 export function assertEndpointActive(
   manifest: RouteDockManifest,
   url: string,
   logger?: RouteDockLogger,
+  method?: string,
 ): void {
   const pathname = new URL(url).pathname
-  const matches = Object.entries(manifest.endpoints).filter(
+  const pathMatches = Object.entries(manifest.endpoints).filter(
     ([, descriptor]) => descriptor.path === pathname,
   )
+  if (pathMatches.length === 0) return
+
+  const requestedMethod = method?.toUpperCase()
+  const matches = requestedMethod
+    ? pathMatches.filter(
+        ([, descriptor]) => descriptor.method.toUpperCase() === requestedMethod,
+      )
+    : pathMatches
   if (matches.length === 0) return
 
   const now = Date.now()
@@ -270,6 +285,24 @@ export interface ModeSelectOptions {
   forceMode?: PaymentMode
   /** Structured logger for mode selection events. Defaults to no-op. */
   logger?: RouteDockLogger
+  /**
+   * HTTP request replayed to the provider. Use it for POST endpoints:
+   *
+   * ```ts
+   * await client.pay(url, {
+   *   request: {
+   *     method: 'POST',
+   *     headers: { 'content-type': 'application/json' },
+   *     body: JSON.stringify(input),
+   *   },
+   * })
+   * ```
+   *
+   * The method/headers/body are sent on the unpaid probe, the paid request and
+   * every retry; SDK payment headers always override caller headers. The method
+   * also scopes the per-endpoint sunset check.
+   */
+  request?: PaymentRequest
 }
 
 /**

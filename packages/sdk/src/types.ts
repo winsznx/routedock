@@ -396,6 +396,29 @@ export interface SessionEventPayloadMap {
 }
 
 /**
+ * HTTP request fields RouteDock replays to the provider on the caller's behalf.
+ *
+ * A payment is more than one round-trip — an unpaid probe that elicits the 402
+ * challenge, the paid retry, and retries of either — so the body is buffered
+ * once (when it is not already replayable) and reused for every attempt. The
+ * supported bodies are strings, ArrayBuffers/typed arrays, `Blob`, `FormData`
+ * and `URLSearchParams`; a `ReadableStream` is drained up front, which makes it
+ * unsuitable for a streaming upload.
+ *
+ * Payment headers the SDK sets itself (`PAYMENT-SIGNATURE` / `X-PAYMENT` for
+ * x402, `Authorization` for MPP) always win over a caller header with the same
+ * name.
+ */
+export interface PaymentRequest {
+  /** HTTP method, e.g. `'POST'`. Defaults to `'GET'`. */
+  method?: string
+  /** Additional request headers. SDK payment headers take precedence. */
+  headers?: HeadersInit
+  /** Request body, replayed on every attempt. */
+  body?: BodyInit
+}
+
+/**
  * Options for SessionHandle.stream().
  */
 export interface StreamOptions {
@@ -406,6 +429,12 @@ export interface StreamOptions {
    * vouchers; out-of-order sequence numbers will cause payment failures otherwise.
    */
   concurrency?: number
+  /**
+   * HTTP request replayed for every voucher request. Use this when the streamed
+   * endpoint expects a POST body. For `mpp-session-ws` only the HTTP voucher
+   * probe uses it — the WebSocket upgrade is always a GET handshake.
+   */
+  request?: PaymentRequest
 }
 
 /** Handle for a live MPP session returned by client.openSession() */

@@ -148,11 +148,17 @@ async function main(): Promise<void> {
         const prompt = PROMPTS[i]!
         process.stdout.write(`#${String(i + 1).padStart(2, '0')} prompt="${prompt}"\n`)
 
-        // client.pay() handles the full 402 → sign → retry cycle.
-        // client.pay() sends GET with no body, so pass the prompt as a query parameter.
-        const url = new URL('/infer', INFERENCE_PROVIDER_URL)
-        url.searchParams.set('prompt', prompt)
-        const result = await client.pay(url.toString(), { forceMode: 'mpp-charge' })
+        // client.pay() handles the full 402 → sign → retry cycle, replaying the
+        // POST body on both the unpaid probe and the paid request.
+        // mpp-charge is the preferred mode for the mock manifest, so no forceMode needed.
+        const result = await client.pay(inferUrl, {
+            forceMode: 'mpp-charge',
+            request: {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ prompt }),
+            },
+        })
         const data = result.data as { response?: string; model?: string }
 
         console.log(`     response="${data.response}"`)
