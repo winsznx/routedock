@@ -12,18 +12,18 @@
   },
   "dependencies": {
     "@routedock/routedock": "workspace:*",
-    "@stellar/mpp": "^0.4.0",
+    "@stellar/mpp": "^0.7.1",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.47.0",
     "hono": "^4.12.23"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261019.1",
+    "@cloudflare/workers-types": "^5.20261023.1",
     "@types/node": "^20.0.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5",
-    "wrangler": "^4.118.0"
+    "wrangler": "^4.152.0"
   }
 }
