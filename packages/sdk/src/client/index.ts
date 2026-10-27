@@ -25,6 +25,7 @@ export {
 export * from './RouteDockClient.js'
 export * from './ModeRouter.js'
 export * from './x402Client.js'
+export * from './nulthScheme.js'
 export * from './MppChargeClient.js'
 export * from './MppSessionClient.js'
 export * from './NulthVault.js'

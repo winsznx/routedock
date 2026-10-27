@@ -11,6 +11,7 @@ import {
   type ProverBackend,
   usdcToStroops,
 } from './proof.js'
+import { NULTH_SIGNATURE_VERSION, NULTH_SIGNER_MARKER } from './scheme.js'
 import { NulthClient } from './NulthClient.js'
 import type { NulthClientConfig, PaymentAuthContext } from './types.js'
 
@@ -18,6 +19,8 @@ import type { NulthClientConfig, PaymentAuthContext } from './types.js'
 export interface NulthStellarSigner {
   address: string
   signAuthEntry: SignAuthEntry
+  /** Marks this signer as Nulth so the x402 client selects the proof scheme. */
+  readonly [NULTH_SIGNER_MARKER]: typeof NULTH_SIGNATURE_VERSION
 }
 
 export interface NulthSignerConfig extends NulthClientConfig {
@@ -35,6 +38,7 @@ export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner
 
   return {
     address: nulthAccount,
+    [NULTH_SIGNER_MARKER]: NULTH_SIGNATURE_VERSION,
     signAuthEntry: async (authEntry) => {
       const ctx = config.paymentContext
       if (!ctx) {
