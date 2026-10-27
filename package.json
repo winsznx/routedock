@@ -17,7 +17,7 @@
   "devDependencies": {
     "@changesets/changelog-github": "^1.0.1",
     "tsx": "^4.22.4",
-    "typescript": "^5.4.5"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@changesets/cli": "^2.31.0"

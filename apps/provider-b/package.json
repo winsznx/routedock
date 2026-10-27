@@ -23,7 +23,7 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "tsx": "^4.22.3",
-    "typescript": "^5.4.5",
+    "typescript": "^7.0.2",
     "wrangler": "^4.118.0"
   }
 }
