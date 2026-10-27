@@ -15,7 +15,7 @@
     "prepare": "[ -n \"${CI:-}\" ] || git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/changelog-github": "^1.0.1",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   },
