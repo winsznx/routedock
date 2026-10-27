@@ -2,7 +2,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { stellar } from '@stellar/mpp/charge/client'
 import { Mppx } from 'mppx/client'
 import { Receipt } from 'mppx'
-import type { RouteDockManifest, PaymentResult } from '../types.js'
+import type { RouteDockManifest, PaymentResult, PaymentRequest } from '../types.js'
 import {
   RouteDockManifestError,
   RouteDockPolicyRejectError,
@@ -12,6 +12,7 @@ import {
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
+import { prepareRequest, toRequestInit } from '../internal/request.js'
 import { checkChargeChallenge, type Caip2Network } from './challenge.js'
 
 export class MppChargeClient {
@@ -21,7 +22,11 @@ export class MppChargeClient {
     private readonly retryPolicy?: RetryPolicy,
   ) {}
 
-  async pay(url: string, manifest: RouteDockManifest): Promise<PaymentResult> {
+  async pay(
+    url: string,
+    manifest: RouteDockManifest,
+    request?: PaymentRequest,
+  ): Promise<PaymentResult> {
     const pricing = manifest.pricing['mpp-charge']
     if (!pricing) {
       throw new RouteDockManifestError('manifest.pricing.mpp-charge missing')
@@ -29,6 +34,10 @@ export class MppChargeClient {
 
     const caip2: Caip2Network =
       this.network === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet'
+
+    // Buffered once outside withRetry so the 402 probe, the paid retry inside
+    // mppx and any RouteDock-level retry all send the same body.
+    const prepared = await prepareRequest(request)
 
     let signedAmount: string | undefined
     // The credential is created at most once per pay() call. Every retry after
@@ -63,9 +72,12 @@ export class MppChargeClient {
     return withRetry(async (): Promise<PaymentResult> => {
       let response: Response
       try {
+        // mppx replaces any caller Authorization header with the signed
+        // credential it obtains from the 402 challenge, so payment headers win.
+        // The credential path re-sends the caller's method/body explicitly.
         response = credential
-          ? await mppx.rawFetch(url, { headers: { Authorization: credential } })
-          : await mppx.fetch(url)
+          ? await mppx.rawFetch(url, toRequestInit(prepared, { Authorization: credential }))
+          : await mppx.fetch(url, toRequestInit(prepared))
       } catch (err) {
         throw wrapMppError(err, 'MPP charge request')
       }

@@ -38,6 +38,8 @@ interface MppxScript {
 }
 
 let mppxScript: MppxScript = {}
+/** Every HTTP voucher probe, with the request the client built for it. */
+let probeRequests: Array<{ url: string; init?: RequestInit }> = []
 let wsScript: {
   rejectHandshake?: boolean
   frames?: string[]
@@ -57,6 +59,7 @@ beforeEach(() => {
   wsCredentialContexts = []
   rawFetchCalls = 0
   createCredentialCalls = 0
+  probeRequests = []
 })
 
 function buildProbeChallenge(): Challenge.Challenge {
@@ -79,8 +82,9 @@ const fakeMppx = {
   fetch: async (): Promise<Response> => {
     throw new Error('mpp-session-ws stream must not use the SSE fetch path')
   },
-  rawFetch: async (): Promise<Response> => {
+  rawFetch: async (url: string, init?: RequestInit): Promise<Response> => {
     rawFetchCalls++
+    probeRequests.push(init ? { url: String(url), init } : { url: String(url) })
     if (mppxScript.probeRejects) {
       throw new TypeError('fetch failed')
     }
@@ -506,6 +510,35 @@ describe('mpp-session-ws — failure paths', () => {
     } finally {
       fakeMppx.createCredential = origCreateCredential
     }
+  })
+})
+
+describe('mpp-session-ws — request passthrough', () => {
+  it('sends the caller method, headers and body on the voucher probe', async () => {
+    mppxScript = {}
+    wsScript = { frames: [], closeCode: 1000 }
+    const { factory } = makeFakeWsFactory()
+    const handle = await openWsHandle(factory)
+    const body = JSON.stringify({ symbols: ['XLM'] })
+
+    for await (const _ of handle.stream({
+      request: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-trace-id': 'trace-1' },
+        body,
+      },
+    })) {
+      // consume
+    }
+
+    assert.equal(probeRequests.length, 1)
+    const probe = probeRequests[0]!
+    assert.equal(probe.url, SESSION_URL)
+    assert.equal(probe.init?.method, 'POST')
+    const headers = new Headers(probe.init?.headers)
+    assert.equal(headers.get('content-type'), 'application/json')
+    assert.equal(headers.get('x-trace-id'), 'trace-1')
+    assert.equal(await new Response(probe.init?.body).text(), body)
   })
 })
 
