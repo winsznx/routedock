@@ -53,6 +53,27 @@ interface SupabaseProviderRow {
   registered_at: string
 }
 
+export interface SearchProvidersOptions {
+  /** Maximum number of results. Defaults to 20; the registry clamps it to 1..50. */
+  limit?: number
+  /** Also return providers that have not been verified. Defaults to false. */
+  includeUnverified?: boolean
+}
+
+function mapSupabaseRow(r: SupabaseProviderRow): ProviderRecord {
+  return {
+    name: r.name,
+    description: r.description ?? undefined,
+    base_url: r.base_url,
+    modes: r.modes,
+    tags: r.tags,
+    network: r.network,
+    payee: r.payee,
+    source: 'supabase' as const,
+    verified: r.verified === true,
+  }
+}
+
 export function deriveNetwork(horizonUrl: string): 'testnet' | 'mainnet' {
   return horizonUrl.includes('testnet') ? 'testnet' : 'mainnet'
 }
@@ -79,6 +100,63 @@ export class ProviderRegistry {
     return this.tryOnChain()
   }
 
+  /**
+   * Find providers by free-text capability, e.g. "streaming price feed".
+   *
+   * Calls the `search_providers` SQL function (migration 007), which ranks
+   * providers by trigram similarity of their name and description and boosts
+   * exact tag matches. When Supabase is not configured or the call fails, it
+   * falls back to the on-chain registry, keeping providers whose tags contain
+   * one of the query's words or whose endpoint contains the query. A Supabase
+   * call that succeeds with no matches returns an empty list.
+   */
+  async searchProviders(
+    query: string,
+    options: SearchProvidersOptions = {},
+  ): Promise<ProviderRecord[]> {
+    const text = query.trim()
+    if (!text) return []
+
+    const limit = options.limit ?? 20
+    const viaSupabase = await this.trySupabaseSearch(text, limit, options.includeUnverified === true)
+    if (viaSupabase) return viaSupabase
+
+    return this.searchOnChain(text, limit)
+  }
+
+  private async trySupabaseSearch(
+    query: string,
+    limit: number,
+    includeUnverified: boolean,
+  ): Promise<ProviderRecord[] | null> {
+    if (!this.supabase) return null
+    try {
+      const { data, error } = await this.supabase.rpc('search_providers', {
+        query,
+        network: this.network,
+        verified_only: !includeUnverified,
+        max_results: limit,
+      })
+      if (error || !Array.isArray(data)) return null
+      return (data as unknown as SupabaseProviderRow[]).map(mapSupabaseRow)
+    } catch {
+      return null
+    }
+  }
+
+  private async searchOnChain(query: string, limit: number): Promise<ProviderRecord[]> {
+    const needle = query.toLowerCase()
+    const words = needle.split(/\s+/).filter(Boolean)
+    const providers = await this.tryOnChain()
+    return providers
+      .filter(
+        (p) =>
+          p.tags.some((tag) => words.includes(tag.toLowerCase())) ||
+          p.base_url.toLowerCase().includes(needle),
+      )
+      .slice(0, Math.max(1, Math.min(limit, 50)))
+  }
+
   private async trySupabase(): Promise<ProviderRecord[]> {
     if (!this.supabase) return []
     try {
@@ -92,17 +170,7 @@ export class ProviderRegistry {
       if (error) return []
       if (!data || data.length === 0) return []
 
-      return (data as unknown as SupabaseProviderRow[]).map((r) => ({
-        name: r.name,
-        description: r.description ?? undefined,
-        base_url: r.base_url,
-        modes: r.modes,
-        tags: r.tags,
-        network: r.network,
-        payee: r.payee,
-        source: 'supabase' as const,
-        verified: r.verified === true,
-      }))
+      return (data as unknown as SupabaseProviderRow[]).map(mapSupabaseRow)
     } catch {
       return []
     }

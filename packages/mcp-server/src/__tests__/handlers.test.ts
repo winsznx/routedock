@@ -994,3 +994,106 @@ describe('handleListProviders', () => {
     assert.equal(body.providers[0].name, 'ProvB')
   })
 })
+
+describe('handleListProviders with query', () => {
+  const rows = [
+    { name: 'Stellar DEX Price Feed', description: 'Streaming price feed', network: 'testnet', asset: 'USDC', modes: ['mpp-session'], tags: ['price', 'dex'], base_url: 'https://feed.example.com' },
+    { name: 'Orderbook Stream', description: 'Live orderbook', network: 'testnet', asset: 'USDC', modes: ['mpp-session-ws'], tags: ['orderbook'], base_url: 'https://book.example.com' },
+  ]
+
+  function makeRpcSupabase(
+    result: { data: unknown; error: { message: string } | null },
+    onCall?: (fn: string, args?: Record<string, unknown>) => void,
+  ): HandlerDeps['supabase'] {
+    return {
+      from: () => {
+        throw new Error('from() must not be used when query is set')
+      },
+      rpc: (fn, args) => {
+        onCall?.(fn, args)
+        return Promise.resolve(result as { data: ProviderRow[] | null; error: { message: string } | null })
+      },
+    }
+  }
+
+  it('calls search_providers and returns the ranked rows', async () => {
+    let call: { fn: string; args: Record<string, unknown> | undefined } | undefined
+    const deps = baseDeps({
+      supabase: makeRpcSupabase({ data: rows, error: null }, (fn, args) => {
+        call = { fn, args }
+      }),
+    })
+
+    const result = await handleListProviders({ query: ' streaming price feed ', network: 'testnet' }, deps)
+
+    assert.deepEqual(call, {
+      fn: 'search_providers',
+      args: { query: 'streaming price feed', network: 'testnet', verified_only: true, max_results: 20 },
+    })
+    const body = parseResult(result) as any
+    assert.equal(body.success, true)
+    assert.equal(body.count, 2)
+    assert.equal(body.providers[0].name, 'Stellar DEX Price Feed')
+  })
+
+  it('passes a null network when none is given', async () => {
+    let args: Record<string, unknown> | undefined
+    const deps = baseDeps({
+      supabase: makeRpcSupabase({ data: [], error: null }, (_fn, a) => {
+        args = a
+      }),
+    })
+
+    await handleListProviders({ query: 'price' }, deps)
+
+    assert.equal(args?.['network'], null)
+  })
+
+  it('narrows ranked results by tags when both are given', async () => {
+    const deps = baseDeps({ supabase: makeRpcSupabase({ data: rows, error: null }) })
+
+    const result = await handleListProviders({ query: 'stream', tags: 'orderbook, weather' }, deps)
+
+    const body = parseResult(result) as any
+    assert.equal(body.count, 1)
+    assert.equal(body.providers[0].name, 'Orderbook Stream')
+  })
+
+  it('returns isError when the rpc fails', async () => {
+    const deps = baseDeps({
+      supabase: makeRpcSupabase({ data: null, error: { message: 'function search_providers does not exist' } }),
+    })
+
+    const result = await handleListProviders({ query: 'price' }, deps)
+
+    assert.equal(result.isError, true)
+    const body = parseResult(result) as any
+    assert.ok(body.error.includes('Failed to search providers'))
+    assert.ok(body.error.includes('does not exist'))
+  })
+
+  it('returns isError when the client has no rpc', async () => {
+    const deps = baseDeps({ supabase: makeSupabase(rows) })
+
+    const result = await handleListProviders({ query: 'price' }, deps)
+
+    assert.equal(result.isError, true)
+  })
+
+  it('keeps the tag and network path when query is absent or blank', async () => {
+    const deps = baseDeps({ supabase: makeSupabase(rows) })
+
+    const absent = parseResult(await handleListProviders({}, deps)) as any
+    const blank = parseResult(await handleListProviders({ query: '   ' }, deps)) as any
+
+    assert.equal(absent.count, 2)
+    assert.equal(blank.count, 2)
+  })
+
+  it('documents query in the list_providers tool schema', () => {
+    const tool = TOOLS.find((t) => t.name === 'list_providers')
+    const properties = (tool?.inputSchema as { properties: Record<string, unknown> }).properties
+    assert.ok('query' in properties)
+    assert.ok('tags' in properties)
+  })
+})
