@@ -13,9 +13,10 @@
 
 import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
 import { usdcToStroops } from '@routedock/routedock'
-// Canonical Horizon endpoints (issue #578): the server keeps one copy of the
-// URL table instead of a third one next to the providers and the SDK.
-import { HORIZON_URLS } from '@routedock/routedock/network'
+// Canonical network constants (issue #578): the server keeps one copy of the
+// Horizon URL and USDC issuer tables instead of its own next to the providers
+// and the SDK.
+import { HORIZON_URLS, USDC_ISSUERS } from '@routedock/routedock/network'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
 import { MAX_STREAM_MESSAGES } from './tools.js'
 
@@ -511,22 +512,51 @@ export async function handleCheckBalance(
   // asset_issuer field access compiles under strictNullChecks.
   const balances = normalizeBalances(account.balances)
 
-  if (asset_code && asset_issuer) {
-    const balance = balances.find(
-      (b) => b.asset_code === asset_code && b.asset_issuer === asset_issuer,
-    )
-    return ok({
-      asset: asset_code,
-      issuer: asset_issuer,
-      balance: balance ? balance.balance : '0',
-      account: keypair.publicKey(),
-    })
-  }
-
   if (asset_code) {
-    const balance = balances.find((b) => b.asset_code === asset_code)
+    const matches = balances.filter((b) => b.asset_code === asset_code)
+
+    // Anyone can create an asset with a popular code, so an issuer-less lookup
+    // must not grab whichever match Horizon happens to list first (issue #567).
+    // USDC resolves to Circle's issuer for this network — the same single source
+    // of truth the SDK's trustline preflight uses — and any other code stays
+    // ambiguous so the caller sees every issuer that holds it.
+    const canonicalIssuer = asset_code === 'USDC' ? USDC_ISSUERS[stellarNetwork] : undefined
+    const issuer = asset_issuer ?? canonicalIssuer
+
+    if (issuer) {
+      const balance = matches.find((b) => b.asset_issuer === issuer)
+      return ok({
+        asset: asset_code,
+        issuer,
+        balance: balance ? balance.balance : '0',
+        account: keypair.publicKey(),
+        ...(asset_issuer
+          ? {}
+          : {
+              note:
+                `asset_issuer was not given, so ${asset_code} was matched to the canonical Circle ` +
+                `issuer for ${stellarNetwork}. Same-coded assets from other issuers are ignored — ` +
+                'pass asset_issuer to check one of those.',
+            }),
+      })
+    }
+
+    if (matches.length > 1) {
+      return ok({
+        asset: asset_code,
+        ambiguous: true,
+        issuers: matches.map((m) => ({ issuer: m.asset_issuer, balance: m.balance })),
+        account: keypair.publicKey(),
+        note:
+          `Several assets share the code ${asset_code} on this account. Pass asset_issuer to get ` +
+          'a single balance.',
+      })
+    }
+
+    const balance = matches[0]
     return ok({
       asset: asset_code,
+      ...(balance?.asset_issuer ? { issuer: balance.asset_issuer } : {}),
       balance: balance ? balance.balance : '0',
       account: keypair.publicKey(),
     })

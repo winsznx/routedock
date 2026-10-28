@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest, EstimateCostResult } from '@routedock/routedock'
+import { USDC_ISSUERS } from '@routedock/routedock/network'
 import {
   handlePayForData,
   handleOpenSession,
@@ -885,17 +886,113 @@ describe('handleCheckBalance', () => {
     assert.equal(body.balance, '0')
   })
 
-  it('returns specific asset balance when asset_code provided', async () => {
+  /** Typed view of a check_balance payload, so these assertions stay off `any`. */
+  function balancePayload(result: ToolResult): Record<string, unknown> {
+    return JSON.parse(result.content[0]!.text) as Record<string, unknown>
+  }
+
+  it('returns the canonical USDC balance when only asset_code is given', async () => {
+    // #given an account holding USDC from Circle, this server's network
     const deps = baseDeps({
       stellarSecret: secret,
       createHorizonServer: makeHorizon([
-        { asset_code: 'USDC', asset_issuer: 'GA5...', balance: '100.00' },
+        { asset_code: 'USDC', asset_issuer: USDC_ISSUERS.testnet, balance: '100.00' },
       ]),
     })
+
+    // #when asking for the asset by code alone
     const result = await handleCheckBalance({ asset_code: 'USDC' }, deps)
-    const body = parseResult(result) as any
+    const body = balancePayload(result)
+
     assert.equal(body.asset, 'USDC')
     assert.equal(body.balance, '100.00')
+    assert.equal(body.issuer, USDC_ISSUERS.testnet)
+  })
+
+  it('ignores a same-coded USDC issued by someone else (issue #567)', async () => {
+    // #given a lookalike USDC listed before the real one, as Horizon may return
+    const deps = baseDeps({
+      stellarSecret: secret,
+      createHorizonServer: makeHorizon([
+        { asset_code: 'USDC', asset_issuer: 'GDV4RBI44MPBORVOUHDVH34IKYHKGAVHVJFDGZ4BQ2FOCBNLNQIHSB6O', balance: '999999.00' },
+        { asset_code: 'USDC', asset_issuer: USDC_ISSUERS.testnet, balance: '100.00' },
+      ]),
+    })
+
+    // #when asking for USDC without naming an issuer
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+
+    // #then the canonical issuer's balance is reported, not the lookalike's
+    assert.equal(body.balance, '100.00')
+    assert.equal(body.issuer, USDC_ISSUERS.testnet)
+    assert.ok(
+      typeof body.note === 'string' && body.note.includes('asset_issuer'),
+      'the answer must say the issuer was defaulted',
+    )
+  })
+
+  it('returns 0 for USDC when the account only holds a lookalike', async () => {
+    const deps = baseDeps({
+      stellarSecret: secret,
+      createHorizonServer: makeHorizon([
+        { asset_code: 'USDC', asset_issuer: 'GDV4RBI44MPBORVOUHDVH34IKYHKGAVHVJFDGZ4BQ2FOCBNLNQIHSB6O', balance: '999999.00' },
+      ]),
+    })
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+
+    assert.equal(body.balance, '0')
+    assert.equal(body.issuer, USDC_ISSUERS.testnet)
+  })
+
+  it('defaults USDC to the mainnet issuer on a mainnet server', async () => {
+    const deps = baseDeps({
+      stellarSecret: secret,
+      stellarNetwork: 'mainnet',
+      createHorizonServer: makeHorizon([
+        { asset_code: 'USDC', asset_issuer: USDC_ISSUERS.testnet, balance: '10.00' },
+        { asset_code: 'USDC', asset_issuer: USDC_ISSUERS.mainnet, balance: '250.00' },
+      ]),
+    })
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USDC' }, deps))
+
+    assert.equal(body.balance, '250.00')
+    assert.equal(body.issuer, USDC_ISSUERS.mainnet)
+  })
+
+  it('returns every issuer when a non-USDC code is ambiguous (issue #567)', async () => {
+    // #given two unrelated assets that both use the code USD1
+    const deps = baseDeps({
+      stellarSecret: secret,
+      createHorizonServer: makeHorizon([
+        { asset_code: 'USD1', asset_issuer: 'ISSUER1', balance: '10.00' },
+        { asset_code: 'USD1', asset_issuer: 'ISSUER2', balance: '20.00' },
+      ]),
+    })
+
+    // #when asking for the code with no issuer
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
+
+    // #then nothing is silently picked: both are shown, each with its issuer
+    assert.equal(body.ambiguous, true)
+    assert.deepEqual(body.issuers, [
+      { issuer: 'ISSUER1', balance: '10.00' },
+      { issuer: 'ISSUER2', balance: '20.00' },
+    ])
+    assert.equal(body.balance, undefined)
+  })
+
+  it('returns the single issuer when a non-USDC code is unambiguous', async () => {
+    const deps = baseDeps({
+      stellarSecret: secret,
+      createHorizonServer: makeHorizon([
+        { asset_code: 'USD1', asset_issuer: 'ISSUER1', balance: '10.00' },
+      ]),
+    })
+    const body = balancePayload(await handleCheckBalance({ asset_code: 'USD1' }, deps))
+
+    assert.equal(body.ambiguous, undefined)
+    assert.equal(body.issuer, 'ISSUER1')
+    assert.equal(body.balance, '10.00')
   })
 
   it('returns 0 when requested asset is not found', async () => {
@@ -909,6 +1006,8 @@ describe('handleCheckBalance', () => {
   })
 
   it('returns specific asset balance when both asset_code and asset_issuer are provided', async () => {
+    // An explicit issuer stays exact — including for a non-canonical USDC, which
+    // is the only way to read a lookalike balance on purpose.
     const deps = baseDeps({
       stellarSecret: secret,
       createHorizonServer: makeHorizon([
@@ -919,9 +1018,11 @@ describe('handleCheckBalance', () => {
       { asset_code: 'USDC', asset_issuer: 'ISSUER1' },
       deps,
     )
-    const body = parseResult(result) as any
+    const body = balancePayload(result)
+
     assert.equal(body.balance, '55.50')
     assert.equal(body.issuer, 'ISSUER1')
+    assert.equal(body.note, undefined)
   })
 })
 
