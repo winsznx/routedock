@@ -17,7 +17,7 @@ import {
   type ProviderRow,
   type SupabaseQueryBuilder,
 } from '../handlers.js'
-import { MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
+import { MAX_PROVIDER_ROWS, MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
 
 // ---------------------------------------------------------------------------
 // Tool schema regression guard (issue #272)
@@ -67,6 +67,27 @@ describe('TOOLS schema regression', () => {
     assert.equal(MAX_STREAM_MESSAGES, 50)
   })
 
+  it('list_providers limit is bounded and network documents its default (issue #566)', () => {
+    const tool = TOOLS.find((t) => t.name === 'list_providers')
+    assert.ok(tool, 'list_providers tool must exist in TOOLS')
+
+    const properties = (tool.inputSchema as unknown as {
+      properties: {
+        limit: { type: string; minimum: number; maximum: number }
+        network: { description: string }
+      }
+    }).properties
+
+    assert.equal(properties.limit.type, 'integer')
+    assert.equal(properties.limit.minimum, 1)
+    assert.equal(properties.limit.maximum, MAX_PROVIDER_ROWS)
+    assert.equal(MAX_PROVIDER_ROWS, 50)
+    assert.ok(
+      properties.network.description.includes('STELLAR_NETWORK'),
+      'network must document that it defaults to the server network',
+    )
+  })
+
   it('open_session url describes the streaming endpoint, not a base URL (issue #317)', () => {
     const tool = TOOLS.find((t) => t.name === 'open_session')
     assert.ok(tool, 'open_session tool must exist in TOOLS')
@@ -86,6 +107,18 @@ describe('TOOLS schema regression', () => {
 
 function parseResult(result: ToolResult): unknown {
   return JSON.parse(result.content[0]!.text)
+}
+
+/** Typed view of a handler payload, for assertions that stay off `any`. */
+function payload(result: ToolResult): Record<string, unknown> {
+  return JSON.parse(result.content[0]!.text) as Record<string, unknown>
+}
+
+/** The first provider of a list_providers payload, asserting there is one. */
+function firstProvider(result: ToolResult): Record<string, unknown> {
+  const providers = (payload(result).providers ?? []) as Record<string, unknown>[]
+  assert.ok(providers.length > 0, 'expected at least one provider in the payload')
+  return providers[0]!
 }
 
 /** Minimal RouteDockManifest fixture required by EstimateCostResult. */
@@ -132,16 +165,50 @@ function makeClient(overrides: Partial<{
   } as unknown as HandlerDeps['client']
 }
 
-/** Minimal fake Supabase client */
-function makeSupabase(rows: unknown[], error: { message: string } | null = null): HandlerDeps['supabase'] {
+/** Records the builder chain the handler builds, for query-shape assertions. */
+interface SupabaseCalls {
+  select: string
+  eq: Array<[string, unknown]>
+  overlaps: Array<[string, string[]]>
+  limit: number[]
+  order: Array<[string, { ascending?: boolean }]>
+}
+
+function newSupabaseCalls(): SupabaseCalls {
+  return { select: '', eq: [], overlaps: [], limit: [], order: [] }
+}
+
+/** Minimal fake Supabase client.  Pass `calls` to assert the query shape. */
+function makeSupabase(
+  rows: unknown[],
+  error: { message: string } | null = null,
+  calls?: SupabaseCalls,
+): HandlerDeps['supabase'] {
   const terminal = Promise.resolve({ data: rows as ProviderRow[], error })
   const builder: unknown = Object.assign(terminal, {
-    eq: () => builder,
-    overlaps: () => builder,
+    eq: (field: string, value: unknown) => {
+      calls?.eq.push([field, value])
+      return builder
+    },
+    overlaps: (field: string, values: string[]) => {
+      calls?.overlaps.push([field, values])
+      return builder
+    },
+    limit: (n: number) => {
+      calls?.limit.push(n)
+      return builder
+    },
+    order: (column: string, options?: { ascending?: boolean }) => {
+      calls?.order.push([column, options ?? {}])
+      return builder
+    },
   })
   return {
     from: (_table: string) => ({
-      select: (_cols: string) => builder as SupabaseQueryBuilder,
+      select: (cols: string) => {
+        if (calls) calls.select = cols
+        return builder as SupabaseQueryBuilder
+      },
     }),
   }
 }
@@ -1093,5 +1160,158 @@ describe('handleListProviders', () => {
     assert.ok(calledOverlaps, 'overlaps() should have been called for tag filtering')
     const body = parseResult(result) as any
     assert.equal(body.providers[0].name, 'ProvB')
+  })
+
+  it('defaults the network filter to the server network (issue #566)', async () => {
+    // #given a testnet server and an empty registry
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ stellarNetwork: 'testnet', supabase: makeSupabase([], null, calls) })
+
+    // #when listing providers without a network argument
+    const result = await handleListProviders({}, deps)
+
+    // #then only that network is queried, and the answer says so
+    assert.deepEqual(calls.eq, [['network', 'testnet']])
+    assert.equal(payload(result).network, 'testnet')
+  })
+
+  it('defaults the network filter to mainnet on a mainnet server', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ stellarNetwork: 'mainnet', supabase: makeSupabase([], null, calls) })
+    await handleListProviders({}, deps)
+    assert.deepEqual(calls.eq, [['network', 'mainnet']])
+  })
+
+  it('honours an explicit network over the server default', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ stellarNetwork: 'testnet', supabase: makeSupabase([], null, calls) })
+    const result = await handleListProviders({ network: 'mainnet' }, deps)
+    assert.deepEqual(calls.eq, [['network', 'mainnet']])
+    assert.equal(payload(result).network, 'mainnet')
+  })
+
+  it('selects explicit columns instead of the whole table', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
+    await handleListProviders({}, deps)
+
+    assert.ok(!calls.select.includes('*'), `select must not use '*', got ${calls.select}`)
+    assert.ok(calls.select.includes('verified'), 'verified has to be selected to be returned')
+    assert.ok(calls.select.includes('manifest->asset'), 'assets live in the manifest JSONB')
+  })
+
+  it('bounds the query to MAX_PROVIDER_ROWS when no limit is given', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
+    const result = await handleListProviders({}, deps)
+
+    assert.deepEqual(calls.limit, [MAX_PROVIDER_ROWS])
+    assert.equal(payload(result).limit, MAX_PROVIDER_ROWS)
+  })
+
+  it('honours a caller-supplied limit', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
+    const result = await handleListProviders({ limit: 5 }, deps)
+
+    assert.deepEqual(calls.limit, [5])
+    assert.equal(payload(result).limit, 5)
+  })
+
+  it('rejects a limit outside 1..MAX_PROVIDER_ROWS without querying', async () => {
+    for (const limit of [0, -1, 1.5, MAX_PROVIDER_ROWS + 1]) {
+      const calls = newSupabaseCalls()
+      const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
+      const result = await handleListProviders({ limit }, deps)
+
+      assert.equal(result.isError, true, `limit ${limit} must be rejected`)
+      assert.equal(calls.select, '', `limit ${limit} must not reach the database`)
+    }
+  })
+
+  it('orders verified providers first, newest registration second', async () => {
+    const calls = newSupabaseCalls()
+    const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
+    await handleListProviders({}, deps)
+
+    assert.deepEqual(calls.order, [
+      ['verified', { ascending: false }],
+      ['registered_at', { ascending: false }],
+    ])
+  })
+
+  it('returns the real assets and the verified flag instead of asset: undefined', async () => {
+    // #given a row shaped like the registry query: PostgREST projects
+    // manifest->asset onto a top-level key, and `verified` is a real column
+    const rows = [
+      {
+        name: 'ProvA',
+        description: 'desc',
+        network: 'testnet',
+        base_url: 'https://a.example.com',
+        modes: ['x402'],
+        tags: ['price'],
+        verified: true,
+        asset: 'USDC',
+      },
+    ]
+    const deps = baseDeps({ supabase: makeSupabase(rows) })
+
+    // #when listing providers
+    const provider = firstProvider(await handleListProviders({}, deps))
+
+    // #then the advertised asset and verification state are visible
+    assert.deepEqual(provider.assets, ['USDC'])
+    assert.equal(provider.asset, 'USDC')
+    assert.equal(provider.verified, true)
+  })
+
+  it('reads multi-asset providers from the manifest column', async () => {
+    // A manifest's `assets` is an AssetConfig[] (asset / asset_contract /
+    // modes), not a list of codes, so this is what PostgREST projects.
+    const rows = [
+      {
+        name: 'ProvC',
+        description: '',
+        network: 'testnet',
+        base_url: 'https://c.example.com',
+        modes: ['mpp-charge'],
+        tags: [],
+        verified: false,
+        manifest: {
+          assets: [
+            { asset: 'USDC', asset_contract: 'C...', modes: ['x402'] },
+            { asset: 'EURC', asset_contract: 'C...', modes: ['x402'] },
+          ],
+        },
+      },
+    ]
+    const deps = baseDeps({ supabase: makeSupabase(rows) })
+    const result = await handleListProviders({}, deps)
+
+    const provider = firstProvider(result)
+    assert.deepEqual(provider.assets, ['USDC', 'EURC'])
+    assert.equal(provider.asset, 'USDC')
+    assert.equal(provider.verified, false)
+  })
+
+  it('marks the result truncated only when the row cap is reached', async () => {
+    const rows = Array.from({ length: 2 }, (_unused, i) => ({
+      name: `Prov${i}`,
+      description: '',
+      network: 'testnet',
+      base_url: `https://${i}.example.com`,
+      modes: ['x402'],
+      tags: [],
+      verified: false,
+      asset: 'USDC',
+    }))
+    const deps = baseDeps({ supabase: makeSupabase(rows) })
+
+    const partial = payload(await handleListProviders({ limit: 3 }, deps))
+    assert.equal(partial.truncated, false)
+
+    const capped = payload(await handleListProviders({ limit: 2 }, deps))
+    assert.equal(capped.truncated, true)
   })
 })

@@ -15,6 +15,13 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js'
  */
 export const MAX_STREAM_MESSAGES = 50
 
+/**
+ * Upper bound on how many provider rows list_providers may return.  Each row
+ * adds its modes, tags and accepted assets to the model's context, so the
+ * registry query is bounded rather than dumping the whole table (issue #566).
+ */
+export const MAX_PROVIDER_ROWS = 50
+
 export const TOOLS: Tool[] = [
   {
     name: 'pay_for_data',
@@ -122,7 +129,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'list_providers',
     description:
-      'List available RouteDock providers from the registry. Can filter by capability tags (returns providers matching any of the given tags) and by network.',
+      'List available RouteDock providers from the registry, bounded to a maximum of 50 rows and ordered by verified providers first. Can filter by capability tags (returns providers matching any of the given tags) and by network; without a network the server only returns providers on its own configured network.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -133,7 +140,14 @@ export const TOOLS: Tool[] = [
         network: {
           type: 'string',
           enum: ['testnet', 'mainnet'],
-          description: 'Filter by Stellar network',
+          description:
+            'Filter by Stellar network. Defaults to the network this server is configured with (STELLAR_NETWORK), so providers that cannot be paid from here are not returned.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_PROVIDER_ROWS,
+          description: `Maximum number of providers to return (1 to ${MAX_PROVIDER_ROWS}, default ${MAX_PROVIDER_ROWS})`,
         },
       },
       required: [],

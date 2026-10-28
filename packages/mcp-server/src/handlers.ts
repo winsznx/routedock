@@ -11,14 +11,19 @@
  * the MCP Server, and dispatching to these functions.
  */
 
-import type { RouteDockClient, SessionHandle, PaymentMode } from '@routedock/routedock'
+import type {
+  RouteDockClient,
+  SessionHandle,
+  PaymentMode,
+  AssetConfig,
+} from '@routedock/routedock'
 import { usdcToStroops } from '@routedock/routedock'
 // Canonical network constants (issue #578): the server keeps one copy of the
 // Horizon URL and USDC issuer tables instead of its own next to the providers
 // and the SDK.
 import { HORIZON_URLS, USDC_ISSUERS } from '@routedock/routedock/network'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
-import { MAX_STREAM_MESSAGES } from './tools.js'
+import { MAX_PROVIDER_ROWS, MAX_STREAM_MESSAGES } from './tools.js'
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -32,15 +37,27 @@ export type ToolResult = {
   isError?: true
 }
 
-/** Database row representation for a provider in Supabase registry. */
+/**
+ * Database row representation for a provider in Supabase registry.
+ *
+ * The `providers` table has no `asset` column (`supabase/migrations/001_init.sql`):
+ * the asset(s) a provider accepts live in the `manifest` JSONB, which
+ * `list_providers` projects into the top-level `asset` / `assets` keys below.
+ * Each field is optional because the shape is exactly what the registry query
+ * selects, and an older row may legitimately lack `description` or `tags`.
+ */
 export interface ProviderRow {
   name: string
   description: string
   network: string
-  asset: string
+  base_url: string
   modes: string[]
   tags: string[]
-  base_url: string
+  verified?: boolean | null
+  registered_at?: string
+  asset?: string
+  assets?: AssetConfig[]
+  manifest?: { asset?: string; assets?: AssetConfig[] } | null
   [key: string]: unknown
 }
 
@@ -53,6 +70,8 @@ export interface SupabaseQueryResult {
 export interface SupabaseQueryBuilder {
   eq?: (field: string, value: unknown) => SupabaseQueryBuilder
   overlaps?: (field: string, values: string[]) => SupabaseQueryBuilder | Promise<SupabaseQueryResult>
+  order?: (column: string, options?: { ascending?: boolean }) => SupabaseQueryBuilder
+  limit?: (rows: number) => SupabaseQueryBuilder
   then?: (onfulfilled: (res: SupabaseQueryResult) => unknown) => unknown
   [key: string]: unknown
 }
@@ -578,18 +597,61 @@ export async function handleCheckBalance(
 export interface ListProvidersArgs {
   tags?: string
   network?: 'testnet' | 'mainnet'
+  limit?: number
+}
+
+/**
+ * The registry columns this tool surfaces.  Never `select('*')`: the full
+ * `manifest` JSONB is far larger than anything the model needs, and `id` and
+ * `payee` are not part of the tool's contract.  `providers` has no `asset`
+ * column, so the accepted assets are projected out of the manifest.
+ */
+const PROVIDER_COLUMNS =
+  'name, description, base_url, modes, tags, network, verified, registered_at, ' +
+  'manifest->asset, manifest->assets'
+
+/**
+ * Accepted asset codes for a row.  PostgREST projects `manifest->asset` and
+ * `manifest->assets` onto top-level keys, but a caller that hands us a full
+ * manifest row works too, so both shapes are read.  `assets` is an
+ * AssetConfig[] (`packages/sdk/src/types.ts`) whose `asset` field is the code,
+ * not a list of codes.  Order is preserved and duplicates dropped.
+ */
+function providerAssets(row: ProviderRow): string[] {
+  const candidates: Array<string | AssetConfig[] | undefined> = [
+    row.asset,
+    row.assets,
+    row.manifest?.asset,
+    row.manifest?.assets,
+  ]
+
+  const assets: string[] = []
+  for (const candidate of candidates) {
+    const values = Array.isArray(candidate) ? candidate : [candidate]
+    for (const value of values) {
+      const code = typeof value === 'string' ? value : value?.asset
+      if (code && !assets.includes(code)) {
+        assets.push(code)
+      }
+    }
+  }
+  return assets
 }
 
 /**
  * Query the Supabase provider registry with optional tag-overlap and network
  * filters.  Tags column is a TEXT[] with a GIN index — we use .overlaps(), not
  * full-text search.
+ *
+ * `network` defaults to the network this server is configured for
+ * (`STELLAR_NETWORK`), because providers registered on the other network cannot
+ * be paid from here.  Results are verified-first and bounded by `limit`.
  */
 export async function handleListProviders(
   args: ListProvidersArgs,
   deps: HandlerDeps,
 ): Promise<ToolResult> {
-  const { tags, network } = args
+  const { tags, network, limit } = args
   const { supabase } = deps
 
   if (!supabase) {
@@ -598,11 +660,24 @@ export async function handleListProviders(
     )
   }
 
-  // Build query — start with the full select, apply filters progressively.
-  let query: SupabaseQueryBuilder = supabase.from('providers').select('*')
+  if (
+    limit !== undefined &&
+    (!Number.isInteger(limit) || limit < 1 || limit > MAX_PROVIDER_ROWS)
+  ) {
+    return err(
+      `limit must be an integer between 1 and ${MAX_PROVIDER_ROWS} (received ${limit})`,
+    )
+  }
 
-  if (network && query.eq) {
-    query = query.eq('network', network)
+  const effectiveNetwork = network ?? deps.stellarNetwork
+  const rowLimit = limit ?? MAX_PROVIDER_ROWS
+
+  // Build query — start with the explicit column list, apply filters progressively.
+  let query: SupabaseQueryBuilder = supabase.from('providers').select(PROVIDER_COLUMNS)
+
+  // One network filter is always applied: the caller's, or this server's own.
+  if (query.eq) {
+    query = query.eq('network', effectiveNetwork)
   }
 
   if (tags) {
@@ -616,6 +691,18 @@ export async function handleListProviders(
     }
   }
 
+  // Verified (signed and reviewed) providers first, newest registrations next.
+  if (query.order) {
+    query = query.order('verified', { ascending: false })
+    if (query.order) {
+      query = query.order('registered_at', { ascending: false })
+    }
+  }
+
+  if (query.limit) {
+    query = query.limit(rowLimit)
+  }
+
   const { data, error } = await (query as unknown as PromiseLike<SupabaseQueryResult>)
 
   if (error) {
@@ -627,14 +714,25 @@ export async function handleListProviders(
   return ok({
     success: true,
     count: rows.length,
-    providers: rows.map((p: ProviderRow) => ({
-      name: p.name,
-      description: p.description,
-      network: p.network,
-      asset: p.asset,
-      modes: p.modes,
-      tags: p.tags,
-      base_url: p.base_url,
-    })),
+    network: effectiveNetwork,
+    limit: rowLimit,
+    // True when the row cap was reached — more providers may exist on this network.
+    truncated: rows.length >= rowLimit,
+    providers: rows.map((p: ProviderRow) => {
+      const assets = providerAssets(p)
+      return {
+        name: p.name,
+        description: p.description,
+        network: p.network,
+        base_url: p.base_url,
+        modes: p.modes,
+        tags: p.tags,
+        verified: p.verified ?? false,
+        assets,
+        // The primary asset, kept alongside `assets` because single-asset
+        // providers — the common case — only advertise one.
+        asset: assets[0] ?? null,
+      }
+    }),
   })
 }
