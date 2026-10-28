@@ -3,7 +3,7 @@
  * package runs in browsers, Workers without `nodejs_compat`, Bun and Deno.
  * Mirrors `packages/sdk/src/internal/{encoding,hash}.ts`.
  */
-import { sha256 as nobleSha256, sha512 as nobleSha512 } from '@noble/hashes/sha2'
+import { sha256 as nobleSha256, sha512 as nobleSha512 } from '@noble/hashes/sha2.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

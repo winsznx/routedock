@@ -13,3 +13,13 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # 0.x minors here are breaking and need a hand-written migration.
+      - dependency-name: "mppx"
+      - dependency-name: "@stellar/mpp"
+      # Pinned to 2.9.0 by the root override (#650); newer versions
+      # duplicate @stellar/stellar-sdk in the Workers bundles.
+      - dependency-name: "@x402/*"
+      # tsup's DTS build and typescript-eslint don't support TS 7 yet.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

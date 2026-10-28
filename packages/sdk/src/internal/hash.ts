@@ -6,7 +6,7 @@
  * synchronous manifest-signing API to change. Output is byte-identical to
  * `createHash('sha256' | 'sha512')`.
  */
-import { sha256 as nobleSha256, sha512 as nobleSha512 } from '@noble/hashes/sha2'
+import { sha256 as nobleSha256, sha512 as nobleSha512 } from '@noble/hashes/sha2.js'
 import { bytesToHex, utf8ToBytes } from './encoding.js'
 
 export function sha256(data: Uint8Array | string): Uint8Array {
