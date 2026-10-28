@@ -239,10 +239,6 @@ export class RouteDockClient {
     }
     this.vault = config.vault
 
-    if (config.commitmentSecret) {
-      _secrets.set(this, config.commitmentSecret)
-    }
-
     const secretKey = this.keypair.secret()
     // Carry the client's logger into retry diagnostics so a consumer that
     // silences the SDK silences the retry path too.
