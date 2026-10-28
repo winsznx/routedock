@@ -1,5 +1,29 @@
 # @routedock/nulth-sdk
 
+## 0.3.0
+
+### Minor Changes
+
+- [#638](https://github.com/winsznx/routedock/pull/638) [`5d5aa72`](https://github.com/winsznx/routedock/commit/5d5aa72ab7fd52c2676be563e1f22a0d376f1634) Thanks [@chykason77-blip](https://github.com/chykason77-blip)! - Adds the Nulth x402 signing pieces: `NULTH_SIGNER_MARKER` marks a signer built by
+  `createNulthSigner()` so a client can tell a ZK account payer from an ed25519 key,
+  `nulthProofScVal`/`decodeNulthProofScVal` encode and read the `zk-v1` proof
+  envelope that goes into `SorobanAddressCredentials.signature`, and
+  `nulthAuthorizeEntry` replaces stellar-sdk's default authorization writer — which
+  throws `invalid version byte. expected 48, got 16` for a `C...` contract account
+  ([#356](https://github.com/winsznx/routedock/issues/356)) — with one that stores the proof instead of an ed25519 signature.
+
+### Patch Changes
+
+- [#625](https://github.com/winsznx/routedock/pull/625) [`aa99d8d`](https://github.com/winsznx/routedock/commit/aa99d8d4980f95fd373c029957780cfc1baa57f5) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Enable npm provenance for releases and include repository, homepage, and issue links in package metadata.
+
+- [#630](https://github.com/winsznx/routedock/pull/630) [`461ca6a`](https://github.com/winsznx/routedock/commit/461ca6afd0231259343d647bada89994f5bc9b11) Thanks [@chiomailekuba](https://github.com/chiomailekuba)! - Declare Node.js 22 as the minimum supported runtime, add npm discovery keywords, and document the testnet-only Nulth SDK API and mock prover limitations. Align the MCP build target with the declared runtime.
+
+- [#617](https://github.com/winsznx/routedock/pull/617) [`13fcf55`](https://github.com/winsznx/routedock/commit/13fcf55d7824b823fb501b76ea1a3f138e7fb7e1) Thanks [@Yerimahjr](https://github.com/Yerimahjr)! - Make the `client`, `react` and `provider/hono` entry points runtime-neutral (no `node:fs`, `node:crypto` or `Buffer`). `FileSpendStore` moves to the Node-only `@routedock/routedock/node` entry point (still exported from the root entry), `manifestDigest()` now returns a `Uint8Array`, and SHA-256/512 use `@noble/hashes`. CI now checks the built bundles for Node built-ins.
+
+- [#589](https://github.com/winsznx/routedock/pull/589) [`e16df60`](https://github.com/winsznx/routedock/commit/e16df603eee29a0dcbbbcfacade3f6a3923e6c67) Thanks [@TS-mfon](https://github.com/TS-mfon)! - Use the shared Nulth client, proof and signer implementation in RouteDock while
+  preserving manifest errors and configurable SDK logging. Add typed Nulth
+  configuration errors and an optional logger with a silent standalone default.
+
 ## 0.2.2
 
 ### Patch Changes
