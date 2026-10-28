@@ -1,5 +1,16 @@
 # @routedock/mcp-server
 
+## 0.2.3
+
+### Patch Changes
+
+- [#662](https://github.com/winsznx/routedock/pull/662) [`6b8d8dc`](https://github.com/winsznx/routedock/commit/6b8d8dc280ee2abb397bdfc98e56faf51b6a873e) Thanks [@Melanin-jojo](https://github.com/Melanin-jojo)! - `check_balance` no longer lets an asset code pick the balance: with `asset_issuer` omitted, `USDC` is matched to the canonical Circle issuer for the configured network (same-coded assets from other issuers are ignored), and any other code held from several issuers is returned as `ambiguous` with every `{ issuer, balance }` pair instead of whichever one Horizon listed first. The issuer table is read from the shared `@routedock/routedock/network` entry, so the MCP server and the SDK's trustline preflight keep one source of truth for Circle's issuers.
+
+- [#661](https://github.com/winsznx/routedock/pull/661) [`f7459c5`](https://github.com/winsznx/routedock/commit/f7459c5b5d5ee2e5dba201d090a7e88d09e9b6fd) Thanks [@Melanin-jojo](https://github.com/Melanin-jojo)! - `list_providers` now returns the assets a provider actually accepts (projected from the registry's `manifest` JSONB, where `asset` used to come out `undefined`) together with its `verified` flag, scopes the query to the server's own `STELLAR_NETWORK` unless the caller names one, and bounds the result set to 50 rows with an optional `limit` argument, ordered verified-first then newest registration.
+
+- Updated dependencies [[`b66288a`](https://github.com/winsznx/routedock/commit/b66288ac384c18f57cf9afa15b7426aeeae06b75)]:
+  - @routedock/routedock@0.4.1
+
 ## 0.2.2
 
 ### Patch Changes
