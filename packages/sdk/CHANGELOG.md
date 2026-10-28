@@ -1,5 +1,11 @@
 # @routedock/routedock
 
+## 0.4.1
+
+### Patch Changes
+
+- [#660](https://github.com/winsznx/routedock/pull/660) [`b66288a`](https://github.com/winsznx/routedock/commit/b66288ac384c18f57cf9afa15b7426aeeae06b75) Thanks [@Melanin-jojo](https://github.com/Melanin-jojo)! - The package root now exports `MppSessionClient` (and its `WebSocketFactory` / `WebSocketLike` types), so `import { MppSessionClient } from '@routedock/routedock'` works instead of only `@routedock/routedock/client`. A new entry-export parity test fails if the two entries' runtime exports drift apart again, and `RouteDockClient` stores its commitment secret once instead of twice.
+
 ## 0.4.0
 
 ### Minor Changes
