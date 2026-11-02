@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.0",
+    "@hono/node-server": "^2.1.5",
     "@stellar/stellar-sdk": "^14.6.1",
     "hono": "^4.0.0",
     "@routedock/routedock": "workspace:*"
