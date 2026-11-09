@@ -163,12 +163,12 @@
     "test": "tsx --experimental-test-module-mocks --test $(find src -name '*.test.ts' -o -name '*.test.tsx' | sort)"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.0.0",
+    "@cfworker/json-schema": "^4.1.6",
     "@noble/hashes": "^2.4.0",
     "@routedock/nulth-sdk": "workspace:*",
     "@stellar/mpp": "^0.4.0",
     "@stellar/stellar-sdk": "^14.6.1",
-    "@supabase/supabase-js": "^2.47.0",
+    "@supabase/supabase-js": "^2.119.0",
     "@x402/core": "^2.9.0",
     "@x402/stellar": "^2.9.0",
     "mppx": "^0.5.7"
@@ -203,14 +203,14 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "express": "^5.3.0",
-    "fastify": "^5.0.0",
-    "hono": "^4.12.23",
+    "fastify": "^5.12.8",
+    "hono": "^4.13.16",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsup": "^8.0.0",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5",
-    "viem": "^2.57.11"
+    "viem": "^2.57.16"
   },
   "engines": {
     "node": ">=22"
