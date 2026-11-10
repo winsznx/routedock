@@ -23,10 +23,24 @@ export interface Env {
   STELLAR_PAYEE_ADDRESS: string
   USDC_ASSET_CONTRACT?: string
   OPENZEPPELIN_API_KEY?: string
+  /** Set to "true" to explicitly opt into local x402 settlement on mainnet without OPENZEPPELIN_API_KEY. */
+  X402_LOCAL_FACILITATOR?: string
   SUPABASE_URL?: string
   SUPABASE_SERVICE_KEY?: string
   /** Public origin used when recording settlements, e.g. https://api-a.routedock.xyz */
   PUBLIC_BASE_URL?: string
+}
+
+export function findStartupProblems(env: Env, network: Network): string[] {
+  const problems = findStellarConfigProblems(env, network)
+  if (
+    network === 'mainnet' &&
+    !env.OPENZEPPELIN_API_KEY &&
+    env.X402_LOCAL_FACILITATOR !== 'true'
+  ) {
+    problems.push('OPENZEPPELIN_API_KEY')
+  }
+  return problems
 }
 
 function createApp(env: Env, ctx: ExecutionContext): Hono {
@@ -37,13 +51,26 @@ function createApp(env: Env, ctx: ExecutionContext): Hono {
   // cannot drift (issue #578). createApp throws on problems; the result is
   // caught by fetch() below, and healthResponse reports the same list as 503
   // without ever building the app.
-  const problems = findStellarConfigProblems(env, network)
+  const problems = findStartupProblems(env, network)
   if (problems.length > 0) {
     throw new Error(`Provider misconfigured: ${problems.join(', ')} unset`)
   }
 
+  const useLocalFacilitatorOnMainnet =
+    network === 'mainnet' && !env.OPENZEPPELIN_API_KEY && env.X402_LOCAL_FACILITATOR === 'true'
+  const activeFacilitator =
+    network === 'mainnet' && env.OPENZEPPELIN_API_KEY
+      ? 'https://channels.openzeppelin.com/x402'
+      : 'local'
+  console.log(`[startup] provider-a x402 facilitator=${activeFacilitator} network=${network}`)
+
   const assetContract = resolveAssetContract(env, network)
-  const manifest = buildManifest({ network, payee: env.STELLAR_PAYEE_ADDRESS, assetContract })
+  const manifest = buildManifest({
+    network,
+    payee: env.STELLAR_PAYEE_ADDRESS,
+    assetContract,
+    localFacilitator: useLocalFacilitatorOnMainnet,
+  })
 
   const supabase: SupabaseClient | null =
     env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY
@@ -143,7 +170,7 @@ function createApp(env: Env, ctx: ExecutionContext): Hono {
 function healthResponse(env: Env): Response {
   const addr = env.STELLAR_PAYEE_ADDRESS
   const network = resolveNetwork(env.STELLAR_NETWORK)
-  const missing = findStellarConfigProblems(env, network)
+  const missing = findStartupProblems(env, network)
   return Response.json(
     {
       status: missing.length > 0 ? 'misconfigured' : 'ok',
@@ -158,9 +185,10 @@ function healthResponse(env: Env): Response {
 
 /**
  * Workers hand `env` to `fetch`, so the app cannot be built at module scope the
- * way the Express server was. Build once per isolate and reuse.
+ * way the Express server was. Build once per isolate and reuse when `env` is unchanged.
  */
 let cachedApp: Hono | null = null
+let cachedEnv: Env | null = null
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -168,7 +196,10 @@ export default {
     if (new URL(request.url).pathname === '/health') return healthResponse(env)
 
     try {
-      cachedApp ??= createApp(env, ctx)
+      if (!cachedApp || cachedEnv !== env) {
+        cachedApp = createApp(env, ctx)
+        cachedEnv = env
+      }
     } catch (err) {
       console.error('[startup]', err)
       return Response.json({ error: 'Provider misconfigured' }, { status: 500 })

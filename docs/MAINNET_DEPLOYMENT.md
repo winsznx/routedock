@@ -252,6 +252,8 @@ RouteDock mainnet x402 uses OpenZeppelin Channels facilitator at:
 
 - `https://channels.openzeppelin.com/x402`
 
+On mainnet, `provider-a` requires `OPENZEPPELIN_API_KEY` at startup (returning `503` on `/health` with `missing: ["OPENZEPPELIN_API_KEY"]` when unset) so it never silently falls back to settling x402 with the payee hot wallet. To intentionally settle x402 locally with the payee key, set `X402_LOCAL_FACILITATOR="true"` (in which case the manifest advertises `facilitator: "local"`).
+
 Provision API token and configure bearer auth:
 
 ```bash

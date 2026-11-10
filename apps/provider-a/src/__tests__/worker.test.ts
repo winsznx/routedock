@@ -83,6 +83,7 @@ describe('provider-a worker payment path & routes', () => {
       ...mockEnv,
       STELLAR_NETWORK: 'mainnet',
       USDC_ASSET_CONTRACT: undefined,
+      OPENZEPPELIN_API_KEY: 'oz-test-key',
     } as unknown as Env
     const req = new Request('http://localhost/health')
     const res = await worker.fetch(req, badEnv, mockCtx)
@@ -91,5 +92,67 @@ describe('provider-a worker payment path & routes', () => {
     const body = (await res.json()) as { status: string; missing?: string[] }
     assert.equal(body.status, 'misconfigured')
     assert.ok(body.missing?.includes('USDC_ASSET_CONTRACT'))
+  })
+
+  it('GET /health returns 503 with missing OPENZEPPELIN_API_KEY on mainnet when key and opt-in are unset (#574)', async () => {
+    const mainnetNoKeyEnv: Env = {
+      ...mockEnv,
+      STELLAR_NETWORK: 'mainnet',
+      USDC_ASSET_CONTRACT: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+    }
+    const res = await worker.fetch(new Request('http://localhost/health'), mainnetNoKeyEnv, mockCtx)
+
+    assert.equal(res.status, 503)
+    const body = (await res.json()) as { status: string; missing?: string[] }
+    assert.equal(body.status, 'misconfigured')
+    assert.deepEqual(body.missing, ['OPENZEPPELIN_API_KEY'])
+
+    // Paid routes also fail closed instead of silently settling locally
+    const priceRes = await worker.fetch(new Request('http://localhost/price'), mainnetNoKeyEnv, mockCtx)
+    assert.equal(priceRes.status, 500)
+  })
+
+  it('mainnet with OPENZEPPELIN_API_KEY set reports /health 200 and advertises OpenZeppelin facilitator (#574)', async () => {
+    const mainnetWithKeyEnv: Env = {
+      ...mockEnv,
+      STELLAR_NETWORK: 'mainnet',
+      USDC_ASSET_CONTRACT: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+      OPENZEPPELIN_API_KEY: 'oz-live-key',
+    }
+    const healthRes = await worker.fetch(new Request('http://localhost/health'), mainnetWithKeyEnv, mockCtx)
+    assert.equal(healthRes.status, 200)
+
+    const manifestRes = await worker.fetch(
+      new Request('http://localhost/.well-known/routedock.json'),
+      mainnetWithKeyEnv,
+      mockCtx,
+    )
+    assert.equal(manifestRes.status, 200)
+    const manifest = (await manifestRes.json()) as {
+      pricing?: { x402?: { facilitator?: string } }
+    }
+    assert.equal(manifest.pricing?.x402?.facilitator, 'https://channels.openzeppelin.com/x402')
+  })
+
+  it('mainnet with X402_LOCAL_FACILITATOR=true opt-in starts and advertises local facilitator in manifest (#574)', async () => {
+    const mainnetOptInEnv: Env = {
+      ...mockEnv,
+      STELLAR_NETWORK: 'mainnet',
+      USDC_ASSET_CONTRACT: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+      X402_LOCAL_FACILITATOR: 'true',
+    }
+    const healthRes = await worker.fetch(new Request('http://localhost/health'), mainnetOptInEnv, mockCtx)
+    assert.equal(healthRes.status, 200)
+
+    const manifestRes = await worker.fetch(
+      new Request('http://localhost/.well-known/routedock.json'),
+      mainnetOptInEnv,
+      mockCtx,
+    )
+    assert.equal(manifestRes.status, 200)
+    const manifest = (await manifestRes.json()) as {
+      pricing?: { x402?: { facilitator?: string } }
+    }
+    assert.equal(manifest.pricing?.x402?.facilitator, 'local')
   })
 })

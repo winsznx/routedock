@@ -18,9 +18,18 @@ export interface ManifestInput {
   network: Network
   payee: string
   assetContract: string
+  localFacilitator?: boolean
 }
 
-export function buildManifest({ network, payee, assetContract }: ManifestInput): RouteDockManifest {
+export function buildManifest({
+  network,
+  payee,
+  assetContract,
+  localFacilitator = false,
+}: ManifestInput): RouteDockManifest {
+  const facilitator = localFacilitator
+    ? 'local'
+    : `https://channels.openzeppelin.com/x402${network === 'mainnet' ? '' : '/testnet'}`
   return {
     routedock: '1.0',
     name: 'Stellar DEX Price Feed',
@@ -34,7 +43,7 @@ export function buildManifest({ network, payee, assetContract }: ManifestInput):
       x402: {
         amount: X402_PRICE,
         per: 'request',
-        facilitator: `https://channels.openzeppelin.com/x402${network === 'mainnet' ? '' : '/testnet'}`,
+        facilitator,
       },
       'mpp-charge': { amount: MPP_CHARGE_PRICE, per: 'request' },
     },

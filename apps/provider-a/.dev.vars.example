@@ -3,4 +3,7 @@ STELLAR_PAYEE_ADDRESS="G..."          # its public key
 # Optional — omit to run without the registry
 SUPABASE_URL=""
 SUPABASE_SERVICE_KEY=""
+# Required on mainnet unless X402_LOCAL_FACILITATOR="true" is explicitly set
 OPENZEPPELIN_API_KEY=""
+# Optional mainnet override: set to "true" to settle x402 locally with STELLAR_PAYEE_SECRET
+# X402_LOCAL_FACILITATOR="true"
