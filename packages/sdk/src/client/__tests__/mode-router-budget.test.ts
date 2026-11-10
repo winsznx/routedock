@@ -98,10 +98,64 @@ describe('selectMode — budget_per_request validation', () => {
     assert.equal(selectMode(manifest, { optimize: 'cost' }), 'mpp-charge')
   })
 
-  it('ignores the budget when optimize is not cost', () => {
+  it('enforces budget_per_request on the default path when optimize is not set', () => {
+    const expensiveMppCharge = createManifest({
+      'mpp-charge': { amount: '0.01', per: 'request' },
+      x402: { amount: '0.0005', per: 'request' },
+    })
+
+    // Without budget_per_request, mpp-charge is preferred first.
+    assert.equal(selectMode(expensiveMppCharge), 'mpp-charge')
+
+    // With budget_per_request: '0.001' (no optimize), mpp-charge (0.01) exceeds the
+    // budget and x402 (0.0005) is selected.
     assert.equal(
-      selectMode(manifest, { budget_per_request: 'abc' }),
+      selectMode(expensiveMppCharge, { budget_per_request: '0.001' }),
+      'x402',
+    )
+
+    // When both mpp-charge and x402 fit the budget, default preference order keeps mpp-charge first.
+    assert.equal(
+      selectMode(expensiveMppCharge, { budget_per_request: '0.02' }),
       'mpp-charge',
+    )
+  })
+
+  it('throws budget_per_request_exceeded on the default path when every per-request mode exceeds the budget', () => {
+    const expensiveMppCharge = createManifest({
+      'mpp-charge': { amount: '0.01', per: 'request' },
+      x402: { amount: '0.005', per: 'request' },
+    })
+    assert.throws(
+      () => selectMode(expensiveMppCharge, { budget_per_request: '0.001' }),
+      assertPolicyReject('budget_per_request_exceeded'),
+    )
+  })
+
+  it('throws invalid_budget_per_request on the default path when budget_per_request is malformed', () => {
+    assert.throws(
+      () => selectMode(manifest, { budget_per_request: 'abc' }),
+      assertPolicyReject('invalid_budget_per_request'),
+    )
+  })
+
+  it('does not affect sustained/session mode selection when budget_per_request is set', () => {
+    const sessionManifest = createManifest(
+      {
+        'mpp-charge': { amount: '0.01', per: 'request' },
+        'mpp-session': {
+          rate: '0.0001',
+          per: 'voucher',
+          min_deposit: '0.01',
+          channel_factory: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+          refund_waiting_period_ledgers: 100,
+        },
+      },
+      ['mpp-charge', 'mpp-session'],
+    )
+    assert.equal(
+      selectMode(sessionManifest, { sustained: true, budget_per_request: '0.0001' }),
+      'mpp-session',
     )
   })
 })

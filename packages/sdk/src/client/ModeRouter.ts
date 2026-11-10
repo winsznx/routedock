@@ -276,7 +276,13 @@ export interface ModeSelectOptions {
   transport?: 'sse' | 'websocket'
   /** Prefer the lowest-cost supported per-request mode when set to 'cost'. */
   optimize?: 'cost'
-  /** Optional maximum acceptable per-request amount for cost-based selection. */
+  /**
+   * Optional maximum acceptable per-request amount (USDC decimal string).
+   * Filters per-request modes ('mpp-charge' and 'x402') on both the default
+   * preference path and when `optimize: 'cost'` is set, throwing
+   * `RouteDockPolicyRejectError('budget_per_request_exceeded')` if every
+   * advertised per-request mode exceeds the ceiling.
+   */
   budget_per_request?: string
   /**
    * Override mode selection and use this specific mode.
@@ -441,6 +447,37 @@ interface ModeSelection {
   reason?: 'cost-optimized'
 }
 
+function parseBudgetStroops(budget?: string): bigint | null {
+  if (budget === undefined) return null
+  // A caller-supplied ceiling must be a well-formed USDC decimal string.
+  // Validating up front keeps a malformed value ('abc', '$0.01', '') from
+  // parsing to NaN/Infinity and silently disabling the budget guard.
+  try {
+    return usdcToStroops(budget)
+  } catch {
+    throw new RouteDockPolicyRejectError('invalid_budget_per_request')
+  }
+}
+
+function collectPerRequestCandidates(
+  modes: PaymentMode[],
+  manifest: RouteDockManifest,
+  order: ReadonlyArray<'x402' | 'mpp-charge'>,
+): Array<{ mode: PaymentMode; amountStroops: bigint }> {
+  return order
+    .filter((mode) => modes.includes(mode))
+    .flatMap((mode) => {
+      const amount = manifest.pricing[mode]?.amount
+      if (typeof amount !== 'string') return []
+      try {
+        return [{ mode: mode as PaymentMode, amountStroops: usdcToStroops(amount) }]
+      } catch {
+        // Unparseable pricing can't be compared against a budget — drop it.
+        return []
+      }
+    })
+}
+
 function selectFromModes(
   modes: PaymentMode[],
   manifest: RouteDockManifest,
@@ -458,32 +495,10 @@ function selectFromModes(
     }
   }
 
-  if (options.optimize === 'cost') {
-    // A caller-supplied ceiling must be a well-formed USDC decimal string.
-    // Validating up front keeps a malformed value ('abc', '$0.01', '') from
-    // parsing to NaN/Infinity and silently disabling the budget guard, which
-    // would let the cheapest mode be selected at any price.
-    let budgetStroops: bigint | null = null
-    if (options.budget_per_request !== undefined) {
-      try {
-        budgetStroops = usdcToStroops(options.budget_per_request)
-      } catch {
-        throw new RouteDockPolicyRejectError('invalid_budget_per_request')
-      }
-    }
+  const budgetStroops = parseBudgetStroops(options.budget_per_request)
 
-    const candidates = (['x402', 'mpp-charge'] as Array<'x402' | 'mpp-charge'>)
-      .filter((mode) => modes.includes(mode))
-      .flatMap((mode) => {
-        const amount = manifest.pricing[mode]?.amount
-        if (typeof amount !== 'string') return []
-        try {
-          return [{ mode: mode as PaymentMode, amountStroops: usdcToStroops(amount) }]
-        } catch {
-          // Unparseable pricing can't be compared against a budget — drop it.
-          return []
-        }
-      })
+  if (options.optimize === 'cost') {
+    const candidates = collectPerRequestCandidates(modes, manifest, ['x402', 'mpp-charge'])
 
     if (candidates.length > 0) {
       const affordableCandidates =
@@ -504,6 +519,20 @@ function selectFromModes(
         throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
       }
     }
+  }
+
+  if (budgetStroops !== null) {
+    const candidates = collectPerRequestCandidates(modes, manifest, ['mpp-charge', 'x402'])
+    const affordableCandidate = candidates.find(
+      (candidate) => candidate.amountStroops <= budgetStroops,
+    )
+    if (affordableCandidate) {
+      return { mode: affordableCandidate.mode }
+    }
+    if (modes.includes('mpp-charge') || modes.includes('x402')) {
+      throw new RouteDockPolicyRejectError('budget_per_request_exceeded')
+    }
+    return undefined
   }
 
   if (modes.includes('mpp-charge')) return { mode: 'mpp-charge' }
