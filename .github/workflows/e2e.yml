@@ -9,6 +9,14 @@ on:
   schedule:
     - cron: '17 3 * * 1'
 
+# All E2E runs spend real testnet USDC from one shared account (AGENT_SECRET)
+# through one shared channel contract (CHANNEL_CONTRACT_ID). Serialize runs
+# globally across all refs so overlapping pushes, PRs, or schedules cannot race
+# on the Stellar account sequence number or channel cumulative amount.
+concurrency:
+  group: e2e-testnet-shared-account
+  cancel-in-progress: false
+
 jobs:
   secret-check:
     name: Check E2E credentials
