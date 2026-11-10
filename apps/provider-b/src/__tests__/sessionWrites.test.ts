@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSessionWriters, type SessionWritersConfig } from '../sessionWrites.js'
 
 const CHANNEL_ID = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
+const CHANNEL_ID_B = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 
 const CONFIG: SessionWritersConfig = {
   payee: 'GBRLCID5A2S6HUC4D4DSWPRWNO75CLNHS2SIPS2BPCCP55Z5N7Z36DJD',
@@ -23,10 +24,10 @@ interface WriteLog {
  * Chainable, awaitable Supabase stub over an in-memory `sessions` table.
  *
  * Mirrors the parts of `001_init.sql` the writers rely on: `.eq` / `.lt` / `.in`
- * filters, and the `BEFORE UPDATE OF cumulative_amount` trigger. When an update
- * carries `cumulative_amount` and any matched row would not strictly increase,
- * the statement fails and no row is changed — exactly what the real trigger
- * does to the combined `onOrphaned` write.
+ * filters, `channel_id` uniqueness, and the `BEFORE UPDATE OF cumulative_amount`
+ * trigger. When an update carries `cumulative_amount` and any matched row would
+ * not strictly increase, the statement fails and no row is changed — exactly what
+ * the real trigger does to the combined `onOrphaned` write.
  */
 function makeSupabaseMock(rows: Row[]) {
   const updates: WriteLog[] = []
@@ -36,7 +37,36 @@ function makeSupabaseMock(rows: Row[]) {
     return {
       insert(payload: Record<string, unknown>) {
         inserts.push({ table: name, payload })
-        if (name === 'sessions') rows.push({ ...payload })
+        if (name === 'sessions') {
+          if (rows.some((r) => r['channel_id'] === payload['channel_id'])) {
+            return Promise.resolve({
+              data: null,
+              error: {
+                message:
+                  'duplicate key value violates unique constraint "sessions_channel_id_key"',
+              },
+            })
+          }
+          rows.push({ ...payload })
+        }
+        return Promise.resolve({ data: null, error: null })
+      },
+      upsert(
+        payload: Record<string, unknown>,
+        opts?: { onConflict?: string; ignoreDuplicates?: boolean },
+      ) {
+        inserts.push({ table: name, payload })
+        if (name === 'sessions') {
+          const conflictKey = opts?.onConflict ?? 'channel_id'
+          const existing = rows.find((r) => r[conflictKey] === payload[conflictKey])
+          if (existing) {
+            if (!opts?.ignoreDuplicates) {
+              Object.assign(existing, payload)
+            }
+          } else {
+            rows.push({ ...payload })
+          }
+        }
         return Promise.resolve({ data: null, error: null })
       },
       update(payload: Record<string, unknown>) {
@@ -204,5 +234,54 @@ describe('provider-b sessionWrites', () => {
     assert.equal(rows[1]!['settlement_tx_hash'], 'old-hash')
     assert.equal(inserts.length, 1)
     assert.equal(inserts[0]!.table, 'tx_log')
+  })
+
+  it('is idempotent on repeated onSessionOpen for the same channel without logging unique-violation errors (#550)', async () => {
+    const { client, rows } = makeSupabaseMock([])
+    const writers = createSessionWriters(client, CONFIG)
+
+    const { errors } = await captureConsole(async () => {
+      await writers.onSessionOpen(CHANNEL_ID, 'GPAYER1')
+      await writers.onVoucher(CHANNEL_ID, 1, '0.0001000', 'sig1')
+      // Repeated onSessionOpen for the same channel must be a no-op and must not
+      // reset cumulative_amount or log a duplicate-key error.
+      await writers.onSessionOpen(CHANNEL_ID, 'GPAYER1')
+    })
+
+    assert.equal(errors.length, 0)
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]!['channel_id'], CHANNEL_ID)
+    assert.equal(rows[0]!['cumulative_amount'], '0.0001000')
+    assert.equal(rows[0]!['voucher_count'], 1)
+  })
+
+  it('maintains separate rows for two different channels and settles only the specified channel (#550)', async () => {
+    const { client, rows } = makeSupabaseMock([])
+    const writers = createSessionWriters(client, CONFIG)
+
+    const { errors } = await captureConsole(async () => {
+      await writers.onSessionOpen(CHANNEL_ID, 'GPAYER_A')
+      await writers.onSessionOpen(CHANNEL_ID_B, 'GPAYER_B')
+
+      await writers.onVoucher(CHANNEL_ID, 1, '0.0001000', 'sigA1')
+      await writers.onVoucher(CHANNEL_ID_B, 1, '0.0005000', 'sigB1')
+
+      // Settling CHANNEL_ID_B must close only CHANNEL_ID_B and leave CHANNEL_ID open.
+      await writers.onSettled('tx-close-b', '0.0005000', 'mpp-session', 'GPAYER_B', CHANNEL_ID_B)
+    })
+
+    assert.equal(errors.length, 0)
+    assert.equal(rows.length, 2)
+
+    const rowA = rows.find((r) => r['channel_id'] === CHANNEL_ID)
+    const rowB = rows.find((r) => r['channel_id'] === CHANNEL_ID_B)
+    assert.ok(rowA)
+    assert.ok(rowB)
+
+    assert.equal(rowA['status'], 'open')
+    assert.equal(rowA['cumulative_amount'], '0.0001000')
+    assert.equal(rowB['status'], 'closed')
+    assert.equal(rowB['settlement_tx_hash'], 'tx-close-b')
+    assert.equal(rowB['cumulative_amount'], '0.0005000')
   })
 })

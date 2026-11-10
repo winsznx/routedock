@@ -34,8 +34,13 @@ import { resolveAssetContract } from './config.js'
  * added, defeated by the runtime.
  *
  * A Durable Object restores the single-process assumption the SDK is written
- * against: one instance per channel contract, serialized execution, and memory
- * that persists between requests.
+ * against: serialized execution and memory that persists between requests.
+ * One Durable Object instance holds a per-channel map of session states (keyed
+ * by the channel contract ID named on each verified credential), with every
+ * persistent storage entry namespaced by `<channelId>`
+ * (`routedock:session:voucher:<channelId>` and `stellar:channel:cumulative:<channelId>`),
+ * so multiple agents with distinct deployed channels can stream and settle
+ * concurrently without interfering (#550).
  *
  * The SDK receives a store backed by this object's persistent storage, so mppx
  * channel state, verified voucher records (amount, signature, payer), and

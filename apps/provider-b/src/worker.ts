@@ -5,8 +5,17 @@ export { ChannelSession } from './ChannelSession.js'
 
 /**
  * Edge entry point. Everything that touches session state is forwarded to a
- * single Durable Object, named after the channel contract, so all vouchers for
- * a channel serialize through one instance with shared memory.
+ * single Durable Object instance (named after `CHANNEL_CONTRACT_ID`) that holds
+ * a per-channel map of session states and namespaces all Durable Object storage
+ * keys by `<channelId>` (`routedock:session:voucher:<channelId>` and
+ * `stellar:channel:cumulative:<channelId>`).
+ *
+ * Why one Durable Object holding a map of channels instead of `idFromName(channelId)`:
+ * 1. Discovery (`/.well-known/routedock.json`) and initial unpaid requests
+ *    (before a 402 challenge or credential) do not carry a channel ID.
+ * 2. The cron `scheduled()` trigger runs `reconcileSessions()` once per
+ *    deployment against a single Durable Object, serializing reconciliation
+ *    against live voucher traffic across all active channels (#550).
  *
  * `/health` is answered here because it reads no session state and should stay
  * up even if the object is busy.

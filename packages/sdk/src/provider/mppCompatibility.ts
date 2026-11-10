@@ -34,10 +34,41 @@ export function withTypedChannelErrors(method: Method.AnyServer): Method.AnyServ
   } as Method.AnyServer
 }
 
-/** The shape `commit` needs from a channel credential — amount, signature, payer. */
+/** The shape `commit` needs from a channel credential — amount, signature, payer, and optional channel. */
 export interface ChannelVerifyCredential {
-  payload?: { amount?: unknown; signature?: unknown }
+  challenge?: {
+    request?: {
+      channel?: unknown
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
+  payload?: { amount?: unknown; signature?: unknown; channel?: unknown }
   source?: string
+  channel?: unknown
+}
+
+/**
+ * Resolve the channel contract address named by a verified credential,
+ * falling back to `defaultChannel` when none is specified on the credential.
+ */
+export function resolveCredentialChannel(
+  credential: ChannelVerifyCredential | undefined | null,
+  defaultChannel: string,
+): string {
+  const fromChallenge = credential?.challenge?.request?.channel
+  if (typeof fromChallenge === 'string' && fromChallenge.length > 0) {
+    return fromChallenge
+  }
+  const fromPayload = credential?.payload?.channel
+  if (typeof fromPayload === 'string' && fromPayload.length > 0) {
+    return fromPayload
+  }
+  const fromTop = credential?.channel
+  if (typeof fromTop === 'string' && fromTop.length > 0) {
+    return fromTop
+  }
+  return defaultChannel
 }
 
 /**

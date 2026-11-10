@@ -28,7 +28,13 @@ export interface SessionWriters {
     signature: string,
   ) => Promise<void>
   onOrphaned: (channelId: string, info: OrphanedSessionInfo) => Promise<void>
-  onSettled: (txHash: string, totalPaid: string, mode: string, payer: string | null) => Promise<void>
+  onSettled: (
+    txHash: string,
+    totalPaid: string,
+    mode: string,
+    payer: string | null,
+    channelId?: string,
+  ) => Promise<void>
 }
 
 /**
@@ -49,11 +55,13 @@ export function createSessionWriters(
   config: SessionWritersConfig,
 ): SessionWriters {
   const { payee, network, channelContract, providerUrl } = config
+  let lastOpenedChannelId: string | null = null
 
   return {
     onSessionOpen: async (channelId, payer) => {
+      lastOpenedChannelId = channelId
       if (!supabase) return
-      const { error } = await supabase.from('sessions').insert({
+      const row = {
         channel_id: channelId,
         payee,
         payer: payer ?? 'unknown',
@@ -62,7 +70,23 @@ export function createSessionWriters(
         channel_contract: channelId,
         network,
         voucher_count: 0,
-      })
+      }
+      const sessionsTable = supabase.from('sessions') as unknown as {
+        upsert?: (
+          values: Record<string, unknown>,
+          opts?: { onConflict?: string; ignoreDuplicates?: boolean },
+        ) => Promise<{ error: { message: string } | null }>
+        insert: (
+          values: Record<string, unknown>,
+        ) => Promise<{ error: { message: string } | null }>
+      }
+      const { error } =
+        typeof sessionsTable.upsert === 'function'
+          ? await sessionsTable.upsert(row, {
+              onConflict: 'channel_id',
+              ignoreDuplicates: true,
+            })
+          : await sessionsTable.insert(row)
       if (error) console.error('[supabase] session insert failed:', error.message)
     },
 
@@ -109,16 +133,17 @@ export function createSessionWriters(
       if (amountError) console.error('[supabase] orphan amount update failed:', amountError.message)
     },
 
-    onSettled: async (txHash, totalPaid, mode, payer) => {
+    onSettled: async (txHash, totalPaid, mode, payer, channelId) => {
       console.log(`[settled] mode=${mode} txHash=${txHash} totalPaid=${totalPaid}`)
       if (!supabase) return
+      const targetChannelId = channelId ?? lastOpenedChannelId ?? channelContract
 
       // `.in` so a session already flagged `closing` is closed by a clean
       // settlement; rows already `closed` stay untouched.
       const { error: closeError } = await supabase
         .from('sessions')
         .update({ status: 'closed', settlement_tx_hash: txHash })
-        .eq('channel_id', channelContract)
+        .eq('channel_id', targetChannelId)
         .in('status', ['open', 'closing'])
       if (closeError) console.error('[supabase] session close failed:', closeError.message)
 

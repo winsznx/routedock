@@ -19,6 +19,12 @@ export interface ManifestInput {
   network: Network
   payee: string
   assetContract: string
+  /**
+   * Default / factory channel contract address advertised in `channel_factory`.
+   * Agents may pay through this channel or any per-session channel deployed for
+   * the provider's payee and commitment key; `routedockHono` keys session state
+   * per channel ID from the verified credential (#550).
+   */
   channelContract: string
 }
 
