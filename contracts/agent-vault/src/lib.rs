@@ -28,6 +28,8 @@ const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
 const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 // Pending timelocked Wasm proposal: (new_wasm_hash, ready_at_ledger).
 const PENDING_UPGRADE_KEY: Symbol = symbol_short!("p_upg");
+// Settled channel marker in persistent storage: (SETTLED_PREFIX, channel_id).
+const SETTLED_PREFIX: Symbol = symbol_short!("settled");
 
 // 17,280 ledgers is the contract's existing approximation of one day. A proposal
 // cannot execute before this many ledgers have elapsed, giving governed payers
@@ -71,6 +73,7 @@ pub enum Error {
     NoPendingUpgrade = 14,
     UpgradeNotReady = 15,
     UpgradeTimelockOverflow = 16,
+    SettlementAlreadyRecorded = 17,
 }
 
 fn validate_cap(env: &Env, cap: i128) {
@@ -206,6 +209,11 @@ impl AgentVault {
     /// third-party provider records its own settlements with its own payee key
     /// and never holds the admin secret, which also guards `upgrade` and
     /// `set_agent_pubkey`.
+    ///
+    /// Note: `payer`, `cumulative_amount`, and `voucher_count` are asserted by
+    /// the allowlisted `payee` (the vault does not verify them against the
+    /// one-way-channel contract on-chain) and must be cross-checked against the
+    /// channel close transaction before being trusted for spend reconciliation.
     pub fn record_session_settlement(
         env: Env,
         channel_id: Address,
@@ -214,18 +222,34 @@ impl AgentVault {
         cumulative_amount: i128,
         voucher_count: u32,
     ) {
+        let storage = env.storage().instance();
+        let is_frozen: bool = storage.get(&FROZEN_KEY).unwrap_or(false);
+        if is_frozen {
+            panic_with_error!(&env, Error::ContractFrozen);
+        }
         if cumulative_amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
-        let allowlist: Map<Address, i128> = env
-            .storage()
-            .instance()
+        let allowlist: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
         if allowlist.get(payee.clone()).is_none() {
             panic_with_error!(&env, Error::PayeeNotAllowed);
         }
         payee.require_auth();
+        bump_instance(&env);
+
+        let settled_key = (SETTLED_PREFIX, channel_id.clone());
+        let persistent = env.storage().persistent();
+        if persistent.has(&settled_key) {
+            panic_with_error!(&env, Error::SettlementAlreadyRecorded);
+        }
+        persistent.set(&settled_key, &true);
+        persistent.extend_ttl(
+            &settled_key,
+            INSTANCE_TTL_THRESHOLD,
+            INSTANCE_TTL_EXTEND_TO,
+        );
 
         // topics: (Symbol("session_settled"), channel_id, payee)
         // data:   (payer, cumulative_amount, voucher_count)
@@ -1552,6 +1576,86 @@ mod tests {
 
         env.mock_all_auths();
         client.record_session_settlement(&channel_id, &payer, &payee, &-1_i128, &10_u32);
+    }
+
+    /// Test 18f: a frozen vault rejects record_session_settlement with Error::ContractFrozen (#9).
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn test_session_settled_rejects_when_frozen() {
+        let env = Env::default();
+        let (client, _vault_id, _admin, payee) = setup_settlement(&env);
+
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.freeze();
+        client.record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &10_u32);
+    }
+
+    /// Test 18g: recording the same channel_id twice panics with
+    /// Error::SettlementAlreadyRecorded (#17).
+    #[test]
+    #[should_panic(expected = "Error(Contract, #17)")]
+    fn test_session_settled_rejects_duplicate_channel() {
+        let env = Env::default();
+        let (client, _vault_id, _admin, payee) = setup_settlement(&env);
+
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &10_u32);
+        client.record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &10_u32);
+    }
+
+    /// Test 18h: a rejected duplicate channel_id emits no second event, while a
+    /// distinct channel_id still succeeds.
+    #[test]
+    fn test_session_settled_duplicate_emits_no_event_and_allows_distinct_channel() {
+        use soroban_sdk::testutils::Events;
+
+        let env = Env::default();
+        let (client, _vault_id, _admin, payee) = setup_settlement(&env);
+
+        let channel_a = Address::generate(&env);
+        let channel_b = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.record_session_settlement(&channel_a, &payer, &payee, &500_000_i128, &10_u32);
+        assert_eq!(
+            env.events().all().len(),
+            1,
+            "first settlement should emit exactly one session_settled event"
+        );
+
+        let duplicate = client.try_record_session_settlement(
+            &channel_a,
+            &payer,
+            &payee,
+            &500_000_i128,
+            &10_u32,
+        );
+        assert_eq!(
+            duplicate,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                Error::SettlementAlreadyRecorded as u32
+            ))),
+            "second settlement for the same channel_id must fail with SettlementAlreadyRecorded"
+        );
+        assert_eq!(
+            env.events().all().len(),
+            0,
+            "rejected duplicate settlement must not emit a second event"
+        );
+
+        client.record_session_settlement(&channel_b, &payer, &payee, &750_000_i128, &15_u32);
+        assert_eq!(
+            env.events().all().len(),
+            1,
+            "a distinct channel_id should still record and emit its event"
+        );
     }
 
     /// Test 19: payment within global cap but exceeding per-payee sub-cap is rejected

@@ -121,6 +121,11 @@ Deploying the vault passes configuration arguments atomically to `__constructor`
 - `--expiry_ledger`: Absolute ledger sequence at which session expires (compared against `env.ledger().sequence()`; not a duration).
 - `--lifetime_cap`: Lifetime USDC spend limit in stroops (`0` = unlimited).
 
+### Off-Chain Session Settlement (`record_session_settlement`)
+- `record_session_settlement(channel_id, payer, payee, cumulative_amount, voucher_count)` emits `session_settled` and may only be called while the vault is unfrozen (`Error::ContractFrozen` when frozen) by an allowlisted `payee` (`payee.require_auth()`).
+- Each `channel_id` can only be recorded once (`Error::SettlementAlreadyRecorded` on duplicate calls), keyed by `(SETTLED_PREFIX, channel_id)` in persistent storage.
+- `payer`, `cumulative_amount`, and `voucher_count` in `session_settled` are asserted by the allowlisted `payee` (not verified on-chain by the vault) and must be cross-checked against the one-way-channel close transaction before being trusted for spend reconciliation.
+
 > **⚠️ SECURITY WARNING:** The contract and the underlying
 > `stellar-experimental/one-way-channel` contract are **unaudited**. RouteDock uses
 > conservative defaults and durable server-side enforcement, but production use
