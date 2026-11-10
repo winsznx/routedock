@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { getSupabaseBrowserClient, SESSION_COLUMNS, type Session } from '@/lib/supabase'
+import { configuredNetwork } from '@/lib/explorer'
 import { AddressDisplay } from '@/components/shared/AddressDisplay'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 import { RelativeTime } from '@/components/shared/RelativeTime'
@@ -31,6 +32,7 @@ export function SessionTable({ initialSessions = [] }: SessionTableProps) {
     const { data, error } = await supabase
       .from('public_sessions')
       .select(SESSION_COLUMNS)
+      .eq('network', configuredNetwork())
       .order('opened_at', { ascending: false })
       .limit(50)
 

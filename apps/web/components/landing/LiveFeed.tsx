@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { getSupabaseBrowserClient, type TxLogEntry } from '@/lib/supabase'
-import { networkLabel } from '@/lib/explorer'
+import { configuredNetwork, networkLabel } from '@/lib/explorer'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 import { RelativeTime } from '@/components/shared/RelativeTime'
 import { TxHashLink } from '@/components/shared/TxHashLink'
@@ -21,6 +21,7 @@ export function LiveFeed() {
       const { data, error } = await supabase
         .from('tx_log')
         .select('*')
+        .eq('network', configuredNetwork())
         .order('created_at', { ascending: false })
         .limit(5)
 
@@ -47,7 +48,7 @@ export function LiveFeed() {
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)] motion-safe:animate-pulse" />
           )}
           <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
-            Live Feed
+            Live Feed — {networkLabel()}
           </span>
         </div>
         {feedFailed ? (

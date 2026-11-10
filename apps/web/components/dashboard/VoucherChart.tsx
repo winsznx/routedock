@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import type { TooltipContentProps } from 'recharts/types/component/Tooltip'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
+import { configuredNetwork } from '@/lib/explorer'
 import { buildVoucherSnapshot } from '@/lib/voucherChart'
 
 function CustomTooltip(props: TooltipContentProps) {
@@ -43,6 +44,7 @@ export function VoucherChart() {
         const { data: rows, error } = await getSupabaseBrowserClient()
           .from('public_sessions')
           .select('opened_at, voucher_count')
+          .eq('network', configuredNetwork())
           .not('voucher_count', 'eq', 0)
           .order('opened_at', { ascending: false })
           .limit(500)

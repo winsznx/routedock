@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
+import { configuredNetwork } from '@/lib/explorer'
 import { toDashboardMetrics, type DashboardStatsRow } from '@/lib/dashboardMetrics'
 import { MetricCard } from '@/components/dashboard/MetricCard'
 import { RelativeTime } from '@/components/shared/RelativeTime'
@@ -22,7 +23,11 @@ export function DashboardMetrics({ initialStats }: DashboardMetricsProps) {
 
   const refreshStats = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
-    const { data } = await supabase.from('public_dashboard_stats').select('*').maybeSingle()
+    const { data } = await supabase
+      .from('public_dashboard_stats')
+      .select('*')
+      .eq('network', configuredNetwork())
+      .maybeSingle()
     if (data) setStats(data as DashboardStatsRow)
   }, [])
 

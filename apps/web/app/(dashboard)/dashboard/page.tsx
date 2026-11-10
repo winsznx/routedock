@@ -1,5 +1,5 @@
 import { pageMetadata } from '@/lib/metadata'
-import { networkLabel } from '@/lib/explorer'
+import { configuredNetwork, networkLabel } from '@/lib/explorer'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,19 +20,22 @@ import type { Session, TxLogEntry } from '@/lib/supabase'
 
 async function fetchDashboardData() {
   const supabase = getSupabaseServerClient()
+  const network = configuredNetwork()
 
   const [sessionsRes, txLogRes, statsRes] = await Promise.all([
     supabase
       .from('public_sessions')
       .select(SESSION_COLUMNS)
+      .eq('network', network)
       .order('opened_at', { ascending: false })
       .limit(50),
     supabase
       .from('tx_log')
       .select('*')
+      .eq('network', network)
       .order('created_at', { ascending: false })
       .limit(20),
-    supabase.from('public_dashboard_stats').select('*').maybeSingle(),
+    supabase.from('public_dashboard_stats').select('*').eq('network', network).maybeSingle(),
   ])
 
   if (sessionsRes.error) {

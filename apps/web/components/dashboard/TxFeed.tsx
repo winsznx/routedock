@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { getSupabaseBrowserClient, type TxLogEntry } from '@/lib/supabase'
+import { configuredNetwork } from '@/lib/explorer'
 import { mergeTxEntries } from '@/lib/mergeTxEntries'
 import { ModeBadge } from '@/components/shared/ModeBadge'
 import { RelativeTime } from '@/components/shared/RelativeTime'
@@ -34,6 +35,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient()
+    const network = configuredNetwork()
     let disposed = false
     let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -49,6 +51,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
       const { data, error } = await supabase
         .from('tx_log')
         .select('*')
+        .eq('network', network)
         .order('created_at', { ascending: false })
         .limit(MAX_ENTRIES)
 
@@ -76,10 +79,12 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
       .channel('txlog-realtime')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'tx_log' },
+        { event: 'INSERT', schema: 'public', table: 'tx_log', filter: `network=eq.${network}` },
         (payload) => {
+          const row = payload.new as TxLogEntry
+          if (row.network !== network) return
           setEntries((prev) =>
-            mergeTxEntries(prev, [payload.new as TxLogEntry], MAX_ENTRIES),
+            mergeTxEntries(prev, [row], MAX_ENTRIES),
           )
         },
       )

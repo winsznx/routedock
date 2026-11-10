@@ -5,6 +5,7 @@ import { usdcToStroops, USDC_DECIMALS } from '@routedock/nulth-sdk'
  * `total_settled` is text so the exact 7-decimal sum survives the wire format.
  */
 export interface DashboardStatsRow {
+  network?: string | null
   active_sessions: number | null
   open_vouchers: number | null
   total_settled: string | number | null
