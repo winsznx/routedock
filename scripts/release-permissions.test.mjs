@@ -7,6 +7,7 @@ import { test } from 'node:test'
 
 const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
 const release = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+const releaseWatchdog = readFileSync(new URL('../.github/workflows/release-watchdog.yml', import.meta.url), 'utf8')
 const guardStep = ci.split('      - name: Guard release.yml permissions\n')[1]?.split('\n      - name:')[0]?.split('\n  lint:')[0]
 assert.ok(guardStep, 'CI must contain the release permission guard')
 const script = guardStep.split('        run: |\n')[1]?.split('\n').filter((line) => line.startsWith('          ')).map((line) => line.slice(10)).join('\n')
@@ -28,7 +29,7 @@ test('release workflow satisfies the actual CI permission guard', () => {
   assert.equal(result.status, 0, result.stderr + result.stdout)
 })
 
-for (const permission of ['contents', 'pull-requests', 'id-token', 'permission-workflows']) {
+for (const permission of ['contents', 'pull-requests', 'issues', 'id-token', 'permission-workflows']) {
   test(`CI rejects a missing ${permission} grant even if comments mention it`, () => {
     const key = new RegExp(`^ +${permission}: *write *$`, 'm')
     assert.match(release, key, 'positive control: the real grant must exist')
@@ -42,4 +43,10 @@ test('CI rejects a read-only OIDC permission', () => {
   const result = guard(release.replace('  id-token: write', '  id-token: read'))
   assert.equal(result.status, 1)
   assert.match(result.stdout, /id-token/)
+})
+
+test('release and release-watchdog workflows close stale alarm issues on recovery (#544)', () => {
+  assert.match(release, /- name: Close the release alarm[\s\S]*?if: success\(\)[\s\S]*?gh issue close/)
+  assert.match(releaseWatchdog, /select\(\.conclusion != "cancelled"\)/)
+  assert.match(releaseWatchdog, /if \[ "\$conclusion" = "success" \]; then[\s\S]*?gh issue close/)
 })

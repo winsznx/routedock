@@ -23,13 +23,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?per_page=1&status=completed")
-          conclusion=$(echo "$run" | jq -r '.workflow_runs[0].conclusion // "none"')
-          url=$(echo "$run" | jq -r '.workflow_runs[0].html_url // ""')
-          sha=$(echo "$run" | jq -r '.workflow_runs[0].head_sha // ""')
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?per_page=20&status=completed" \
+            --jq '[.workflow_runs[] | select(.conclusion != "cancelled")][0] // {}')
+          conclusion=$(echo "$run" | jq -r '.conclusion // "none"')
+          url=$(echo "$run" | jq -r '.html_url // ""')
+          sha=$(echo "$run" | jq -r '.head_sha // ""')
 
           echo "last completed Release run: $conclusion ${sha:0:8}"
           if [ "$conclusion" = "success" ]; then
+            for n in $(gh issue list --state open --label release \
+              --search "Release workflow is failing in:title" --json number --jq '.[].number'); do
+              gh issue close "$n" --comment "Release green again on ${sha:0:8}: $url"
+            done
             exit 0
           fi
 

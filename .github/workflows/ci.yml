@@ -162,6 +162,24 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Assert frozen install left the checkout alone
+        # The root `prepare` hook points core.hooksPath at .githooks when it
+        # runs locally, and is deliberately skipped when CI is set. A workspace
+        # install hook mutating the checkout or failing under --frozen-lockfile
+        # on CI is the class of change that broke Release in #544, so fail
+        # loudly on the PR rather than deferring to a push on main.
+        run: |
+          hooks_path="$(git config --local --get core.hooksPath || true)"
+          if [ -n "${hooks_path}" ]; then
+            echo "::error::pnpm install set core.hooksPath='${hooks_path}' on CI; an install hook is doing side effects that Release will hit on push"
+            exit 1
+          fi
+          drift="$(git status --porcelain)"
+          if [ -n "${drift}" ]; then
+            echo "::error::pnpm install --frozen-lockfile modified tracked or untracked files on CI:"
+            echo "${drift}"
+            exit 1
+          fi
       - name: Report production dependency advisories
         continue-on-error: true
         shell: bash
@@ -200,7 +218,7 @@ jobs:
         # permissions block in release.yml, so it would pass even with the
         # block deleted.
         run: |
-          for perm in "contents" "pull-requests" "id-token"; do
+          for perm in "contents" "pull-requests" "issues" "id-token"; do
             if ! grep -qE "^[[:space:]]+${perm}:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
               echo "::error file=.github/workflows/release.yml::missing required permission '${perm}: write'"
               exit 1
