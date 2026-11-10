@@ -515,6 +515,10 @@ interface MppSessionHandlerState {
   handleDelete(c: DeleteContext): Promise<Response>
   /** Arm the connection-closed orphan guard (idempotent). */
   armAbortGuard(c: SignalContext): void
+  /** Set the transport mode prior to running mppx verification. */
+  setPendingMode(mode: 'mpp-session' | 'mpp-session-ws'): void
+  /** Persist the verified transport mode for this channel session. */
+  recordActiveMode(mode: 'mpp-session' | 'mpp-session-ws'): Promise<void>
 }
 
 /** The last verified voucher: amount, its signature, and the payer it named. */
@@ -549,6 +553,7 @@ function createMppSessionHandlerState(
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let settledCleanly = false
   let abortListenerArmed = false
+  let activeMode: 'mpp-session' | 'mpp-session-ws' = reportMode
 
   function clearIdleTimer(): void {
     if (idleTimer) {
@@ -584,6 +589,7 @@ function createMppSessionHandlerState(
             payer?: string | null
             voucherCount?: number
             sessionOpened?: boolean
+            mode?: 'mpp-session' | 'mpp-session-ws'
           }
         | undefined
       if (!stored || typeof stored.amount !== 'string' || typeof stored.signature !== 'string') {
@@ -597,6 +603,9 @@ function createMppSessionHandlerState(
         sessionOpened = stored.sessionOpened
       } else if (record !== null) {
         sessionOpened = true
+      }
+      if (stored.mode === 'mpp-session' || stored.mode === 'mpp-session-ws') {
+        activeMode = stored.mode
       }
     } catch {
       // Corrupt or unreadable persisted record — proceed as though there is none.
@@ -691,6 +700,7 @@ function createMppSessionHandlerState(
       payer: record.payer,
       voucherCount,
       sessionOpened: true,
+      mode: activeMode,
     })
 
     if (!wasOpened) {
@@ -795,10 +805,11 @@ function createMppSessionHandlerState(
         clearIdleTimer()
 
         const closePayer = record?.payer ?? null
+        const settledMode = activeMode
 
         if (opts.onSettled) {
           const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
-          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, closePayer)).catch(err => {
+          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, settledMode, closePayer)).catch(err => {
             logger('error', '[mpp-session] onSettled callback error', { error: err })
             opts.onCallbackError?.(err, 'onSettled')
           })
@@ -832,6 +843,7 @@ function createMppSessionHandlerState(
         voucherCount = 0
         orphanFlagged = false
         record = null
+        activeMode = reportMode
         await innerStore.delete(voucherRecordKey)
         abortListenerArmed = false
 
@@ -856,6 +868,24 @@ function createMppSessionHandlerState(
         )
       }
     },
+
+    setPendingMode(mode: 'mpp-session' | 'mpp-session-ws'): void {
+      activeMode = mode
+    },
+
+    async recordActiveMode(mode: 'mpp-session' | 'mpp-session-ws'): Promise<void> {
+      activeMode = mode
+      if (record) {
+        await innerStore.put(voucherRecordKey, {
+          amount: record.amount.toString(),
+          signature: record.signature,
+          payer: record.payer,
+          voucherCount,
+          sessionOpened: true,
+          mode: activeMode,
+        })
+      }
+    },
   }
 }
 
@@ -873,6 +903,7 @@ function createMppSessionHonoHandler(
         return await state.handleDelete(c as unknown as DeleteContext)
       }
 
+      state.setPendingMode(config.mode)
       const result = await (
         state.mppx as unknown as {
           channel: (o: { amount: string; description?: string }) => (
@@ -895,6 +926,7 @@ function createMppSessionHonoHandler(
         return new Response(await challenge.text(), { status: 402, headers })
       }
 
+      await state.recordActiveMode(config.mode)
       state.armAbortGuard(c as unknown as SignalContext)
 
       // mpp-session-ws: the verified request is a WebSocket handshake, so hand
@@ -966,17 +998,31 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
   const sessionModes = (['mpp-session', 'mpp-session-ws'] as const).filter(
     (mode) => opts.modes.includes(mode) && !!opts.pricing[mode],
   )
+  const sessionHandlers = new Map<'mpp-session' | 'mpp-session-ws', MiddlewareHandler>()
   const primarySessionMode = sessionModes[0]
   if (primarySessionMode) {
     if (!opts.commitmentPublicKey) {
       throw new Error('routedockHono: mpp-session/mpp-session-ws mode requires commitmentPublicKey')
     }
+    if (
+      sessionModes.includes('mpp-session') &&
+      sessionModes.includes('mpp-session-ws') &&
+      opts.pricing['mpp-session']!.channelFactory !== opts.pricing['mpp-session-ws']!.channelFactory
+    ) {
+      throw new Error(
+        'routedockHono: mpp-session and mpp-session-ws must use the same channelFactory when both modes are enabled',
+      )
+    }
     const sessionPricing = opts.pricing[primarySessionMode]!
     const sharedState = createMppSessionHandlerState(opts, sessionPricing, primarySessionMode)
     for (const mode of sessionModes) {
-      handlers.push(
-        createMppSessionHonoHandler({ ...opts, manifest: signedManifest }, { mode }, sharedState),
+      const sessionHandler = createMppSessionHonoHandler(
+        { ...opts, manifest: signedManifest },
+        { mode },
+        sharedState,
       )
+      sessionHandlers.set(mode, sessionHandler)
+      handlers.push(sessionHandler)
     }
   }
 
@@ -995,8 +1041,16 @@ export function routedockHono(opts: RouteDockHonoOptions): MiddlewareHandler {
     )
     const prefersX402 = c.req.header('x-preferred-mode') === 'x402'
 
-    const handler =
-      hasX402Header || prefersX402 ? handlers[0] : handlers[handlers.length - 1]
+    let handler: MiddlewareHandler | undefined
+    if (hasX402Header || prefersX402) {
+      handler = handlers[0]
+    } else if (sessionHandlers.has('mpp-session') && sessionHandlers.has('mpp-session-ws')) {
+      handler = isWebSocketUpgradeRequest(c)
+        ? sessionHandlers.get('mpp-session-ws')
+        : sessionHandlers.get('mpp-session')
+    } else {
+      handler = handlers[handlers.length - 1]
+    }
 
     if (!handler) {
       await next()

@@ -73,16 +73,16 @@ mock.module('mppx/server', {
       create: () => ({
         // Fake channel verification: no Payment credential → 402 challenge,
         // valid Payment credential → verified.
-        channel: (_opts: { amount: string }) => async (request: Request) => {
+        channel: (opts: { amount: string }) => async (request: Request) => {
           const auth = request.headers.get('authorization')
           if (!auth?.startsWith('Payment ')) {
             return {
               status: 402,
-              challenge: new Response('Payment Required', {
+              challenge: new Response(JSON.stringify({ amount: opts.amount }), {
                 status: 402,
                 headers: {
                   'www-authenticate':
-                    'Payment id="test", realm="test", method="stellar", intent="channel", request="e30"',
+                    `Payment id="test", realm="test", method="stellar", intent="channel", amount="${opts.amount}", request="e30"`,
                 },
               }),
             }
@@ -235,5 +235,158 @@ describe('mppSessionWsVerified helper', () => {
     assert.equal(mppSessionWsVerified({ get: () => false }), false)
     assert.equal(mppSessionWsVerified({ get: () => 'yes' }), false)
     assert.equal(MPP_SESSION_WS_VERIFIED, 'routedock.mppSessionWs.verified')
+  })
+})
+
+describe('routedockHono — dual mpp-session + mpp-session-ws routing (#393)', () => {
+  const dualManifest: RouteDockManifest = {
+    ...manifest,
+    modes: ['mpp-session', 'mpp-session-ws'],
+    pricing: {
+      'mpp-session': {
+        rate: '0.0000100',
+        per: 'voucher',
+        channel_factory: CHANNEL_CONTRACT,
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+      'mpp-session-ws': {
+        rate: '0.0000500',
+        per: 'voucher',
+        channel_factory: CHANNEL_CONTRACT,
+        min_deposit: '0.10',
+        refund_waiting_period_ledgers: 17280,
+      },
+    },
+  }
+
+  function makeDualApp() {
+    const app = new Hono()
+    app.use(
+      '*',
+      routedockHono({
+        asset: 'USDC',
+        assetContract: ASSET_CONTRACT,
+        payee: payeeKeypair.publicKey(),
+        network: 'testnet',
+        payeeSecretKey: payeeKeypair.secret(),
+        commitmentPublicKey: commitKeypair.publicKey(),
+        manifest: dualManifest,
+        modes: ['mpp-session', 'mpp-session-ws'],
+        pricing: {
+          'mpp-session': { rate: '0.0000100', channelFactory: CHANNEL_CONTRACT },
+          'mpp-session-ws': { rate: '0.0000500', channelFactory: CHANNEL_CONTRACT },
+        },
+        onSettled: async (txHash, _amount, mode) => {
+          settleCalls.push({ txHash, mode })
+        },
+      }),
+    )
+    app.get('/stream/orderbook', (c) => {
+      const ctx = c as unknown as {
+        get: (key: string) => unknown
+        json: (data: unknown) => Response
+      }
+      return ctx.json({ verified: ctx.get(MPP_SESSION_WS_VERIFIED) === true })
+    })
+    return app
+  }
+
+  it('uses the mpp-session rate for plain HTTP 402 challenges when both session modes are enabled', async () => {
+    const app = makeDualApp()
+    const res = await app.request('/stream/orderbook', { method: 'GET' })
+    assert.equal(res.status, 402)
+    const body = (await res.json()) as { amount: string }
+    assert.equal(body.amount, '0.0000100')
+  })
+
+  it('uses the mpp-session-ws rate for WebSocket upgrade 402 challenges when both session modes are enabled', async () => {
+    const app = makeDualApp()
+    const res = await app.request('/stream/orderbook', {
+      method: 'GET',
+      headers: { upgrade: 'websocket', connection: 'Upgrade' },
+    })
+    assert.equal(res.status, 402)
+    const body = (await res.json()) as { amount: string }
+    assert.equal(body.amount, '0.0000500')
+  })
+
+  it('throws at construction when mpp-session and mpp-session-ws use different channelFactory values', () => {
+    const otherFactory = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4'
+    const mismatchedManifest: RouteDockManifest = {
+      ...dualManifest,
+      pricing: {
+        ...dualManifest.pricing,
+        'mpp-session-ws': {
+          ...dualManifest.pricing['mpp-session-ws']!,
+          channel_factory: otherFactory,
+        },
+      },
+    }
+    assert.throws(
+      () =>
+        routedockHono({
+          asset: 'USDC',
+          assetContract: ASSET_CONTRACT,
+          payee: payeeKeypair.publicKey(),
+          network: 'testnet',
+          payeeSecretKey: payeeKeypair.secret(),
+          commitmentPublicKey: commitKeypair.publicKey(),
+          manifest: mismatchedManifest,
+          modes: ['mpp-session', 'mpp-session-ws'],
+          pricing: {
+            'mpp-session': { rate: '0.0000100', channelFactory: CHANNEL_CONTRACT },
+            'mpp-session-ws': {
+              rate: '0.0000500',
+              channelFactory: otherFactory,
+            },
+          },
+        }),
+      /same channelFactory/,
+    )
+  })
+
+  it('reports mpp-session-ws to onSettled when a WebSocket session is closed and mpp-session when an HTTP session is closed', async () => {
+    // 1. WebSocket session open + close
+    settleCalls = []
+    const appWs = makeDualApp()
+    await appWs.request('/stream/orderbook', {
+      method: 'GET',
+      headers: {
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        authorization: 'Payment eyJwYXlsb2FkIjp7ImFjdGlvbiI6InZvdWNoZXIifX0',
+      },
+    })
+    await capturedStore!.put(`stellar:channel:cumulative:${CHANNEL_CONTRACT}`, { amount: '500' })
+    const delWs = await appWs.request('/stream/orderbook', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: '500', signature: 'ab'.repeat(64) }),
+    })
+    assert.equal(delWs.status, 200)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(settleCalls.length, 1)
+    assert.equal(settleCalls[0]!.mode, 'mpp-session-ws')
+
+    // 2. Plain HTTP session open + close
+    settleCalls = []
+    const appHttp = makeDualApp()
+    await appHttp.request('/stream/orderbook', {
+      method: 'GET',
+      headers: {
+        authorization: 'Payment eyJwYXlsb2FkIjp7ImFjdGlvbiI6InZvdWNoZXIifX0',
+      },
+    })
+    await capturedStore!.put(`stellar:channel:cumulative:${CHANNEL_CONTRACT}`, { amount: '100' })
+    const delHttp = await appHttp.request('/stream/orderbook', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: '100', signature: 'cd'.repeat(64) }),
+    })
+    assert.equal(delHttp.status, 200)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(settleCalls.length, 1)
+    assert.equal(settleCalls[0]!.mode, 'mpp-session')
   })
 })
