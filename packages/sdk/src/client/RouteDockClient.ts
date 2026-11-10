@@ -576,6 +576,9 @@ export class RouteDockClient {
       )
     }
 
+    const sessionAsset = selectAsset(manifest, mode, url).asset
+    await this._checkTrustline(manifest, sessionAsset)
+
     const secret = _secrets.get(this)
     if (!secret) {
       throw new RouteDockManifestError(
@@ -589,7 +592,6 @@ export class RouteDockClient {
     // non-capped asset never gets as far as locking funds.
     let onSpend: ((amount: string) => Promise<void>) | undefined
     if (this.spendCap) {
-      const sessionAsset = selectAsset(manifest, mode, url).asset
       this._assertCapAsset(sessionAsset)
       onSpend = (amount: string) => this._recordSessionSpend(amount, endpointKey, sessionAsset)
     }
