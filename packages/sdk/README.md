@@ -628,7 +628,7 @@ function StreamingFeed() {
 }
 ```
 
-The hook automatically fires `session.close()` in the background on unmount when status is `open` (best-effort settlement).
+The hook automatically fires `session.close()` in the background on unmount when status is `open` or when an in-flight `open()` resolves after unmount (best-effort settlement).
 
 ### `useTxLog(filter?)`
 
