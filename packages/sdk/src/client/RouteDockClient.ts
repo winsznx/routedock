@@ -248,6 +248,15 @@ export class RouteDockClient {
     this.session = new MppSessionClient(this.keypair, this.network, retryPolicy, undefined, this.logger)
   }
 
+  /** Ensure the provider manifest declares the same Stellar network as this client. */
+  private _assertNetwork(manifest: RouteDockManifest, baseUrl: string): void {
+    if (manifest.network !== this.network) {
+      throw new RouteDockManifestError(
+        `Provider at ${baseUrl} declares network "${manifest.network}" but this client is configured for "${this.network}"`,
+      )
+    }
+  }
+
   /** Fetch manifest and select mode — shared by pay() and estimateCost(). */
   private async _resolveManifest(
     url: string,
@@ -255,6 +264,7 @@ export class RouteDockClient {
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     assertEndpointActive(manifest, url, this.logger, options?.request?.method)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
@@ -319,6 +329,7 @@ export class RouteDockClient {
   private async _preflightUrl(url: string): Promise<UrlPreflightResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     assertEndpointActive(manifest, url)
 
     const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
@@ -418,6 +429,7 @@ export class RouteDockClient {
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     const request = options?.request
     assertEndpointActive(manifest, url, this.logger, request?.method)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
@@ -567,6 +579,7 @@ export class RouteDockClient {
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    this._assertNetwork(manifest, baseUrl)
     assertEndpointActive(manifest, url, this.logger)
 
     const mode = options?.mode ?? 'mpp-session'
