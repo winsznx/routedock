@@ -9,7 +9,8 @@ import {
   resolveVaultSettlementConfig,
   type VaultSettlementConfig,
 } from '../internal/vaultConfig.js'
-import { extractPayerAddress } from './payer.js'
+import { extractPayerAddress, payerFromDidPkh } from './payer.js'
+import { parseMppCredential } from './credential.js'
 import {
   channelAuthorizer,
   onVerifiedCredential,
@@ -109,6 +110,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   const payeeKeypair = Keypair.fromSecret(opts.payeeSecretKey)
   const logger = resolveLogger(opts.logger)
   const voucherRecordKey = `routedock:session:voucher:${opts.channelFactory}`
+  const cumulativeKey = `stellar:channel:cumulative:${opts.channelFactory}`
 
   const innerStore = Store.memory()
 
@@ -116,6 +118,8 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // payer it named. Only `commit` (called after a successful verify) may set
   // this; nothing derived from an unverified header may reach it.
   let record: VerifiedVoucherRecord | null = null
+  let pendingVoucher: { amount: string; signature: string; source?: string } | null = null
+  let inVerify = false
   let voucherCount = 0
   let sessionOpened = false
   let orphanFlagged = false
@@ -210,7 +214,19 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
 
   const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
-    async put(key: string, value: unknown) { return innerStore.put(key, value) },
+    async put(key: string, value: unknown) {
+      await innerStore.put(key, value)
+      if (!inVerify && key === cumulativeKey && isVoucherStoreValue(value)) {
+        const pending = pendingVoucher
+        pendingVoucher = null
+        const matchedSig = pending && pending.amount === value.amount ? pending.signature : ''
+        const matchedSource = pending && pending.amount === value.amount ? pending.source : undefined
+        await commit({
+          payload: { amount: value.amount, signature: matchedSig },
+          ...(matchedSource ? { source: matchedSource } : {}),
+        })
+      }
+    },
     async delete(key: string) { return innerStore.delete(key) },
     async update(key: string, fn: (prev: unknown) => unknown) {
       const storeWithUpdate = innerStore as Partial<ChannelStore>
@@ -227,6 +243,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // to run inside the store's `put`, before the caller knew verification had
   // actually succeeded.
   async function commit(credential: ChannelVerifyCredential): Promise<void> {
+    pendingVoucher = null
     await loadPersistedRecord()
     const payload = credential.payload
     if (typeof payload?.amount !== 'string' || typeof payload.signature !== 'string') return
@@ -239,7 +256,10 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     // A late/duplicate commit can't roll the signature back to an earlier amount.
     if (record && amount < record.amount) return
 
-    const payer = record?.payer ?? extractPayerAddress(credential.source)
+    const payer =
+      record?.payer ??
+      payerFromDidPkh(credential.source) ??
+      extractPayerAddress(credential.source)
     record = { amount, signature: payload.signature, payer }
 
     voucherCount++
@@ -277,19 +297,39 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     }
   }
 
+  function trackVerifyScope(method: Method.AnyServer): Method.AnyServer {
+    if (!method || typeof (method as { verify?: unknown }).verify !== 'function') {
+      return method
+    }
+    return {
+      ...method,
+      async verify(parameters: Parameters<Method.AnyServer['verify']>[0]) {
+        inVerify = true
+        try {
+          return await method.verify(parameters)
+        } finally {
+          inVerify = false
+          pendingVoucher = null
+        }
+      },
+    } as Method.AnyServer
+  }
+
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       withTypedChannelErrors(
         onVerifiedCredential(
-          stellar.channel({
-            channel: opts.channelFactory,
-            commitmentKey: opts.commitmentPublicKey,
-            network: networkId,
-            store: wrappedStore,
-            sourceAccount: payeeKeypair.publicKey(),
-            feePayer: channelAuthorizer(payeeKeypair),
-          }) as Method.AnyServer,
+          trackVerifyScope(
+            stellar.channel({
+              channel: opts.channelFactory,
+              commitmentKey: opts.commitmentPublicKey,
+              network: networkId,
+              store: wrappedStore,
+              sourceAccount: payeeKeypair.publicKey(),
+              feePayer: channelAuthorizer(payeeKeypair),
+            }) as Method.AnyServer,
+          ),
           commit,
         ),
       ),
@@ -375,6 +415,21 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         return
       }
 
+      pendingVoucher = null
+      const rawAuth = req.headers['authorization']
+      const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth
+      const parsedCred = parseMppCredential(authHeader)
+      if (
+        typeof parsedCred?.payload?.amount === 'string' &&
+        typeof parsedCred?.payload?.signature === 'string'
+      ) {
+        pendingVoucher = {
+          amount: parsedCred.payload.amount,
+          signature: parsedCred.payload.signature,
+          ...(parsedCred.source ? { source: parsedCred.source } : {}),
+        }
+      }
+
       const fetchReq = MppxRequest.fromNodeListener(req, res)
 
       const result = await (mppx as unknown as {
@@ -390,6 +445,7 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       })(fetchReq)
 
       if (result.status === 402) {
+        pendingVoucher = null
         const challenge = result.challenge!
         res.status(402)
         challenge.headers.forEach((v: string, k: string) => res.setHeader(k, v))

@@ -3,7 +3,8 @@ import { stellar } from '@stellar/mpp/charge/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import type { RouteDockManifest } from '../types.js'
 import { resolvePayee } from '../internal/payee.js'
-import { extractPayerAddress } from './payer.js'
+import { payerFromDidPkh } from './payer.js'
+import { parseMppCredential } from './credential.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import { base64ToUtf8 } from '../internal/encoding.js'
@@ -82,30 +83,11 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
       )
       const mppx = getMppx(assetContract)
       // Extract payer public key from the mppx Payment authorization header before
-      // the mppx library consumes it. The Payment bearer credential JSON contains
-      // a `sender` field with the payer's Stellar G... public key.
-      let payerAddress: string | null = null
-      try {
-        const authHeader = req.headers['authorization']
-        if (typeof authHeader === 'string' && authHeader.startsWith('Payment ')) {
-          const credPart = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credPart) {
-            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = base64ToUtf8(b64)
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { sender?: string; from?: string }
-            }
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            payerAddress = extractPayerAddress(key)
-          }
-        }
-      } catch {
-        // non-fatal — payer extraction is best-effort
-      }
+      // the mppx library consumes it.
+      const rawAuth = req.headers['authorization']
+      const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth
+      const cred = parseMppCredential(authHeader)
+      const payerAddress = payerFromDidPkh(cred?.source)
 
       // Idempotency: a retry of an already-settled charge replays the cached
       // receipt headers instead of settling (and billing) a second time. The

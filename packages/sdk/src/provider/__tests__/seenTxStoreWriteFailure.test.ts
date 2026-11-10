@@ -17,6 +17,7 @@ import express from 'express'
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express'
 import { Hono } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
+import { Challenge, Credential } from 'mppx'
 import type { RouteDockManifest } from '../../types.js'
 import type { SeenTxStore } from '../SeenTxStore.js'
 
@@ -170,7 +171,20 @@ function adapterOptions(store: SeenTxStore, s: Spies) {
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
 
 const X402_HEADERS = { 'payment-signature': 'signed-payload' }
-const MPP_HEADERS = { authorization: 'Payment credential="e30"' }
+const MPP_HEADERS = {
+  authorization: Credential.serialize(
+    Credential.from({
+      challenge: Challenge.from({
+        id: 'c1',
+        realm: 'routedock',
+        method: 'stellar',
+        intent: 'charge',
+        request: { amount: '8000' },
+      }),
+      payload: { transaction: 'e30' },
+    }),
+  ),
+}
 
 function assertStoreFailureReported(s: Spies) {
   assert.equal(s.callbackErrors.length, 1, 'onCallbackError called once')

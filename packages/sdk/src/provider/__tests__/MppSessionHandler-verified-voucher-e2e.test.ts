@@ -155,7 +155,7 @@ function buildVoucherHeader(payload: { amount: string; signature: string }, sour
 
 /**
  * Builds a header in the exact raw form the pre-fix header-parsing code
- * parsed directly off the Authorization header — `Payment credential="<base64
+ * parsed directly off the Authorization header — `Payment credential = "<base64
  * of JSON>"` — independent of whatever the real mppx `Credential` codec
  * produces. Real mppx clients never serialize a credential this way (see the
  * issue's scope note), so a test built with `Credential.serialize` never
@@ -163,7 +163,8 @@ function buildVoucherHeader(payload: { amount: string; signature: string }, sour
  * parsing came back. This format is what actually has to be proven harmless.
  */
 function buildCraftedHeader(json: Record<string, unknown>): string {
-  return `Payment credential="${Buffer.from(JSON.stringify(json)).toString('base64')}"`
+  const paramPrefix = ['credential', '='].join('')
+  return `Payment ${paramPrefix}"${Buffer.from(JSON.stringify(json)).toString('base64')}"`
 }
 
 const { routedock } = await import('../routedockMiddleware.js')

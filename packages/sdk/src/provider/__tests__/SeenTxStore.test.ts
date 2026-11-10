@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { Challenge, Credential } from 'mppx'
 import {
   InMemorySeenTxStore,
   paymentIdempotencyKey,
@@ -160,7 +161,17 @@ describe('paymentIdempotencyKey', () => {
   })
 
   it('falls back to authorization for mpp credentials', async () => {
-    const authKey = await key({ authorization: 'Payment credential="abc"' })
+    const challenge = Challenge.from({
+      id: 'c1',
+      realm: 'routedock',
+      method: 'stellar',
+      intent: 'charge',
+      request: { amount: '10000' },
+    })
+    const authHeader = Credential.serialize(
+      Credential.from({ challenge, payload: { transaction: 'abc' } }),
+    )
+    const authKey = await key({ authorization: authHeader })
     assert.ok(authKey)
     assert.equal(authKey!.length, 64)
   })

@@ -18,7 +18,8 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import { resolvePayee } from '../internal/payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
-import { extractPayerAddress } from './payer.js'
+import { extractPayerAddress, payerFromDidPkh } from './payer.js'
+import { parseMppCredential } from './credential.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
   channelAuthorizer,
@@ -27,7 +28,7 @@ import {
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
 import type { Method } from 'mppx'
-import { type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
+import { isVoucherStoreValue, type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
   InMemorySeenTxStore,
@@ -350,28 +351,8 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       )
       const mppx = getMppx(assetContract)
       // Extract payer public key from the mppx Payment authorization header.
-      let payerAddress: string | null = null
-      try {
-        const authHeader = c.req.header('authorization')
-        if (authHeader?.startsWith('Payment ')) {
-          const credPart = authHeader
-            .replace(/^Payment\s+/, '')
-            .split(',')
-            .find((p) => p.trim().startsWith('credential='))
-          if (credPart) {
-            const b64 = credPart.split('=').slice(1).join('=').replace(/^"|"$/g, '')
-            const credJson = base64ToUtf8(b64)
-            const cred = JSON.parse(credJson) as {
-              sender?: string
-              payload?: { sender?: string; from?: string }
-            }
-            const key = cred.sender ?? cred.payload?.sender ?? cred.payload?.from
-            payerAddress = extractPayerAddress(key)
-          }
-        }
-      } catch {
-        // non-fatal
-      }
+      const cred = parseMppCredential(c.req.header('authorization'))
+      const payerAddress = payerFromDidPkh(cred?.source)
 
       // Idempotency: a retry of an already-settled charge replays the cached
       // receipt headers instead of settling (and billing) a second time. The
@@ -515,6 +496,10 @@ interface MppSessionHandlerState {
   handleDelete(c: DeleteContext): Promise<Response>
   /** Arm the connection-closed orphan guard (idempotent). */
   armAbortGuard(c: SignalContext): void
+  /** Capture pending amount/signature from a Payment credential header before verification. */
+  capturePendingCredential(header: string | undefined): void
+  /** Clear any pending credential state when verification returns 402 or fails. */
+  clearPendingCredential(): void
 }
 
 /** The last verified voucher: amount, its signature, and the payer it named. */
@@ -543,6 +528,8 @@ function createMppSessionHandlerState(
   // payer it named. Only `commit` (called after a successful verify) may set
   // this; nothing derived from an unverified header may reach it.
   let record: VerifiedVoucherRecord | null = null
+  let pendingVoucher: { amount: string; signature: string; source?: string } | null = null
+  let inVerify = false
   let voucherCount = 0
   let sessionOpened = false
   let orphanFlagged = false
@@ -644,7 +631,19 @@ function createMppSessionHandlerState(
 
   const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
-    async put(key: string, value: unknown) { return innerStore.put(key, value) },
+    async put(key: string, value: unknown) {
+      await innerStore.put(key, value)
+      if (!inVerify && key === cumulativeKey && isVoucherStoreValue(value)) {
+        const pending = pendingVoucher
+        pendingVoucher = null
+        const matchedSig = pending && pending.amount === value.amount ? pending.signature : ''
+        const matchedSource = pending && pending.amount === value.amount ? pending.source : undefined
+        await commit({
+          payload: { amount: value.amount, signature: matchedSig },
+          ...(matchedSource ? { source: matchedSource } : {}),
+        })
+      }
+    },
     async delete(key: string) { return innerStore.delete(key) },
     async update(key: string, fn: (prev: unknown) => unknown) {
       const storeWithUpdate = innerStore as Partial<ChannelStore>
@@ -661,6 +660,7 @@ function createMppSessionHandlerState(
   // to run inside the store's `put`, before the caller knew verification had
   // actually succeeded.
   async function commit(credential: ChannelVerifyCredential): Promise<void> {
+    pendingVoucher = null
     await loadPersistedRecord()
     const payload = credential.payload
     if (typeof payload?.amount !== 'string' || typeof payload.signature !== 'string') return
@@ -673,7 +673,10 @@ function createMppSessionHandlerState(
     // A late/duplicate commit can't roll the signature back to an earlier amount.
     if (record && amount < record.amount) return
 
-    const payer = record?.payer ?? extractPayerAddress(credential.source)
+    const payer =
+      record?.payer ??
+      payerFromDidPkh(credential.source) ??
+      extractPayerAddress(credential.source)
     record = { amount, signature: payload.signature, payer }
 
     voucherCount++
@@ -713,19 +716,39 @@ function createMppSessionHandlerState(
     }
   }
 
+  function trackVerifyScope(method: Method.AnyServer): Method.AnyServer {
+    if (!method || typeof (method as { verify?: unknown }).verify !== 'function') {
+      return method
+    }
+    return {
+      ...method,
+      async verify(parameters: Parameters<Method.AnyServer['verify']>[0]) {
+        inVerify = true
+        try {
+          return await method.verify(parameters)
+        } finally {
+          inVerify = false
+          pendingVoucher = null
+        }
+      },
+    } as Method.AnyServer
+  }
+
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
       withTypedChannelErrors(
         onVerifiedCredential(
-          mppChannel({
-            channel: sessionPricing.channelFactory,
-            commitmentKey: opts.commitmentPublicKey!,
-            network: networkId,
-            store: wrappedStore,
-            sourceAccount: payeeKeypair.publicKey(),
-            feePayer: channelAuthorizer(payeeKeypair),
-          }) as Method.AnyServer,
+          trackVerifyScope(
+            mppChannel({
+              channel: sessionPricing.channelFactory,
+              commitmentKey: opts.commitmentPublicKey!,
+              network: networkId,
+              store: wrappedStore,
+              sourceAccount: payeeKeypair.publicKey(),
+              feePayer: channelAuthorizer(payeeKeypair),
+            }) as Method.AnyServer,
+          ),
           commit,
         ),
       ),
@@ -856,6 +879,23 @@ function createMppSessionHandlerState(
         )
       }
     },
+
+    capturePendingCredential(header: string | undefined): void {
+      pendingVoucher = null
+      const cred = parseMppCredential(header)
+      const payload = cred?.payload
+      if (typeof payload?.amount === 'string' && typeof payload?.signature === 'string') {
+        pendingVoucher = {
+          amount: payload.amount,
+          signature: payload.signature,
+          ...(cred?.source ? { source: cred.source } : {}),
+        }
+      }
+    },
+
+    clearPendingCredential(): void {
+      pendingVoucher = null
+    },
   }
 }
 
@@ -873,6 +913,8 @@ function createMppSessionHonoHandler(
         return await state.handleDelete(c as unknown as DeleteContext)
       }
 
+      state.capturePendingCredential(c.req.header('authorization'))
+
       const result = await (
         state.mppx as unknown as {
           channel: (o: { amount: string; description?: string }) => (
@@ -889,6 +931,7 @@ function createMppSessionHonoHandler(
       })(c.req.raw)
 
       if (result.status === 402) {
+        state.clearPendingCredential()
         const challenge = result.challenge!
         const headers: Record<string, string> = {}
         challenge.headers.forEach((v: string, k: string) => { headers[k] = v })
