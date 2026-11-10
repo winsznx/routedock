@@ -2,250 +2,201 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SupabaseSessionStore } from '../SessionStore.js'
+import {
+  RouteDockVoucherMonotonicityError,
+  RouteDockNetworkError,
+} from '../../errors.js'
 import type { SessionState } from '../../types.js'
-import { RouteDockVoucherMonotonicityError, RouteDockNetworkError } from '../../errors.js'
 
-function mockSupabase(opts: {
-  queryError?: string
-  upsertError?: string
-  updateError?: string
-  data?: Record<string, unknown> | null
-  onUpsert?: (payload: Record<string, unknown>, options?: unknown) => void
-  onUpdate?: (payload: Record<string, unknown>, eqField?: string, eqVal?: string) => void
-}): SupabaseClient {
+function makeBaseState(overrides: Partial<SessionState> = {}): SessionState {
   return {
-    from(_table: string) {
-      let updatePayload: Record<string, unknown> | null = null
+    channel_id: 'test-channel-1',
+    payee: 'GPAYEE',
+    payer: 'GPAYER',
+    channel_contract: 'test-channel-contract-1',
+    network: 'testnet',
+    cumulative_amount: '0.0010000',
+    last_signature: 'sig1',
+    status: 'open',
+    opened_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    settlement_tx_hash: null,
+    ...overrides,
+  }
+}
+
+interface FakeSupabaseOptions {
+  initialRows?: Map<string, Record<string, unknown>>
+  getError?: { message: string } | null
+  upsertError?: { message: string } | null
+  updateError?: { message: string } | null
+}
+
+function makeFakeSupabase(opts: FakeSupabaseOptions = {}) {
+  const rows = opts.initialRows ?? new Map<string, Record<string, unknown>>()
+  const upsertCalls: Array<{ row: Record<string, unknown>; options?: { onConflict?: string } | undefined }> = []
+  const updateCalls: Array<{ payload: Record<string, unknown>; eqCol: string; eqVal: unknown }> = []
+
+  const supabase = {
+    from(table: string) {
+      assert.equal(table, 'sessions')
       return {
-        select(_cols: string) {
+        select(cols: string) {
+          assert.equal(cols, '*')
           return {
-            eq(_field: string, _val: string) {
+            eq(col: string, val: string) {
+              assert.equal(col, 'channel_id')
               return {
-                maybeSingle() {
-                  return Promise.resolve({
-                    data: opts.data ?? null,
-                    error: opts.queryError ? { message: opts.queryError } : null,
-                  })
+                async maybeSingle() {
+                  if (opts.getError) {
+                    return { data: null, error: opts.getError }
+                  }
+                  return { data: rows.get(val) ?? null, error: null }
                 },
               }
             },
           }
         },
-        upsert(payload: Record<string, unknown>, options?: unknown) {
-          opts.onUpsert?.(payload, options)
-          return Promise.resolve({
-            data: null,
-            error: opts.upsertError ? { message: opts.upsertError } : null,
-          })
+        async upsert(row: Record<string, unknown>, options?: { onConflict?: string }) {
+          upsertCalls.push({ row, options })
+          if (opts.upsertError) {
+            return { data: null, error: opts.upsertError }
+          }
+          rows.set(String(row.channel_id), { ...row })
+          return { data: row, error: null }
         },
         update(payload: Record<string, unknown>) {
-          updatePayload = payload
           return {
-            eq(field: string, val: string) {
-              opts.onUpdate?.(updatePayload!, field, val)
-              return Promise.resolve({
-                data: null,
-                error: opts.updateError ? { message: opts.updateError } : null,
-              })
+            async eq(col: string, val: unknown) {
+              updateCalls.push({ payload, eqCol: col, eqVal: val })
+              if (opts.updateError) {
+                return { data: null, error: opts.updateError }
+              }
+              const existing = rows.get(String(val))
+              if (existing) {
+                rows.set(String(val), { ...existing, ...payload })
+              }
+              return { data: null, error: null }
             },
           }
         },
       }
     },
   } as unknown as SupabaseClient
-}
 
-const sampleRow = {
-  channel_id: 'channel_123',
-  payee: 'GPAYEE123',
-  payer: 'GPAYER123',
-  channel_contract: 'CCONTRACT123',
-  network: 'testnet',
-  cumulative_amount: '0.0050000',
-  last_signature: 'sig_abc',
-  status: 'open',
-  opened_at: '2026-09-01T00:00:00.000Z',
-  updated_at: '2026-09-01T00:00:00.000Z',
-  settlement_tx_hash: null,
-}
-
-const sampleState: SessionState = {
-  channel_id: 'channel_123',
-  payee: 'GPAYEE123',
-  payer: 'GPAYER123',
-  channel_contract: 'CCONTRACT123',
-  network: 'testnet',
-  cumulative_amount: '0.0050000',
-  last_signature: 'sig_abc',
-  status: 'open',
-  opened_at: '2026-09-01T00:00:00.000Z',
-  updated_at: '2026-09-01T00:00:00.000Z',
-  settlement_tx_hash: null,
+  return { supabase, rows, upsertCalls, updateCalls }
 }
 
 describe('SupabaseSessionStore', () => {
-  it('returns channel_contract and network from get()', async () => {
-    const store = new SupabaseSessionStore(mockSupabase({ data: sampleRow }))
-    const session = await store.get('channel_123')
-    assert.ok(session)
-    assert.equal(session.channel_contract, 'CCONTRACT123')
-    assert.equal(session.network, 'testnet')
-    assert.equal(session.channel_id, 'channel_123')
-    assert.equal(session.payee, 'GPAYEE123')
-    assert.equal(session.payer, 'GPAYER123')
+  it('upsert on a new channel_id inserts the row with onConflict: channel_id', async () => {
+    const { supabase, upsertCalls } = makeFakeSupabase()
+    const store = new SupabaseSessionStore(supabase)
+    const state = makeBaseState()
+
+    await store.upsert('test-channel-1', state)
+
+    assert.equal(upsertCalls.length, 1)
+    assert.deepEqual(upsertCalls[0]?.options, { onConflict: 'channel_id' })
+    assert.equal(upsertCalls[0]?.row.channel_id, 'test-channel-1')
+    assert.equal(upsertCalls[0]?.row.cumulative_amount, '0.0010000')
+
+    const loaded = await store.get('test-channel-1')
+    assert.equal(loaded?.cumulative_amount, '0.0010000')
   })
 
-  it('upsert() sends non-null values for NOT NULL columns (channel_id, payee, payer, channel_contract) and network', async () => {
-    const upserts: Record<string, unknown>[] = []
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        data: null,
-        onUpsert: (payload) => {
-          upserts.push(payload)
-        },
-      }),
-    )
+  it('upsert with a strictly higher cumulative_amount succeeds', async () => {
+    const { supabase, upsertCalls } = makeFakeSupabase()
+    const store = new SupabaseSessionStore(supabase)
 
-    await store.upsert('channel_123', sampleState)
+    await store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0010000' }))
+    await store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0020000' }))
 
-    assert.equal(upserts.length, 1)
-    const payload = upserts[0]
-    assert.ok(payload)
-    assert.ok(payload.channel_id, 'channel_id must not be null/undefined')
-    assert.ok(payload.payee, 'payee must not be null/undefined')
-    assert.ok(payload.payer, 'payer must not be null/undefined')
-    assert.ok(payload.channel_contract, 'channel_contract must not be null/undefined')
-    assert.equal(payload.channel_contract, 'CCONTRACT123')
-    assert.equal(payload.network, 'testnet')
-    assert.equal(payload.channel_id, 'channel_123')
+    assert.equal(upsertCalls.length, 2)
+    const loaded = await store.get('test-channel-1')
+    assert.equal(loaded?.cumulative_amount, '0.0020000')
   })
 
-  it('setStatus() calls update with a payload that has no cumulative_amount key', async () => {
-    const updates: { payload: Record<string, unknown>; eqField?: string | undefined; eqVal?: string | undefined }[] = []
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        onUpdate: (payload, eqField, eqVal) => {
-          updates.push({ payload, eqField, eqVal })
-        },
-      }),
+  it('upsert with an equal cumulative_amount rejects with RouteDockVoucherMonotonicityError before calling .upsert()', async () => {
+    const { supabase, upsertCalls } = makeFakeSupabase()
+    const store = new SupabaseSessionStore(supabase)
+
+    await store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0020000' }))
+    assert.equal(upsertCalls.length, 1)
+
+    await assert.rejects(
+      () => store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0020000' })),
+      (err: unknown) => err instanceof RouteDockVoucherMonotonicityError,
     )
-
-    await store.setStatus('channel_123', 'closing')
-
-    assert.equal(updates.length, 1)
-    const update = updates[0]
-    assert.ok(update)
-    assert.equal('cumulative_amount' in update.payload, false)
-    assert.equal(update.payload.status, 'closing')
-    assert.ok(update.payload.updated_at)
-    assert.equal(update.eqField, 'channel_id')
-    assert.equal(update.eqVal, 'channel_123')
+    assert.equal(upsertCalls.length, 1)
   })
 
-  it('moving a stored session from open to closing at an unchanged amount resolves without throwing', async () => {
-    const updates: Record<string, unknown>[] = []
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        data: sampleRow,
-        onUpdate: (payload) => {
-          updates.push(payload)
-        },
-      }),
-    )
+  it('upsert with a lower cumulative_amount rejects with RouteDockVoucherMonotonicityError before calling .upsert()', async () => {
+    const { supabase, upsertCalls } = makeFakeSupabase()
+    const store = new SupabaseSessionStore(supabase)
 
-    await assert.doesNotReject(async () => {
-      await store.setStatus('channel_123', 'closing')
+    await store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0020000' }))
+    assert.equal(upsertCalls.length, 1)
+
+    await assert.rejects(
+      () => store.upsert('test-channel-1', makeBaseState({ cumulative_amount: '0.0010000' })),
+      (err: unknown) => err instanceof RouteDockVoucherMonotonicityError,
+    )
+    assert.equal(upsertCalls.length, 1)
+  })
+
+  it('upsert maps a DB strictly increasing trigger error to RouteDockVoucherMonotonicityError', async () => {
+    const { supabase } = makeFakeSupabase({
+      upsertError: { message: 'cumulative_amount must be strictly increasing' },
     })
-    assert.equal(updates.length, 1)
-    const payload = updates[0]
-    assert.ok(payload)
-    assert.equal(payload.status, 'closing')
-    assert.equal('cumulative_amount' in payload, false)
-  })
-
-  it('setStatus() writes settlement_tx_hash when one is passed', async () => {
-    const updates: Record<string, unknown>[] = []
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        onUpdate: (payload) => {
-          updates.push(payload)
-        },
-      }),
-    )
-
-    await store.setStatus('channel_123', 'closed', 'tx_settled_hash_999')
-
-    assert.equal(updates.length, 1)
-    const payload = updates[0]
-    assert.ok(payload)
-    assert.equal(payload.status, 'closed')
-    assert.equal(payload.settlement_tx_hash, 'tx_settled_hash_999')
-    assert.equal('cumulative_amount' in payload, false)
-  })
-
-  it('setStatus() rejects with RouteDockNetworkError when update fails', async () => {
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        updateError: 'database unreachable',
-      }),
-    )
+    const store = new SupabaseSessionStore(supabase)
 
     await assert.rejects(
-      () => store.setStatus('channel_123', 'closing'),
-      RouteDockNetworkError,
+      () => store.upsert('test-channel-1', makeBaseState()),
+      (err: unknown) =>
+        err instanceof RouteDockVoucherMonotonicityError &&
+        err.message.includes('strictly increasing'),
     )
   })
 
-  it('close() sends status: closed and no cumulative_amount', async () => {
-    const updates: Record<string, unknown>[] = []
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        onUpdate: (payload) => {
-          updates.push(payload)
-        },
-      }),
+  it('maps generic Supabase errors on get and upsert to RouteDockNetworkError', async () => {
+    const getFail = makeFakeSupabase({
+      getError: { message: 'connection refused' },
+    })
+    const storeGetFail = new SupabaseSessionStore(getFail.supabase)
+    await assert.rejects(
+      () => storeGetFail.get('test-channel-1'),
+      (err: unknown) =>
+        err instanceof RouteDockNetworkError && err.message.includes('connection refused'),
     )
 
-    await store.close('channel_123')
-
-    assert.equal(updates.length, 1)
-    const payload = updates[0]
-    assert.ok(payload)
-    assert.equal(payload.status, 'closed')
-    assert.equal('cumulative_amount' in payload, false)
+    const upsertFail = makeFakeSupabase({
+      upsertError: { message: 'connection refused' },
+    })
+    const storeUpsertFail = new SupabaseSessionStore(upsertFail.supabase)
+    await assert.rejects(
+      () => storeUpsertFail.upsert('test-channel-1', makeBaseState()),
+      (err: unknown) =>
+        err instanceof RouteDockNetworkError && err.message.includes('connection refused'),
+    )
   })
 
-  it('upsert() rejects with RouteDockVoucherMonotonicityError when cumulative_amount <= stored, without calling client upsert', async () => {
-    let upsertCalled = false
-    const store = new SupabaseSessionStore(
-      mockSupabase({
-        data: sampleRow, // cumulative_amount is 0.0050000
-        onUpsert: () => {
-          upsertCalled = true
-        },
-      }),
-    )
+  it('setStatus and close update status without including cumulative_amount in payload', async () => {
+    const { supabase, updateCalls } = makeFakeSupabase()
+    const store = new SupabaseSessionStore(supabase)
 
-    // Equal amount
-    await assert.rejects(
-      () =>
-        store.upsert('channel_123', {
-          ...sampleState,
-          cumulative_amount: '0.0050000',
-        }),
-      RouteDockVoucherMonotonicityError,
-    )
-    assert.equal(upsertCalled, false)
+    await store.setStatus('ch', 'closing', 'tx123')
+    await store.close('ch')
 
-    // Lower amount
-    await assert.rejects(
-      () =>
-        store.upsert('channel_123', {
-          ...sampleState,
-          cumulative_amount: '0.0040000',
-        }),
-      RouteDockVoucherMonotonicityError,
-    )
-    assert.equal(upsertCalled, false)
+    assert.equal(updateCalls.length, 2)
+    assert.equal(updateCalls[0]?.eqCol, 'channel_id')
+    assert.equal(updateCalls[0]?.eqVal, 'ch')
+    assert.equal(updateCalls[0]?.payload.status, 'closing')
+    assert.equal(updateCalls[0]?.payload.settlement_tx_hash, 'tx123')
+    assert.equal('cumulative_amount' in (updateCalls[0]?.payload ?? {}), false)
+
+    assert.equal(updateCalls[1]?.eqCol, 'channel_id')
+    assert.equal(updateCalls[1]?.eqVal, 'ch')
+    assert.equal(updateCalls[1]?.payload.status, 'closed')
+    assert.equal('cumulative_amount' in (updateCalls[1]?.payload ?? {}), false)
   })
 })

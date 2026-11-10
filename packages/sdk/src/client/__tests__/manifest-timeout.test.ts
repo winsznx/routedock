@@ -1,20 +1,18 @@
 /**
- * Tests for the manifest-timeout mechanism.
- *
- * Tests the building blocks of the timeout implementation:
- *   1. AbortSignal.timeout() causes fetch to reject with TimeoutError/AbortError
+ * Tests for the manifest-timeout mechanism against real SDK functions:
+ *   1. fetchManifest(url, { timeoutMs }) rejects with RouteDockManifestTimeoutError on a hanging server
  *   2. RouteDockManifestTimeoutError has the correct code, retryable flag, and cause
- *   3. The error-detection pattern (err.name check) correctly identifies timeout errors
- *
- * The full integration (fetchManifest → RouteDockManifestTimeoutError on hang) is
- * tested via `pnpm test` which resolves ajv through the pnpm virtual store.
+ *   3. RouteDockClient.estimateCost(url) propagates manifestTimeoutMs and rejects with RouteDockManifestTimeoutError
  *
  * Run with: pnpm --filter @routedock/routedock test
  */
 
 import * as http from 'node:http'
 import assert from 'node:assert/strict'
+import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockManifestTimeoutError } from '../../errors.js'
+import { fetchManifest } from '../ModeRouter.js'
+import { RouteDockClient } from '../RouteDockClient.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,33 +40,30 @@ function startHangingServer(): Promise<{ url: string; close: () => Promise<void>
   })
 }
 
-/** The exact error-detection pattern used in ModeRouter.fetchManifest */
-function isTimeoutError(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
-}
-
-// ── Test 1: AbortSignal.timeout() causes fetch to reject on a hanging server ──
+// ── Test 1: fetchManifest rejects with RouteDockManifestTimeoutError on a hanging server ──
 
 {
   const server = await startHangingServer()
   try {
-    const TIMEOUT_MS = 200
+    const TIMEOUT_MS = 150
     const start = Date.now()
-    let rawErr: unknown
+    let caught: unknown
     try {
-      await fetch(server.url, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+      await fetchManifest(server.url, { maxAttempts: 1 }, TIMEOUT_MS)
     } catch (err) {
-      rawErr = err
+      caught = err
     }
 
     const elapsed = Date.now() - start
-    assert.ok(rawErr instanceof Error, 'fetch must throw on hanging server with timeout')
     assert.ok(
-      isTimeoutError(rawErr),
-      `raw error must be TimeoutError or AbortError, got name="${(rawErr as Error).name}"`,
+      caught instanceof RouteDockManifestTimeoutError,
+      `fetchManifest must reject with RouteDockManifestTimeoutError, got ${String(caught)}`,
     )
+    assert.strictEqual(caught.code, 'MANIFEST_TIMEOUT')
+    assert.strictEqual(caught.retryable, true)
+    assert.ok(caught.cause instanceof Error, 'cause must be preserved')
     assert.ok(elapsed < 2000, `Should abort quickly, took ${elapsed}ms`)
-    console.log(`✓ Test 1: AbortSignal.timeout(${TIMEOUT_MS}ms) fires on hanging server (elapsed: ${elapsed}ms)`)
+    console.log(`✓ Test 1: fetchManifest(${TIMEOUT_MS}ms) rejects with RouteDockManifestTimeoutError (elapsed: ${elapsed}ms)`)
   } finally {
     await server.close()
   }
@@ -92,48 +87,33 @@ function isTimeoutError(err: unknown): boolean {
   console.log('✓ Test 2: RouteDockManifestTimeoutError has correct code, retryable, message, and cause')
 }
 
-// ── Test 3: isTimeoutError correctly classifies timeout errors ────────────────
-
-{
-  const timeoutDom = new DOMException('timed out', 'TimeoutError')
-  const abortDom = new DOMException('aborted', 'AbortError')
-  const genericErr = new Error('some other error')
-  const networkErr = Object.assign(new Error('ECONNREFUSED'), { name: 'FetchError' })
-
-  assert.ok(isTimeoutError(timeoutDom), 'TimeoutError DOMException should be detected')
-  assert.ok(isTimeoutError(abortDom), 'AbortError DOMException should be detected')
-  assert.ok(!isTimeoutError(genericErr), 'generic Error should NOT be detected as timeout')
-  assert.ok(!isTimeoutError(networkErr), 'FetchError should NOT be detected as timeout')
-  assert.ok(!isTimeoutError(null), 'null should NOT be detected as timeout')
-  assert.ok(!isTimeoutError('string'), 'string should NOT be detected as timeout')
-  console.log('✓ Test 3: isTimeoutError() correctly classifies timeout vs non-timeout errors')
-}
-
-// ── Test 4: end-to-end — fetch → detect → wrap as RouteDockManifestTimeoutError
+// ── Test 3: RouteDockClient.estimateCost propagates manifestTimeoutMs ─────────
 
 {
   const server = await startHangingServer()
   try {
-    const TIMEOUT_MS = 150
-    const url = `${server.url}/.well-known/routedock.json`
-    let wrapped: RouteDockManifestTimeoutError | undefined
+    const client = new RouteDockClient({
+      wallet: Keypair.random().secret(),
+      network: 'testnet',
+      manifestTimeoutMs: 150,
+      retryPolicy: { maxAttempts: 1 },
+    })
 
+    let caught: unknown
     try {
-      await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+      await client.estimateCost(server.url)
     } catch (err) {
-      if (isTimeoutError(err)) {
-        wrapped = new RouteDockManifestTimeoutError(
-          `Manifest fetch timed out after ${TIMEOUT_MS}ms from ${url}`,
-          { cause: err },
-        )
-      }
+      caught = err
     }
 
-    assert.ok(wrapped instanceof RouteDockManifestTimeoutError, 'should wrap as RouteDockManifestTimeoutError')
-    assert.strictEqual(wrapped.code, 'MANIFEST_TIMEOUT')
-    assert.ok(wrapped.retryable)
-    assert.ok(wrapped.cause instanceof Error)
-    console.log('✓ Test 4: fetch → timeout detection → RouteDockManifestTimeoutError wrapping works end-to-end')
+    assert.ok(
+      caught instanceof RouteDockManifestTimeoutError,
+      `client.estimateCost must reject with RouteDockManifestTimeoutError, got ${String(caught)}`,
+    )
+    assert.ok(caught.message.includes('150ms'), `message must include 150ms, got "${caught.message}"`)
+    assert.strictEqual(caught.code, 'MANIFEST_TIMEOUT')
+    assert.strictEqual(caught.retryable, true)
+    console.log('✓ Test 3: RouteDockClient.estimateCost propagates manifestTimeoutMs and rejects with RouteDockManifestTimeoutError')
   } finally {
     await server.close()
   }
