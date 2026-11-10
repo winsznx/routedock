@@ -252,6 +252,7 @@ const SESSION_MANIFEST = signManifest({
       amount: '0.0008',
       timestamp: Date.now(),
     }
+    ;(client as any)._checkTrustline = async () => {}
     ;(client as any).charge.pay = async () => fakeResult
 
     const result = await client.pay(`${server.url}/price`)

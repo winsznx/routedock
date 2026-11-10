@@ -172,6 +172,15 @@ function getAssetIssuer(asset: string, network: string): string {
   return ASSET_ISSUERS[asset]?.[network] ?? ''
 }
 
+function isHorizonAccountNotFound(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const maybeErr = err as {
+    name?: unknown
+    response?: { status?: unknown }
+  }
+  return maybeErr.response?.status === 404 || maybeErr.name === 'NotFoundError'
+}
+
 /** Trustline cache TTL — 5 minutes, since trustlines are rarely added at runtime. */
 const TRUSTLINE_CACHE_TTL_MS = 300_000
 
@@ -399,9 +408,18 @@ export class RouteDockClient {
       })
     } catch (err) {
       if (err instanceof RouteDockTrustlineError) throw err
+      if (isHorizonAccountNotFound(err)) {
+        const expectedIssuer = getAssetIssuer(targetAsset, this.network)
+        throw new RouteDockTrustlineError(
+          targetAsset,
+          expectedIssuer || 'unknown',
+          `Account ${this.keypair.publicKey()} does not exist on ${this.network} — fund the account on ${this.network} before paying`,
+        )
+      }
       this.logger?.(
         'warn',
         `[RouteDock] Trustline preflight: could not verify trustline for ${targetAsset} — continuing`,
+        { error: err instanceof Error ? err.message : String(err) },
       )
     }
   }
