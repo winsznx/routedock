@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient, type RouteDockClientConfig } from '../client/RouteDockClient.js'
 
@@ -34,9 +34,15 @@ export function useRouteDockClient(config: RouteDockClientConfig): RouteDockClie
     [walletKey, config.network, spendCapKey, config.commitmentSecret, retryKey],
   )
 
-  // Dispose the commitment secret when the client instance is replaced or the
-  // component unmounts, so the secret does not linger in the WeakMap.
-  useEffect(() => () => client.dispose(), [client])
+  // Wipe the previous client's commitment secret when a config change produces a
+  // new client instance. There is no unmount cleanup because React StrictMode
+  // replays effect cleanups on a still-mounted client, which would wipe the active
+  // secret; when the component unmounts, the secret is released with the instance.
+  const previous = useRef<RouteDockClient | null>(null)
+  useEffect(() => {
+    if (previous.current && previous.current !== client) previous.current.dispose()
+    previous.current = client
+  }, [client])
 
   return client
 }
