@@ -277,7 +277,7 @@ Both `provider-a` and `provider-b` run as **Cloudflare Workers**.
 > Do not redeploy providers to mainnet individually before the SDK package publishes to npm. Follow the strict ordering from tracking issue **#265**:
 > 1. Publish `@routedock/routedock@0.2.0` to npm (which includes `signature_version: '2'`).
 > 2. Configure production secrets via `wrangler secret put` on both Workers.
-> 3. Redeploy **both** providers simultaneously (`pnpm --filter provider-a deploy` & `pnpm --filter provider-b deploy`).
+> 3. Redeploy **both** providers simultaneously (`pnpm --filter provider-a run deploy` & `pnpm --filter provider-b run deploy`).
 > 4. Verify both serve `signature_version: '2'` and are reachable before sending agent traffic.
 
 ### Provider A (`apps/provider-a`) — Cloudflare Worker
