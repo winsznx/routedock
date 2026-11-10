@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { Keypair } from '@stellar/stellar-sdk'
 import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
-import { Store as MppxStore } from 'mppx'
+import { Credential, Store as MppxStore, type Method } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
 import { recordSessionSettlement } from './internal/vaultSettlement.js'
 import {
@@ -16,7 +16,6 @@ import {
   withTypedChannelErrors,
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
-import type { Method } from 'mppx'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import { hexToBytes } from '../internal/encoding.js'
 
@@ -300,14 +299,132 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     try {
       if (req.method === 'DELETE') {
         await loadPersistedRecord()
-        const body = req.body as { amount?: string; signature?: string } | undefined
-        const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+        let body = req.body as { amount?: unknown; signature?: unknown; channel?: unknown } | undefined
+        if (body === undefined && !req.readableEnded) {
+          try {
+            const raw = await new Promise<string>((resolve) => {
+              const chunks: Buffer[] = []
+              req.on('data', (chunk: Buffer | string) => {
+                chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+              })
+              req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+              req.on('error', () => resolve(''))
+            })
+            if (raw) {
+              body = JSON.parse(raw) as { amount?: unknown; signature?: unknown; channel?: unknown }
+            }
+          } catch {
+            // empty or non-JSON body
+          }
+        }
+
+        if (
+          body !== undefined &&
+          body !== null &&
+          typeof body === 'object' &&
+          'amount' in body &&
+          body.amount !== undefined
+        ) {
+          if (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount)) {
+            res.status(400).json({ error: 'Invalid amount: must be a non-negative integer string' })
+            return
+          }
+        }
+
+        if (
+          body !== undefined &&
+          body !== null &&
+          typeof body === 'object' &&
+          'channel' in body &&
+          body.channel !== undefined &&
+          body.channel !== opts.channelFactory
+        ) {
+          res.status(401).json({ error: 'Channel mismatch' })
+          return
+        }
+
+        const rawAuth = req.headers.authorization
+        const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth
+        let credAmount: string | undefined
+        let credSignature: string | undefined
+        if (authHeader !== undefined) {
+          if (!authHeader.startsWith('Payment ')) {
+            res.status(401).json({ error: 'Invalid Payment credential' })
+            return
+          }
+          let cred: {
+            challenge?: {
+              request?: {
+                channel?: string
+                methodDetails?: { channel?: string }
+              }
+            }
+            payload?: {
+              amount?: unknown
+              signature?: unknown
+              channel?: string
+            }
+          }
+          try {
+            cred = Credential.deserialize(authHeader) as typeof cred
+          } catch {
+            res.status(401).json({ error: 'Malformed Payment credential' })
+            return
+          }
+          const credChannel =
+            cred.payload?.channel ??
+            cred.challenge?.request?.channel ??
+            cred.challenge?.request?.methodDetails?.channel
+          if (credChannel !== undefined && credChannel !== opts.channelFactory) {
+            res.status(401).json({ error: 'Payment credential channel mismatch' })
+            return
+          }
+          if (
+            cred.payload?.amount !== undefined &&
+            (typeof cred.payload.amount !== 'string' || !/^\d+$/.test(cred.payload.amount))
+          ) {
+            res.status(400).json({ error: 'Invalid credential amount' })
+            return
+          }
+          if (typeof cred.payload?.amount === 'string') {
+            credAmount = cred.payload.amount
+          }
+          if (
+            typeof cred.payload?.signature === 'string' &&
+            cred.payload.signature.length > 0 &&
+            /^[0-9a-fA-F]+$/.test(cred.payload.signature)
+          ) {
+            credSignature = cred.payload.signature
+          }
+          if (!credSignature) {
+            res.status(401).json({ error: 'Payment credential missing voucher signature' })
+            return
+          }
+        }
+
+        const hasLiveSession = sessionOpened || record !== null
+        const bodySig =
+          typeof body?.signature === 'string' &&
+          body.signature.length > 0 &&
+          /^[0-9a-fA-F]+$/.test(body.signature)
+            ? body.signature
+            : undefined
+        const effectiveAmountStr =
+          typeof body?.amount === 'string' ? body.amount : credAmount
+        const effectiveSig = bodySig ?? credSignature
+
+        if (hasLiveSession && !effectiveSig) {
+          res.status(401).json({ error: 'Payment credential or voucher signature required to close channel' })
+          return
+        }
+
+        const bodyAmount = effectiveAmountStr ? BigInt(effectiveAmountStr) : 0n
         const recordAmount = record?.amount ?? 0n
         let closeAmount: bigint
         let closeSig: string
         if (bodyAmount > recordAmount) {
           closeAmount = bodyAmount
-          closeSig = body?.signature ?? record?.signature ?? ''
+          closeSig = effectiveSig ?? record?.signature ?? ''
         } else {
           closeAmount = recordAmount
           closeSig = record?.signature ?? ''

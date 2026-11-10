@@ -94,6 +94,9 @@ function buildExpressShims(
     parsedUrl.searchParams.forEach((v, k) => { q[k] = v })
     Object.defineProperty(req, 'query', { value: q, configurable: true })
   }
+  if (!('body' in req) && fastifyRequest.body !== undefined) {
+    Object.defineProperty(req, 'body', { value: fastifyRequest.body, configurable: true })
+  }
 
   // --- Response shim ---
   // `res` and `rawRes` are the same object: the Express surface is defined

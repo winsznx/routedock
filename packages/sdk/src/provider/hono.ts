@@ -26,7 +26,7 @@ import {
   withTypedChannelErrors,
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
-import type { Method } from 'mppx'
+import { Credential, type Method } from 'mppx'
 import { type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
@@ -494,7 +494,10 @@ export function mppSessionWsVerified(c: { get: (key: string) => unknown }): bool
 
 /** Contexts the shared session state is invoked with (subset of hono's Context). */
 interface DeleteContext {
-  req: { json(): Promise<unknown> }
+  req: {
+    json(): Promise<unknown>
+    header(name: string): string | undefined
+  }
   json: (data: unknown, status?: number) => Response
 }
 interface SignalContext {
@@ -737,20 +740,118 @@ function createMppSessionHandlerState(
 
     async handleDelete(c: DeleteContext): Promise<Response> {
       await loadPersistedRecord()
-      let body: { amount?: string; signature?: string } | undefined
+      let body: { amount?: unknown; signature?: unknown; channel?: unknown } | undefined
       try {
-        body = await c.req.json() as { amount?: string; signature?: string }
+        body = await c.req.json() as { amount?: unknown; signature?: unknown; channel?: unknown }
       } catch {
         // empty or non-JSON body
       }
 
-      const bodyAmount = body?.amount ? BigInt(body.amount) : 0n
+      if (
+        body !== undefined &&
+        body !== null &&
+        typeof body === 'object' &&
+        'amount' in body &&
+        body.amount !== undefined
+      ) {
+        if (typeof body.amount !== 'string' || !/^\d+$/.test(body.amount)) {
+          return c.json(
+            { error: 'Invalid amount: must be a non-negative integer string' },
+            400,
+          )
+        }
+      }
+
+      if (
+        body !== undefined &&
+        body !== null &&
+        typeof body === 'object' &&
+        'channel' in body &&
+        body.channel !== undefined &&
+        body.channel !== sessionPricing.channelFactory
+      ) {
+        return c.json({ error: 'Channel mismatch' }, 401)
+      }
+
+      const authHeader = c.req.header('authorization')
+      let credAmount: string | undefined
+      let credSignature: string | undefined
+      if (authHeader !== undefined) {
+        if (!authHeader.startsWith('Payment ')) {
+          return c.json({ error: 'Invalid Payment credential' }, 401)
+        }
+        let cred: {
+          challenge?: {
+            request?: {
+              channel?: string
+              methodDetails?: { channel?: string }
+            }
+          }
+          payload?: {
+            amount?: unknown
+            signature?: unknown
+            channel?: string
+          }
+        }
+        try {
+          cred = Credential.deserialize(authHeader) as typeof cred
+        } catch {
+          return c.json({ error: 'Malformed Payment credential' }, 401)
+        }
+        const credChannel =
+          cred.payload?.channel ??
+          cred.challenge?.request?.channel ??
+          cred.challenge?.request?.methodDetails?.channel
+        if (credChannel !== undefined && credChannel !== sessionPricing.channelFactory) {
+          return c.json({ error: 'Payment credential channel mismatch' }, 401)
+        }
+        if (
+          cred.payload?.amount !== undefined &&
+          (typeof cred.payload.amount !== 'string' || !/^\d+$/.test(cred.payload.amount))
+        ) {
+          return c.json({ error: 'Invalid credential amount' }, 400)
+        }
+        if (typeof cred.payload?.amount === 'string') {
+          credAmount = cred.payload.amount
+        }
+        if (
+          typeof cred.payload?.signature === 'string' &&
+          cred.payload.signature.length > 0 &&
+          /^[0-9a-fA-F]+$/.test(cred.payload.signature)
+        ) {
+          credSignature = cred.payload.signature
+        }
+        if (!credSignature) {
+          return c.json({ error: 'Payment credential missing voucher signature' }, 401)
+        }
+      }
+
+      const storedCumulative = await readStoredCumulative()
+      const hasLiveSession = sessionOpened || record !== null || storedCumulative !== null
+      const bodySig =
+        typeof body?.signature === 'string' &&
+        body.signature.length > 0 &&
+        /^[0-9a-fA-F]+$/.test(body.signature)
+          ? body.signature
+          : undefined
+      const effectiveAmountStr =
+        typeof body?.amount === 'string' ? body.amount : credAmount
+      const effectiveSig = bodySig ?? credSignature
+
+      if (hasLiveSession && !effectiveSig) {
+        return c.json(
+          { error: 'Payment credential or voucher signature required to close channel' },
+          401,
+        )
+      }
+
+      const bodyAmount = effectiveAmountStr ? BigInt(effectiveAmountStr) : 0n
       const recordAmount = record?.amount ?? 0n
       let closeAmount: bigint
       let closeSig: string
       if (bodyAmount > recordAmount) {
         closeAmount = bodyAmount
-        closeSig = body?.signature ?? record?.signature ?? ''
+        closeSig = effectiveSig ?? record?.signature ?? ''
       } else {
         closeAmount = recordAmount
         // Prefer the provider's own verified-voucher signature. Fall back to
@@ -759,7 +860,7 @@ function createMppSessionHandlerState(
         // amount no-ops and the session is never flagged for recovery.
         closeSig =
           record?.signature ||
-          (bodyAmount === recordAmount ? body?.signature ?? '' : '')
+          (bodyAmount === recordAmount ? effectiveSig ?? '' : '')
       }
 
       if (closeAmount > 0n && closeSig) {
@@ -768,7 +869,6 @@ function createMppSessionHandlerState(
         // this, but a rebuilt instance with no record (a session opened before
         // the record existed, or a failed record write) has nothing else to
         // compare against. The entry is read only — it belongs to mppx.
-        const storedCumulative = await readStoredCumulative()
         if (storedCumulative !== null && closeAmount < storedCumulative) {
           return c.json(
             {
