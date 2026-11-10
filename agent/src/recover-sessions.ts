@@ -23,6 +23,39 @@ const SUPABASE_SERVICE_KEY = process.env['SUPABASE_SERVICE_KEY'] ?? ''
 const STELLAR_NETWORK = (process.env['STELLAR_NETWORK'] ?? 'testnet') as 'testnet' | 'mainnet'
 const STELLAR_PAYEE_SECRET = process.env['STELLAR_PAYEE_SECRET'] ?? ''
 
+export interface RecoveryOutcomeStats {
+  recoveredCount: number
+  failedCount: number
+  skippedCount?: number
+  orphanedCount?: number
+}
+
+export function exitCodeFor(stats: RecoveryOutcomeStats): 0 | 1 {
+  return stats.failedCount > 0 ? 1 : 0
+}
+
+export function resolveRecoveryOutcome(stats: RecoveryOutcomeStats): {
+  exitCode: 0 | 1
+  message: string
+} {
+  if (stats.failedCount > 0) {
+    return {
+      exitCode: 1,
+      message: '[SessionRecovery] ✗ Session recovery completed with errors',
+    }
+  } else if (stats.recoveredCount > 0) {
+    return {
+      exitCode: 0,
+      message: '[SessionRecovery] ✓ Session recovery completed successfully',
+    }
+  } else {
+    return {
+      exitCode: 0,
+      message: '[SessionRecovery] ✓ No orphaned sessions found',
+    }
+  }
+}
+
 async function main(): Promise<void> {
   // Validation
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -75,20 +108,21 @@ async function main(): Promise<void> {
     }
 
     console.log()
-    if (stats.recoveredCount > 0) {
-      console.log('[SessionRecovery] ✓ Session recovery completed successfully')
-      process.exit(0)
-    } else if (stats.failedCount > 0) {
-      console.log('[SessionRecovery] ✗ Session recovery completed with errors')
-      process.exit(1)
-    } else {
-      console.log('[SessionRecovery] ✓ No orphaned sessions found')
-      process.exit(0)
-    }
+    const outcome = resolveRecoveryOutcome(stats)
+    console.log(outcome.message)
+    process.exit(outcome.exitCode)
   } catch (err) {
     console.error('[SessionRecovery] Fatal error:', err)
     process.exit(1)
   }
 }
 
-main()
+const invokedPath = process.argv[1] ?? ''
+if (
+  invokedPath.endsWith('/recover-sessions.ts') ||
+  invokedPath.endsWith('\\recover-sessions.ts') ||
+  invokedPath.endsWith('/recover-sessions.js') ||
+  invokedPath.endsWith('\\recover-sessions.js')
+) {
+  main()
+}
