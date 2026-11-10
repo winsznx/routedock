@@ -147,7 +147,7 @@ VALUES
 
 -- ─── Sample tx_log entries ────────────────────────────────────
 
-INSERT INTO tx_log (tx_type, tx_hash, amount, mode, network, provider_url, agent_address, metadata)
+INSERT INTO tx_log (tx_type, tx_hash, amount, mode, network, provider_url, agent_address, channel_id, metadata)
 VALUES
   (
     'x402_settle',
@@ -157,6 +157,7 @@ VALUES
     'testnet',
     'https://provider-a.railway.app/price',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
+    NULL,
     '{"status": 200, "latency_ms": 142}'::jsonb
   ),
   (
@@ -167,6 +168,7 @@ VALUES
     'testnet',
     'https://provider-a.railway.app/price',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
+    NULL,
     '{"status": 200, "latency_ms": 98}'::jsonb
   ),
   (
@@ -177,5 +179,6 @@ VALUES
     'testnet',
     'https://provider-b.railway.app/stream/orderbook',
     'GDEMO1AGENTADDRESS1111111111111111111111111111111111111',
+    'chan_demo_003_closing',
     '{"channel_id": "chan_demo_003_closing"}'::jsonb
   );

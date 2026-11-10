@@ -130,6 +130,7 @@ export function createSessionWriters(
         network,
         provider_url: providerUrl,
         agent_address: payer,
+        channel_id: channelContract,
         metadata: { settled_at: new Date().toISOString() },
       })
       if (error) console.error('[supabase] tx_log insert failed:', error.message)

@@ -240,6 +240,7 @@ export class ChannelSession extends DurableObject<Env> {
           mode: 'mpp-session',
           network,
           provider_url: providerUrl,
+          channel_id: channelId,
           metadata: { settled_at: new Date().toISOString(), recovered: true },
         })
         if (error) {
