@@ -35,6 +35,17 @@ Non-secret environment variables (such as `STELLAR_NETWORK` and `PUBLIC_BASE_URL
 
 When `SUPABASE_URL` is configured, apply the database migrations in [supabase/migrations/](../supabase/migrations/) to your Supabase project.
 
+### Database prerequisites
+
+When using Supabase (`SUPABASE_URL` and `SUPABASE_SERVICE_KEY`), apply all SQL files in [supabase/migrations/](../supabase/migrations/) in order before deploying the Workers:
+
+- **Settlement retention (`pg_cron`)**: Daily cleanup of stale rows in `settlements` requires the `pg_cron` extension. Migration `005_enable_pg_cron_retention.sql` enables `pg_cron` on Supabase and registers the `settlement-retention-cleanup` job (`0 3 * * *`, running `SELECT cleanup_stale_settlements(7)`).
+- **Verify the scheduled job**: Check that `settlement-retention-cleanup` is registered and active:
+  ```sql
+  SELECT jobname, schedule, active FROM cron.job;
+  ```
+- **External-scheduler fallback**: When `pg_cron` is not available (for example on plain self-hosted Postgres without `pg_cron` in `shared_preload_libraries`), migration `005` logs a warning and skips scheduling. Run `SELECT cleanup_stale_settlements(7);` daily from an external scheduler instead.
+
 ### Scheduled triggers
 
 Provider B registers a `*/15 * * * *` cron trigger in its `wrangler.jsonc`. When deployed, Cloudflare Workers triggers this schedule every 15 minutes to forward periodic settlement reconciliation to the `ChannelSession` Durable Object.
