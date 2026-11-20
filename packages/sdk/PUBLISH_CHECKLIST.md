@@ -25,6 +25,14 @@ pnpm --filter @routedock/mcp-server typecheck
 
 Confirm that every archive contains the `dist` entrypoints declared in its `package.json` and contains no secrets.
 
+To rehearse the full publish path locally (no token, no npmjs writes):
+
+```bash
+RELEASE_REHEARSAL=1 pnpm run release
+```
+
+This starts a throwaway Verdaccio registry, creates a temporary changeset, publishes all three packages there and checks the `New tag:` lines that `changesets/action` needs. It restores `package.json` and changelogs afterwards. CI runs the same script for PRs that touch release inputs.
+
 ## Automated release
 
 1. Merge the PR containing the changeset.
