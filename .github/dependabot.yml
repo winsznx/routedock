@@ -23,3 +23,8 @@ updates:
       # tsup's DTS build and typescript-eslint don't support TS 7 yet.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # v3 replaces the `New tag:` stdout that changesets/action v1.9.0
+      # scrapes to push tags and create releases (#718). Keep the rehearsal
+      # job on the v2 contract until the action understands v3's output.
+      - dependency-name: "@changesets/cli"
+        update-types: ["version-update:semver-major"]

@@ -178,6 +178,50 @@ jobs:
           cat audit-report.txt
           exit "$status"
 
+  release-rehearsal:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Filter inside the job instead of with on.pull_request.paths: the latter
+    # would gate every other CI job. No release-related change means this
+    # required check passes (rather than being skipped) without a publish.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect release-related changes
+        id: changes
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- \
+            package.json pnpm-lock.yaml '.changeset/**' \
+            'packages/*/package.json' 'scripts/check-pack*' \
+            'scripts/check-release-tags*' 'scripts/release-rehearsal*' \
+            '.github/workflows/release.yml' '.github/workflows/ci.yml' \
+            '.github/dependabot.yml' > changed.txt
+          if [[ -s changed.txt ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Release-related changes:"
+            cat changed.txt
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No release-related files changed; skipping rehearsal."
+          fi
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Publish to a throwaway registry and check the tag contract
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          RELEASE_REHEARSAL=1 bash scripts/release-rehearsal.sh
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
@@ -213,6 +257,12 @@ jobs:
 
       - name: Test release permission guard
         run: node --test scripts/release-permissions.test.mjs
+      - name: Test release rehearsal wiring
+        run: node --test scripts/release-rehearsal.test.mjs
+      - name: Test the New tag stdout contract
+        # Proves that a @changesets/cli v3 publish (Created git tags:) fails
+        # with the missing-line message, independently of a full rehearsal.
+        run: node --test scripts/check-release-tags.test.mjs
 
   lint:
     runs-on: ubuntu-latest

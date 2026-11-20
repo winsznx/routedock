@@ -51,7 +51,9 @@ jobs:
         id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
-          publish: pnpm run release
+          # Same script the release-rehearsal CI job runs, so the stdout
+          # contract changesets/action depends on is exercised in PRs (#718).
+          publish: bash scripts/release-rehearsal.sh
           version: pnpm run version
           github-token: ${{ steps.app-token.outputs.token }}
         env:
