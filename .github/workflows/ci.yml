@@ -8,6 +8,40 @@ on:
   merge_group:
 
 jobs:
+  database-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: routedock_ci
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d routedock_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGDATABASE: routedock_ci
+      PGUSER: postgres
+      PGPASSWORD: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Apply migrations with Supabase default grants
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/fixtures/supabase_roles.sql
+          for migration in supabase/migrations/*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -c 'SET ROLE routedock_migrations' -f "$migration"
+          done
+      - name: Verify public session reads and write protection
+        run: psql -X -v ON_ERROR_STOP=1 -f supabase/tests/rls_public_sessions.sql
+
   contract-tests:
     runs-on: ubuntu-latest
     steps:
