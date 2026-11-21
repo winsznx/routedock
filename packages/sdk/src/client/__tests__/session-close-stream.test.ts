@@ -2,9 +2,10 @@
  * Unit tests for MppSessionClient.stream() honoring close() (#398).
  *
  * A closed session — whether close() was called by the consumer or by the
- * maxDurationMs lifetime guard — must not issue another voucher. The stream
- * loop is the only place that calls checkSpend() / mppx.fetch(), so these
- * tests count both and assert the counts freeze after close().
+ * maxDurationMs lifetime guard — must not issue another voucher. Every voucher
+ * goes through mppx.fetch(), whose 402 challenge runs the spend check before
+ * signing, so these tests count both and assert the counts freeze after
+ * close().
  *
  * mppx/client is mocked before the SDK is imported (like session-stats.test.ts)
  * and the Soroban RPC surface used by close() is mocked afterwards (like
@@ -18,6 +19,7 @@
 import assert from 'node:assert/strict'
 import { after, beforeEach, before, describe, test, mock } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
+import { Challenge } from 'mppx'
 import type { RouteDockManifest, SessionOptions } from '../../types.js'
 
 const CHANNEL_CONTRACT = 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH'
@@ -35,12 +37,29 @@ mock.module('@stellar/mpp/channel/client', {
   },
 })
 
+type OnChallenge = (
+  challenge: Challenge.Challenge,
+  helpers: { createCredential: (context?: { cumulativeAmount?: string }) => Promise<string> },
+) => Promise<string | undefined>
+
 mock.module('mppx/client', {
   namedExports: {
     Mppx: {
-      create: () => ({
+      create: (config: { onChallenge?: OnChallenge }) => ({
         fetch: async (): Promise<Response> => {
           fetchCallCount++
+          // Answer the provider's 402 the way mppx does, so the session's
+          // guard and spend check run for every voucher.
+          await config.onChallenge?.(
+            Challenge.from({
+              id: 'close-stream-test',
+              realm: 'provider.test',
+              method: 'stellar',
+              intent: 'channel',
+              request: { amount: '1000', channel: CHANNEL_CONTRACT },
+            }),
+            { createCredential: async () => 'Payment fake-credential' },
+          )
           return new Response(JSON.stringify({ seq: fetchCallCount }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
@@ -205,7 +224,7 @@ describe('MppSessionClient.stream() after close()', () => {
     // The next pull on the still-active iterator must not sign a voucher.
     await assert.rejects(() => iter.next(), isSessionClosed)
     assert.equal(fetchCallCount, fetchesAtClose, 'no mppx.fetch after close()')
-    assert.equal(spendChecks, spendsAtClose, 'no checkSpend() after close()')
+    assert.equal(spendChecks, spendsAtClose, 'no spend check after close()')
   })
 
   test('pipelined stream (concurrency 3) stops refilling after close()', async () => {
