@@ -272,11 +272,11 @@ fastify.get('/price', async () => ({ price: '0.199', pair: 'XLM/USDC' }))`}</Cod
                 inside <InlineCode>__check_auth</InlineCode>:
               </p>
               <ul className="list-disc list-inside space-y-2 pl-1">
-                <li><strong>Daily cap</strong> — limits total spend per 17,280-ledger day bucket</li>
+                <li><strong>Daily cap</strong> — limits total spend in any trailing 17,280-ledger window (about 24 hours), so it cannot be spent twice across a day boundary</li>
                 <li><strong>Endpoint allowlist</strong> — rejects transfers to addresses not in the stored allowlist</li>
                 <li><strong>Session key expiry</strong> — rejects if the current ledger exceeds the expiry ledger</li>
-                <li><strong>Per-payee daily sub-cap</strong> — limits spend to each allowlisted payee within the same day bucket</li>
-                <li><strong>Lifetime cap</strong> — limits cumulative spend across day buckets; <InlineCode>0</InlineCode> means unlimited</li>
+                <li><strong>Per-payee daily sub-cap</strong> — limits spend to each allowlisted payee in the same trailing 17,280-ledger window</li>
+                <li><strong>Lifetime cap</strong> — limits cumulative spend over the life of the vault, never aging out; <InlineCode>0</InlineCode> means unlimited</li>
                 <li><strong>Freeze switch</strong> — rejects payment authorization with <InlineCode>ContractFrozen</InlineCode> while frozen</li>
                 <li><strong>Default deny</strong> — rejects every authorization context other than a <InlineCode>transfer</InlineCode> call with <InlineCode>UnauthorizedFunction</InlineCode></li>
               </ul>

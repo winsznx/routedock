@@ -11,13 +11,25 @@ The RouteDock agent vault is a Soroban smart contract account built on top of
 
 ### Policies
 
-1. **Daily USDC cap** — rejects any transfer that would exceed the configured daily spend limit.
-2. **Endpoint allowlist and per-payee caps** — rejects recipients outside the allowlist and enforces each payee's daily sub-cap.
+1. **Daily USDC cap** — a trailing 17,280-ledger (about 24 h) window: rejects any transfer that would push the spend accepted in the last 17,280 ledgers above the configured limit. It is not a calendar bucket, so spending the whole cap just before a boundary does not free the cap again just after it (see [Trailing spend window](#trailing-spend-window)).
+2. **Endpoint allowlist and per-payee caps** — rejects recipients outside the allowlist and enforces each payee's sub-cap over the same trailing 17,280-ledger window.
 3. **Session key with expiry** — the agent signing key expires at a configured ledger sequence.
-4. **Lifetime USDC cap** — optionally bounds total lifetime spend without resetting on day boundaries.
+4. **Lifetime USDC cap** — optionally bounds total lifetime spend; it never ages out.
 5. **Freeze and two-step admin transfer** — support emergency control while preventing a mistyped admin transfer from orphaning the vault.
 
 All signed authorizations are default-deny: only SAC `transfer` contexts accepted by the policies above can pass `__check_auth`.
+
+### Trailing spend window
+
+The daily cap and each payee's sub-cap bound the spend accepted in **any** 17,280-ledger window, not within a fixed `ledger / 17,280` bucket. A fixed bucket let a leaked agent key spend the full cap on the last ledger of one bucket and the full cap again on the first ledger of the next (twice the configured limit, on a boundary anyone can predict).
+
+Each counter is a ring of 25 sub-buckets of 720 ledgers (about one hour), stored as one temporary-storage entry per counter: `(SPEND_PREFIX,)` for the global cap and `(PAYEE_SPEND_PREFIX, payee)` per payee. A payment is added to the sub-bucket of the current ledger, sub-buckets that have aged out are zeroed on the next payment, and a transfer is rejected when `sum(ring) + amount` exceeds the cap (`DailyCapExceeded` / `PayeeCapExceeded`).
+
+- **Bound:** the spend accepted in any 17,280-ledger window is at most the cap.
+- **Conservative error:** a payment stays counted until its sub-bucket ages out, which is at most 720 ledgers (one sub-bucket) after the exact 17,280-ledger window ends. Spend made at ledger 17,279 is counted through ledger 34,559 and free again at 34,560. The ring has 25 slots rather than 24 so that error is never in the unsafe direction.
+- **`payment_authorized.daily_cumulative`** is the spend inside the trailing window, including that payment.
+- **TTL:** each counter's TTL is re-extended to 18,000 ledgers (25 sub-buckets) on every write, which covers every payment it still counts.
+- **Upgrading:** the counters use new storage keys, so a vault upgraded through the timelocked flow ignores its old `(SPEND_PREFIX, day_bucket)` counters and starts the window empty.
 
 ### Timelocked Wasm upgrades
 
