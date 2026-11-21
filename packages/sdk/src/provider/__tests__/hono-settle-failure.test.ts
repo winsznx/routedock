@@ -24,6 +24,7 @@ const PAYER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
 type SettleResponse = {
   success: boolean
   transaction: string
+  payer?: string | undefined
   errorReason?: string
 }
 
@@ -71,7 +72,9 @@ mock.module('@x402/core/server', {
 mock.module('@x402/core/http', {
   namedExports: {
     decodePaymentSignatureHeader: () => ({
-      authorization: { credentials: [{ publicKey: PAYER }] },
+      x402Version: 2,
+      accepted: {},
+      payload: { transaction: 'signed-xdr' },
     }),
     encodePaymentRequiredHeader: (value: unknown) => `requirements:${JSON.stringify(value)}`,
     encodePaymentResponseHeader: (value: unknown) => `response:${JSON.stringify(value)}`,
@@ -252,5 +255,27 @@ describe('routedockHono x402 — settle returns success: false (OZ facilitator)'
     assert.equal(h.downstream.called, false)
     assert.deepEqual(h.seenSet, [])
     assert.deepEqual(h.settled, [])
+  })
+})
+
+describe('routedockHono x402 - payer attribution (#730)', () => {
+  it('passes the facilitator payer to onSettled', async () => {
+    settleResult = { success: true, transaction: 'TX_HASH_1', payer: PAYER }
+    const h = makeHarness()
+    const res = await paidRequest(h.app)
+    assert.equal(res.status, 200)
+    await new Promise((r) => setImmediate(r))
+    assert.equal(h.settled[0]?.[3], PAYER)
+  })
+
+  it('reports null when the facilitator omits or mangles the payer', async () => {
+    for (const payer of [undefined, 'not-a-key']) {
+      settleResult = { success: true, transaction: 'TX_HASH_1', payer }
+      const h = makeHarness()
+      const res = await paidRequest(h.app)
+      assert.equal(res.status, 200)
+      await new Promise((r) => setImmediate(r))
+      assert.equal(h.settled[0]?.[3], 'null')
+    }
   })
 })

@@ -1,3 +1,5 @@
+import { extractPayerAddress } from '../provider/payer.js'
+
 /**
  * Outcome of an x402 settle call. The facilitator reports failures as data
  * (`{ success: false, errorReason }`) rather than throwing, so every adapter
@@ -27,4 +29,15 @@ export function readSettleResult(result: unknown): SettleOutcome {
     return failed(settle.errorReason)
   }
   return { ok: true, txHash: settle.transaction }
+}
+
+/**
+ * The payer the facilitator reports on a settle or verify result, validated.
+ * The x402 Stellar payload carries a signed transaction, not a credentials
+ * list, so the facilitator is the only place the payer's address comes from.
+ * Anything missing or invalid yields null and never affects settlement.
+ */
+export function readSettlePayer(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null
+  return extractPayerAddress((result as { payer?: unknown }).payer)
 }

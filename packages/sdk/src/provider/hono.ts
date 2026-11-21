@@ -38,7 +38,7 @@ import {
 } from './SeenTxStore.js'
 import { resolveAssetContract } from '../internal/assetUtils.js'
 import { RouteDockManifestError } from '../errors.js'
-import { readSettleResult } from '../internal/settleResult.js'
+import { readSettlePayer, readSettleResult } from '../internal/settleResult.js'
 import { recordSessionSettlement } from './internal/vaultSettlement.js'
 import {
   resolveVaultSettlementConfig,
@@ -229,19 +229,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
       let paymentResponseHeader: string | undefined
-      // Extract payer public key from the x402 Stellar payload.
       let payerAddress: string | null = null
-      try {
-        const creds = (
-          payload as unknown as {
-            authorization?: { credentials?: Array<{ publicKey?: string }> }
-          }
-        ).authorization?.credentials
-        const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
-        payerAddress = extractPayerAddress(key)
-      } catch {
-        // non-fatal
-      }
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
@@ -250,6 +238,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
           return respondPaymentRequired('Payment settlement failed', outcome.reason)
         }
         txHash = outcome.txHash
+        payerAddress = readSettlePayer(settleResult)
         paymentResponseHeader = encodePaymentResponseHeader(
           settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
         )
@@ -276,6 +265,7 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
           return respondPaymentRequired('Payment settlement failed', outcome.reason)
         }
         txHash = outcome.txHash
+        payerAddress = readSettlePayer(settleResult) ?? readSettlePayer(verifyResult)
         paymentResponseHeader = encodePaymentResponseHeader(
           settleResult as Parameters<typeof encodePaymentResponseHeader>[0],
         )
