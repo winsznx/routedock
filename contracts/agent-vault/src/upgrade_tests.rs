@@ -1,4 +1,4 @@
-//! Real Wasm upgrade paths. Run with AGENT_VAULT_WASM and --include-ignored.
+//! Real Wasm upgrade paths. Run with both current and legacy Wasm paths and --include-ignored.
 extern crate std;
 
 use super::*;
@@ -118,7 +118,15 @@ fn payment(env: &Env, vault: &Vault, payee: &Address, amount: i128) -> Result<()
 fn assert_state(env: &Env, vault: &Vault, spent: i128, frozen: bool) {
     let client = AgentVaultClient::new(env, &vault.id);
     assert_eq!(client.daily_cap(), 5_000_000);
-    assert_eq!(client.allowlist(), vault.allowlist);
+    let legacy_allowlist: Option<Map<Address, i128>> =
+        env.as_contract(&vault.id, || env.storage().instance().get(&LIST_KEY));
+    if let Some(allowlist) = legacy_allowlist {
+        assert_eq!(allowlist, vault.allowlist);
+    } else {
+        for (payee, sub_cap) in vault.allowlist.iter() {
+            assert_eq!(client.allowlist_sub_cap(&payee), Some(sub_cap));
+        }
+    }
     assert_eq!(client.expiry_ledger(), 100_000);
     assert_eq!(
         client.agent_pubkey(),
@@ -179,6 +187,9 @@ fn test_bootstrap_upgrade_keeps_state_and_enforces_current_policies() {
         (&hash,).into_val(&env),
     );
     assert_upgraded_event(&env, &vault.id, &hash);
+    assert_state(&env, &vault, 1_500_000, true);
+    mock_admin(&env, &vault, "migrate_storage", ().into_val(&env));
+    client.migrate_storage();
     assert_state(&env, &vault, 1_500_000, true);
     assert_eq!(client.upgrade_timelock_ledgers(), UPGRADE_TIMELOCK_LEDGERS);
     assert_eq!(client.pending_upgrade(), None);
@@ -309,4 +320,76 @@ fn test_execute_upgrade_by_admin_swaps_wasm_and_keeps_state() {
         Err(Error::DailyCapExceeded)
     );
     assert_state(&env, &vault, 2_500_000, false);
+}
+
+
+fn pre_layout_wasm() -> std::vec::Vec<u8> {
+    let path = std::env::var_os("AGENT_VAULT_LEGACY_WASM")
+        .expect("set AGENT_VAULT_LEGACY_WASM to bash scripts/build-vault-legacy-wasm.sh output");
+    std::fs::read(path).expect("AGENT_VAULT_LEGACY_WASM must be readable")
+}
+
+fn assert_migration_requires_admin(env: &Env, vault: &Vault) {
+    let outsider = Address::generate(env);
+    env.mock_auths(&[MockAuth {
+        address: &outsider,
+        invoke: &MockAuthInvoke {
+            contract: &vault.id,
+            fn_name: "migrate_storage",
+            args: ().into_val(env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(AgentVaultClient::new(env, &vault.id).try_migrate_storage().is_err());
+    assert_state(env, vault, 1_500_000, false);
+}
+
+#[test]
+#[ignore = "requires current and pre-layout Wasm: set AGENT_VAULT_WASM and AGENT_VAULT_LEGACY_WASM"]
+fn test_pre_layout_wasm_upgrade_migrates_allowlist_and_nonzero_lifetime_spend_once() {
+    let wasm = current_wasm();
+    let legacy = pre_layout_wasm();
+    assert_ne!(legacy, wasm, "migration must start from the actual pre-layout executable");
+    let env = test_env();
+    let vault = register(&env, legacy.as_slice());
+    let client = AgentVaultClient::new(&env, &vault.id);
+    assert_eq!(payment(&env, &vault, &vault.payee, 1_500_000), Ok(()));
+
+    let hash = env.deployer().upload_contract_wasm(wasm.as_slice());
+    mock_admin(&env, &vault, "propose_upgrade", (&hash,).into_val(&env));
+    client.propose_upgrade(&hash);
+    env.ledger().set_sequence_number(env.ledger().sequence() + UPGRADE_TIMELOCK_LEDGERS);
+    mock_admin(&env, &vault, "execute_upgrade", ().into_val(&env));
+    client.execute_upgrade();
+    assert_state(&env, &vault, 1_500_000, false);
+    assert_eq!(
+        payment(&env, &vault, &vault.payee, 1),
+        Err(Error::StorageMigrationRequired)
+    );
+
+    assert_migration_requires_admin(&env, &vault);
+
+    mock_admin(&env, &vault, "migrate_storage", ().into_val(&env));
+    client.migrate_storage();
+    assert_state(&env, &vault, 1_500_000, false);
+    env.as_contract(&vault.id, || {
+        assert!(!env.storage().instance().has(&LIST_KEY));
+        assert!(!env.storage().instance().has(&LIFETIME_SPEND_KEY));
+        assert_eq!(
+            env.storage().persistent().get::<_, i128>(&LIFETIME_SPEND_KEY),
+            Some(1_500_000)
+        );
+    });
+    mock_admin(&env, &vault, "migrate_storage", ().into_val(&env));
+    assert_eq!(client.try_migrate_storage(), Err(Ok(Error::StorageAlreadyMigrated.into())));
+    assert_eq!(payment(&env, &vault, &vault.other_payee, 1_000_000), Ok(()));
+    assert_state(&env, &vault, 2_500_000, false);
+
+    mock_admin(&env, &vault, "remove_from_allowlist", (&vault.payee,).into_val(&env));
+    client.remove_from_allowlist(&vault.payee);
+    assert_eq!(
+        payment(&env, &vault, &vault.payee, 1),
+        Err(Error::PayeeNotAllowed)
+    );
+    assert_eq!(client.get_lifetime_spend(), 2_500_000);
 }

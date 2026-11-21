@@ -14,7 +14,10 @@ const ADMIN_KEY: Symbol = symbol_short!("admin");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("p_admin");
 const AGENT_KEY: Symbol = symbol_short!("agentpk");
 const CAP_KEY: Symbol = symbol_short!("dailycap");
+// Legacy instance map, retained only until the authenticated storage migration.
 const LIST_KEY: Symbol = symbol_short!("allwlist");
+const PAYEE_PREFIX: Symbol = symbol_short!("payee");
+const STORAGE_VERSION_KEY: Symbol = symbol_short!("storv");
 const EXPIRY_KEY: Symbol = symbol_short!("expiry");
 const INIT_KEY: Symbol = symbol_short!("init");
 const FROZEN_KEY: Symbol = symbol_short!("frozen");
@@ -23,7 +26,7 @@ const FROZEN_KEY: Symbol = symbol_short!("frozen");
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
 // Per-payee day-spend key: (PAYEE_SPEND_PREFIX, day_bucket, payee)
 const PAYEE_SPEND_PREFIX: Symbol = symbol_short!("pds");
-// Lifetime spend cap and monotonic counter (instance storage — never resets)
+// Lifetime cap stays in instance storage; the monotonic counter is persistent.
 const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
 const LIFETIME_SPEND_KEY: Symbol = symbol_short!("ltspend");
 // Pending timelocked Wasm proposal: (new_wasm_hash, ready_at_ledger).
@@ -71,6 +74,9 @@ pub enum Error {
     NoPendingUpgrade = 14,
     UpgradeNotReady = 15,
     UpgradeTimelockOverflow = 16,
+    StorageMigrationRequired = 17,
+    StorageAlreadyMigrated = 18,
+    StorageUnavailable = 19,
 }
 
 fn validate_cap(env: &Env, cap: i128) {
@@ -80,13 +86,10 @@ fn validate_cap(env: &Env, cap: i128) {
 }
 
 // ── Instance storage TTL ─────────────────────────────────────────────────────
-// Every piece of vault state (admin, caps, allowlist, expiry, frozen flag, agent
-// key) lives in instance storage, so the instance entry's TTL is the vault's own
-// lifetime. Soroban does not refresh an entry's TTL just because it was written,
-// and `__check_auth` is the only entrypoint agent traffic reaches — so a vault
-// that only receives admin calls (frozen, or past its expiry) would keep counting
-// down towards archival from the TTL `__constructor` left behind.
-const INSTANCE_TTL_THRESHOLD: u32 = 2_000_000;
+// Admin, caps, expiry, frozen flag and agent key live in the small instance
+// entry. Allowlist entries and lifetime spend have separate persistent TTLs.
+// Keep a gap between threshold and extend-to so recent entries pay no rent bump.
+const INSTANCE_TTL_THRESHOLD: u32 = 1_500_000;
 const INSTANCE_TTL_EXTEND_TO: u32 = 2_000_000;
 
 /// Refresh the instance entry's TTL. Called from `__constructor`, from `__check_auth`,
@@ -97,6 +100,49 @@ fn bump_instance(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    // Admin-only traffic must also keep the non-resettable lifetime counter
+    // alive. Missing/archived state is never recreated with a zero balance.
+    if storage_migrated(env) && env.storage().persistent().has(&LIFETIME_SPEND_KEY) {
+        env.storage().persistent().extend_ttl(
+            &LIFETIME_SPEND_KEY,
+            INSTANCE_TTL_THRESHOLD,
+            INSTANCE_TTL_EXTEND_TO,
+        );
+    }
+}
+
+fn storage_migrated(env: &Env) -> bool {
+    env.storage().instance().get(&STORAGE_VERSION_KEY).unwrap_or(false)
+}
+
+fn require_migrated(env: &Env) {
+    if !storage_migrated(env) {
+        panic_with_error!(env, Error::StorageMigrationRequired);
+    }
+}
+
+fn set_allowlist_entry(env: &Env, payee: &Address, sub_cap: i128) {
+    let key = (PAYEE_PREFIX, payee.clone());
+    let storage = env.storage().persistent();
+    storage.set(&key, &sub_cap);
+    storage.extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    // The constructor and migration also emit entries, so an event indexer can
+    // enumerate the allowlist without keeping a growing index in the instance.
+    env.events().publish(
+        (Symbol::new(env, EVT_ALLOWLIST_UPDATED), payee.clone()),
+        Some(sub_cap),
+    );
+}
+
+fn migrate_allowlist_batch(env: &Env, allowlist: Map<Address, i128>) -> Map<Address, i128> {
+    let mut remaining = allowlist.clone();
+    // 64 entries leave room below the network's write/footprint/event limits.
+    for (payee, sub_cap) in allowlist.iter().take(64) {
+        validate_cap(env, sub_cap);
+        set_allowlist_entry(env, &payee, sub_cap);
+        remaining.remove(payee);
+    }
+    remaining
 }
 
 fn calculate_upgrade_ready_at(sequence: u32) -> Result<u32, Error> {
@@ -136,10 +182,13 @@ impl AgentVault {
         storage.set(&ADMIN_KEY, &admin);
         storage.set(&AGENT_KEY, &agent_pk);
         storage.set(&CAP_KEY, &daily_cap);
-        storage.set(&LIST_KEY, &allowlist);
+        for (payee, sub_cap) in allowlist.iter() {
+            set_allowlist_entry(&env, &payee, sub_cap);
+        }
         storage.set(&EXPIRY_KEY, &expiry_ledger);
         storage.set(&LIFETIME_CAP_KEY, &lifetime_cap);
-        storage.set(&LIFETIME_SPEND_KEY, &0_i128);
+        env.storage().persistent().set(&LIFETIME_SPEND_KEY, &0_i128);
+        storage.set(&STORAGE_VERSION_KEY, &true);
         storage.set(&INIT_KEY, &true);
         // Extend instance storage TTL to outlive any realistic session expiry
         bump_instance(&env);
@@ -171,15 +220,8 @@ impl AgentVault {
         admin.require_auth();
         bump_instance(&env);
         validate_cap(&env, sub_cap);
-        let mut map: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
-        map.set(payee.clone(), sub_cap);
-        storage.set(&LIST_KEY, &map);
-        env.events().publish(
-            (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
-            Some(sub_cap),
-        );
+        require_migrated(&env);
+        set_allowlist_entry(&env, &payee, sub_cap);
     }
 
     /// Remove a payee address from the spend allowlist. Admin only.
@@ -190,11 +232,8 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
-        let mut map: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
-        map.remove(payee.clone());
-        storage.set(&LIST_KEY, &map);
+        require_migrated(&env);
+        env.storage().persistent().remove(&(PAYEE_PREFIX, payee.clone()));
         env.events().publish(
             (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
             Option::<i128>::None,
@@ -217,15 +256,16 @@ impl AgentVault {
         if cumulative_amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
-        let allowlist: Map<Address, i128> = env
-            .storage()
-            .instance()
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
-        if allowlist.get(payee.clone()).is_none() {
+        require_migrated(&env);
+        let key = (PAYEE_PREFIX, payee.clone());
+        if !env.storage().persistent().has(&key) {
             panic_with_error!(&env, Error::PayeeNotAllowed);
         }
         payee.require_auth();
+        bump_instance(&env);
+        env.storage().persistent().extend_ttl(
+            &key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO,
+        );
 
         // topics: (Symbol("session_settled"), channel_id, payee)
         // data:   (payer, cumulative_amount, voucher_count)
@@ -295,10 +335,48 @@ impl AgentVault {
 
     /// Return the vault's cumulative lifetime spend counter (stroops). Read-only.
     pub fn get_lifetime_spend(env: Env) -> i128 {
-        env.storage()
-            .instance()
-            .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
-            .unwrap_or(0)
+        let value = if storage_migrated(&env) {
+            env.storage().persistent().get(&LIFETIME_SPEND_KEY)
+        } else {
+            env.storage().instance().get(&LIFETIME_SPEND_KEY)
+        };
+        value.unwrap_or_else(|| panic_with_error!(&env, Error::StorageUnavailable))
+    }
+
+    /// Migrate at most 64 legacy payees per call. Admin only; returns the
+    /// remaining count. Repeat until zero before resuming payments/mutations.
+    /// The final batch moves lifetime spend once; daily counters are retained.
+    pub fn migrate_storage(env: Env) -> u32 {
+        let instance = env.storage().instance();
+        let admin: Address = instance
+            .get(&ADMIN_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        admin.require_auth();
+        if storage_migrated(&env) {
+            panic_with_error!(&env, Error::StorageAlreadyMigrated);
+        }
+        let allowlist: Map<Address, i128> = instance
+            .get(&LIST_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::StorageUnavailable));
+        let spent: i128 = instance
+            .get(&LIFETIME_SPEND_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::StorageUnavailable));
+        if spent < 0 {
+            panic_with_error!(&env, Error::StorageUnavailable);
+        }
+        let remaining = migrate_allowlist_batch(&env, allowlist);
+        if !remaining.is_empty() {
+            let count = remaining.len();
+            instance.set(&LIST_KEY, &remaining);
+            bump_instance(&env);
+            return count;
+        }
+        env.storage().persistent().set(&LIFETIME_SPEND_KEY, &spent);
+        instance.remove(&LIST_KEY);
+        instance.remove(&LIFETIME_SPEND_KEY);
+        instance.set(&STORAGE_VERSION_KEY, &true);
+        bump_instance(&env);
+        0
     }
 
     /// Initiate a transfer of admin rights to a new address. Admin only.
@@ -371,9 +449,9 @@ impl AgentVault {
             .get(&ADMIN_KEY)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
-        // The bump lifts the instance entry to `INSTANCE_TTL_EXTEND_TO` ledgers,
-        // comfortably past the notice period, so the proposal cannot be archived
-        // before it becomes executable.
+        // The bump refreshes a low TTL; an entry above the threshold already
+        // outlives the notice period, so the proposal cannot be archived before
+        // it becomes executable.
         bump_instance(&env);
 
         let ready_at_ledger = calculate_upgrade_ready_at(env.ledger().sequence())
@@ -406,8 +484,8 @@ impl AgentVault {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
         storage.remove(&PENDING_UPGRADE_KEY);
-        // The swap rewrites the instance entry itself, so bump after it to leave
-        // the vault with a full TTL when the upgrade returns.
+        // The swap rewrites the instance entry itself, so refresh a low TTL
+        // after it to keep the upgraded vault available.
         bump_instance(&env);
         env.events()
             .publish((Symbol::new(&env, EVT_UPGRADED),), new_wasm_hash);
@@ -446,9 +524,17 @@ impl AgentVault {
         env.storage().instance().get(&CAP_KEY).unwrap_or(0)
     }
 
-    /// Return the allowed payees and their sub-caps (view-only).
-    pub fn allowlist(env: Env) -> Map<Address, i128> {
-        env.storage().instance().get(&LIST_KEY).unwrap_or_else(|| Map::new(&env))
+    /// Return one payee's daily sub-cap (view-only). None means not allowed.
+    /// Enumerate entries from allowlist_updated events instead of a growing map.
+    pub fn allowlist_sub_cap(env: Env, payee: Address) -> Option<i128> {
+        if storage_migrated(&env) {
+            env.storage().persistent().get(&(PAYEE_PREFIX, payee))
+        } else {
+            let allowlist: Map<Address, i128> = env.storage().instance().get(&LIST_KEY)?;
+            allowlist.get(payee.clone()).or_else(|| {
+                env.storage().persistent().get(&(PAYEE_PREFIX, payee))
+            })
+        }
     }
 
     /// Return the session expiry ledger (view-only).
@@ -473,12 +559,12 @@ impl AgentVault {
 //   • Policy 1 — DailyCapPolicy:  keyed by (SPEND_PREFIX, seq / 17280) in
 //     temporary storage; resets automatically when the bucket rolls over
 //   • Policy 2 — EndpointAllowlistPolicy: recipient from args[1] checked
-//     against ALLOWLIST in instance storage; also reads the per-payee sub-cap
+//     against a per-payee persistent entry; also reads its daily sub-cap
 //   • Policy 3 — SessionKeyExpiry: ledger sequence compared to stored EXPIRY
 //   • Policy 4 — PerPayeeCapPolicy: keyed by (PAYEE_SPEND_PREFIX, seq / 17280, payee)
 //     in temporary storage; prevents a single compromised provider from draining
 //     the global daily cap
-//   • Policy 5 — LifetimeCapPolicy: monotonic spend_counter in instance storage;
+//   • Policy 5 — LifetimeCapPolicy: monotonic spend_counter in persistent storage;
 //     enforced when lifetime_cap > 0; never resets across day boundaries
 
 #[contractimpl]
@@ -518,12 +604,14 @@ impl CustomAccountInterface for AgentVault {
         // ── Load policy state ────────────────────────────────────────────────
         let daily_cap: i128 = storage.get(&CAP_KEY).unwrap_or(i128::MAX);
         let lifetime_cap: i128 = storage.get(&LIFETIME_CAP_KEY).unwrap_or(0);
-        let mut lifetime_spend: i128 = storage
-            .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
-            .unwrap_or(0);
-        let allowlist: Map<Address, i128> = storage
-            .get(&LIST_KEY)
-            .unwrap_or_else(|| Map::new(&env));
+        if !storage_migrated(&env) {
+            return Err(Error::StorageMigrationRequired);
+        }
+        let mut lifetime_spend: i128 = env
+            .storage()
+            .persistent()
+            .get(&LIFETIME_SPEND_KEY)
+            .ok_or(Error::StorageUnavailable)?;
 
         // Day bucket: one bucket per ~24 h (17 280 ledgers × ~5 s each)
         let day_bucket: u32 = env.ledger().sequence() / 17_280;
@@ -582,7 +670,15 @@ impl CustomAccountInterface for AgentVault {
                     }
 
                     // Policy 2 — EndpointAllowlistPolicy (also fetches per-payee sub-cap)
-                    let payee_sub_cap = allowlist.get(to.clone()).ok_or(Error::PayeeNotAllowed)?;
+                    let allowlist_key = (PAYEE_PREFIX, to.clone());
+                    let payee_sub_cap: i128 = env
+                        .storage()
+                        .persistent()
+                        .get(&allowlist_key)
+                        .ok_or(Error::PayeeNotAllowed)?;
+                    env.storage().persistent().extend_ttl(
+                        &allowlist_key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO,
+                    );
 
                     // Policy 1 — Global DailyCapPolicy
                     let projected = day_spend.checked_add(amount).unwrap_or(i128::MAX);
@@ -644,7 +740,7 @@ impl CustomAccountInterface for AgentVault {
             .extend_ttl::<(Symbol, u32)>(&spend_key, 17_280, 34_560);
 
         // Persist monotonic lifetime spend counter — must survive vault lifetime
-        storage.set(&LIFETIME_SPEND_KEY, &lifetime_spend);
+        env.storage().persistent().set(&LIFETIME_SPEND_KEY, &lifetime_spend);
 
         Ok(())
     }
@@ -781,7 +877,7 @@ mod tests {
                 .unwrap_or(0);
             let lifetime = env
                 .storage()
-                .instance()
+                .persistent()
                 .get::<Symbol, i128>(&LIFETIME_SPEND_KEY)
                 .unwrap_or(0);
             (day, payee, lifetime)
@@ -2205,9 +2301,7 @@ mod tests {
 
         assert_eq!(client.daily_cap(), 5_000_000_i128);
         
-        let fetched_allowlist = client.allowlist();
-        assert_eq!(fetched_allowlist.len(), 1);
-        assert_eq!(fetched_allowlist.get(provider_a.clone()).unwrap(), 5_000_000_i128);
+        assert_eq!(client.allowlist_sub_cap(&provider_a), Some(5_000_000_i128));
 
         assert_eq!(client.expiry_ledger(), 10_000_u32);
         assert_eq!(client.agent_pubkey(), agent_pk.clone());
@@ -2237,9 +2331,8 @@ mod tests {
         }]);
         client.add_to_allowlist(&provider_b, &2_000_000_i128);
         
-        let updated_allowlist = client.allowlist();
-        assert_eq!(updated_allowlist.len(), 2);
-        assert_eq!(updated_allowlist.get(provider_b.clone()).unwrap(), 2_000_000_i128);
+        assert_eq!(client.allowlist_sub_cap(&provider_a), Some(5_000_000_i128));
+        assert_eq!(client.allowlist_sub_cap(&provider_b), Some(2_000_000_i128));
     }
 
     /// Test 32: negative transfer amount is rejected and counters stay untouched
@@ -2852,7 +2945,7 @@ mod tests {
 
         env.mock_all_auths();
         client.remove_from_allowlist(&payee);
-        assert!(!client.allowlist().contains_key(payee.clone()));
+        assert_eq!(client.allowlist_sub_cap(&payee), None);
 
         let payload = BytesN::<32>::random(&env);
         let signature = sign_payload(&env, &agent_sk, &payload);
@@ -3241,7 +3334,9 @@ mod tests {
         let client = AgentVaultClient::new(&env, &vault_id);
 
         assert_eq!(client.daily_cap(), 5_000_000_i128);
-        assert_eq!(client.allowlist(), allowlist);
+        for (payee, sub_cap) in allowlist.iter() {
+            assert_eq!(client.allowlist_sub_cap(&payee), Some(sub_cap));
+        }
         assert_eq!(client.expiry_ledger(), 12_345_u32);
         assert_eq!(client.agent_pubkey(), agent_pk);
         assert_eq!(client.get_lifetime_spend(), 0_i128);
@@ -3302,7 +3397,7 @@ mod tests {
     #[test]
     fn test_add_to_allowlist_negative_rejected_and_not_added() {
         let env = Env::default();
-        let (client, _, vault_id, _) = setup(&env);
+        let (client, _, _, _) = setup(&env);
         let new_payee = Address::generate(&env);
 
         env.mock_all_auths();
@@ -3310,18 +3405,14 @@ mod tests {
         assert_eq!(result.unwrap_err().unwrap(), Error::InvalidCap.into());
 
         // Payee was not added to allowlist
-        let in_allowlist = env.as_contract(&vault_id, || {
-            let map: Map<Address, i128> = env.storage().instance().get(&LIST_KEY).unwrap();
-            map.contains_key(new_payee.clone())
-        });
-        assert!(!in_allowlist);
+        assert_eq!(client.allowlist_sub_cap(&new_payee), None);
 
         // Zero cap succeeds
         assert!(client.try_add_to_allowlist(&new_payee, &0_i128).is_ok());
     }
 
     // ── Instance TTL (issue #406) ─────────────────────────────────────────────
-    // All vault state lives in instance storage, so the instance entry's TTL is
+    // Core policy state lives in instance storage, so the instance entry's TTL is
     // the vault's lifetime. `__constructor` and `__check_auth` were the only call
     // sites that refreshed it, which left a vault that sees admin traffic only
     // — a frozen vault, or one whose expiry lapsed — counting down to archival.
@@ -3409,8 +3500,8 @@ mod tests {
             client.remove_from_allowlist(&payee)
         });
         // `record_session_settlement` is deliberately absent: since #530 the
-        // allowlisted payee signs it, it is not an admin entrypoint, and it only
-        // reads instance storage.
+        // allowlisted payee signs it, it is not an admin entrypoint. It refreshes
+        // the persistent payee entry only after that payee authenticates.
         assert_refreshes_instance_ttl(&env, &vault_id, "set_lifetime_cap", || {
             client.set_lifetime_cap(&9_000_000_i128)
         });
@@ -3601,3 +3692,6 @@ mod prop_tests {
 
 #[cfg(test)]
 mod upgrade_tests;
+
+#[cfg(test)]
+mod storage_tests;
