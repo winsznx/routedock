@@ -415,18 +415,12 @@ describe('MppChargeClient — HTTP errors', () => {
     )
   })
 
-  it('throws RouteDockManifestError when 200 response body is not JSON', async () => {
+  it('returns raw text when 200 response body is not JSON', async () => {
     mppxScript = { fetchNonJson: true }
     const client = new MppChargeClient(Keypair.random(), 'testnet')
-    await assert.rejects(
-      () => client.pay('https://provider.test/price', buildManifest()),
-      (err: unknown) => {
-        assert.ok(err instanceof RouteDockManifestError)
-        assert.match(err.message, /Failed to parse JSON from response \(HTTP 200\)/)
-        assert.ok(err.cause instanceof SyntaxError)
-        return true
-      },
-    )
+    const result = await client.pay('https://provider.test/price', buildManifest())
+    assert.equal(result.data, '<html>proxy error</html>')
+    assert.equal(result.contentType, 'text/html')
   })
 })
 

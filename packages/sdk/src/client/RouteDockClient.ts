@@ -5,7 +5,7 @@ import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
-import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
+import { RouteDockManifestError, RouteDockPaidResponseError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
@@ -409,7 +409,8 @@ export class RouteDockClient {
   /**
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
    * runs trustline preflight, reserves local spend cap BEFORE executing the
-   * payment, then commits the spend record on success. Rolls back the
+   * payment, then commits the spend record once the paid request succeeds,
+   * including response delivery failures. Rolls back the
    * reservation if the on-chain payment fails, and also when the call
    * completes without paying anything (an x402 endpoint answering a plain
    * 200 with no challenge). Concurrent pay() calls are serialized through a
@@ -468,7 +469,12 @@ export class RouteDockClient {
         }
       }
     } catch (err) {
-      await this._rollbackSpend(reserveId).catch(() => {})
+      if (err instanceof RouteDockPaidResponseError) {
+        // Delivery failed after the paid request succeeded: retain its spend.
+        await this._commitSpend(reserveId)
+      } else {
+        await this._rollbackSpend(reserveId).catch(() => undefined)
+      }
       throw err
     }
 

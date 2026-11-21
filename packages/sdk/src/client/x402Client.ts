@@ -15,6 +15,7 @@ import {
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
 import { readSettleResult } from '../internal/settleResult.js'
+import { readPaymentResponse } from '../internal/paidResponse.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { prepareRequest, toRequestInit } from '../internal/request.js'
 import type { RouteDockLogger } from '../internal/logger.js'
@@ -266,12 +267,9 @@ export class X402Client {
       }
     }
 
-    let data: unknown
-    try {
-      data = await settled.json()
-    } catch {
-      throw new RouteDockManifestError('Failed to parse JSON from settled response')
-    }
-    return { data, txHash, mode: 'x402', amount: signedAmount, timestamp: Date.now() }
+    const body = await readPaymentResponse(settled, {
+      txHash, mode: 'x402', amount: signedAmount,
+    })
+    return { ...body, txHash, mode: 'x402', amount: signedAmount, timestamp: Date.now() }
   }
 }
