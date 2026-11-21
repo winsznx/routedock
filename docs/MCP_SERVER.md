@@ -41,19 +41,25 @@ With the MCP server, agents simply connect to a local MCP server and use standar
 
 ## Available Tools
 
-### 1. pay_for_data(url, max_amount, preferred_mode)
+### 1. pay_for_data(url, max_amount, preferred_mode, expected_payee)
 
 Pay for a single data request from a RouteDock provider. Automatically selects the best payment mode based on the provider's manifest.
 
 **Use case:** One-off API calls, price feeds, single data queries
 
+Pass optional `expected_payee` from a verified `list_providers` record to bind the manifest to that
+Stellar account (`G...`). A mismatch is rejected even when an earlier unbound call filled the cache.
+
 **Returns:** Payment result with mode, amount, transaction hash, and response data
 
-### 2. open_session(url, initial_deposit)
+### 2. open_session(url, initial_deposit, expected_payee)
 
 Open a sustained MPP session for streaming data. Uses off-chain vouchers for low-cost repeated access.
 
 **Use case:** Streaming orderbooks, real-time data feeds, sustained access
+
+Optional `expected_payee` binds the SDK's session manifest to a trusted account before any channel or
+voucher signing. Verified `list_providers` records supply this value; unverified records do not.
 
 `url` is the provider's streaming endpoint, e.g. `https://api-b.routedock.xyz/stream/orderbook`. Vouchers
 and the closing `DELETE` go to this exact URL. A bare origin (`https://api-b.routedock.xyz`) is resolved

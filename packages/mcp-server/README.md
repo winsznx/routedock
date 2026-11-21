@@ -64,6 +64,8 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
   number with at most 7 decimal places and no currency symbol. Anything else (missing, `"$0.01"`, `"0"`,
   a JSON number) is rejected before the provider is contacted.
 - `preferred_mode` (optional): Preferred payment mode (`x402`, `mpp-charge`, `mpp-session`)
+- `expected_payee` (optional): Trusted Stellar payee (`G...`). Pass the `expected_payee` returned by
+  `list_providers` for a verified provider to bind this call to that account, including cached manifests.
 
 **Returns:** Payment result with mode, amount, transaction hash, and response data
 
@@ -82,6 +84,8 @@ check against the provider's `min_deposit`, not a fund transfer. Pass the return
   The endpoint must be `GET` and on the same origin. If none qualifies, the call fails without opening
   a session and lists the manifest's endpoints so you can retry with a full URL.
 - `initial_deposit` (optional): Amount in USDC you intend the channel to be funded with
+- `expected_payee` (optional): Trusted Stellar payee (`G...`), as returned for verified records by
+  `list_providers`. A mismatched manifest is rejected before the SDK opens the session or signs a voucher.
 
 **Returns:** `channel_id`, open transaction hash, and `endpoint_url` (the URL the session streams from)
 
@@ -135,7 +139,9 @@ List available RouteDock providers from the registry. Requires Supabase credenti
 
 **Returns:** `count`, the `network` and `limit` that were applied, a `truncated` flag, and each provider's
 capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Verified providers
-are listed first, then the newest registrations.
+are listed first, then the newest registrations. Verified records with a valid Stellar payee also
+include `expected_payee`: pass it to `pay_for_data` or `open_session` for that provider. Unverified records
+do not supply a trust anchor. All providers still share the server client's daily spend cap.
 
 ## Claude Desktop Configuration
 

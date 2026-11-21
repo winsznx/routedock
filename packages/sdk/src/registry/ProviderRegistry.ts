@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { OnChainRegistry, type OnChainProviderInfo } from './OnChainRegistry.js'
-import { fetchManifest } from '../client/ModeRouter.js'
+import { fetchManifest, type ModeSelectOptions } from '../client/ModeRouter.js'
 import type { RouteDockManifest } from '../types.js'
 
 export interface ProviderRecord {
@@ -134,5 +134,10 @@ export class ProviderRegistry {
   async fetchProviderManifest(record: ProviderRecord): Promise<RouteDockManifest> {
     const baseUrl = new URL(record.base_url).origin
     return fetchManifest(baseUrl, undefined, undefined, record.payee)
+  }
+
+  /** Keep this record's trust anchor on pay, estimateCost, preflight or openSession calls. */
+  paymentOptions(record: ProviderRecord): Pick<ModeSelectOptions, 'expectedPayee'> {
+    return { expectedPayee: record.payee }
   }
 }

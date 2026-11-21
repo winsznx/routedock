@@ -4,7 +4,7 @@ import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
-import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
+import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightOptions, UrlPreflightResult, PreflightModeCost } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
@@ -142,7 +142,9 @@ export interface RouteDockClientConfig {
    * manifest's `payee` must equal this value or payment is refused with
    * `RouteDockSignatureError`. Without it, a self-signed manifest proves nothing
    * about who served it, so set this whenever you obtained a provider address
-   * from a registry.
+   * from a registry. Per-call `expectedPayee` on pay(), estimateCost(),
+   * preflight(url, options) or openSession() overrides this default for that
+   * call, so one client can bind multiple providers while sharing a spend cap.
    */
   expectedPayee?: string
 
@@ -254,7 +256,7 @@ export class RouteDockClient {
     options?: ModeSelectOptions,
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     assertEndpointActive(manifest, url, this.logger, options?.request?.method)
     const mode = selectMode(manifest, options)
     return { manifest, mode }
@@ -276,7 +278,7 @@ export class RouteDockClient {
    * Check a provider before committing to a payment. Neither form submits a
    * transaction or moves money.
    *
-   * - `preflight(url)` fetches and validates the provider's manifest and
+   * - `preflight(url, options?)` fetches and validates the provider's manifest and
    *   returns the supported modes, the estimated cost per mode, and
    *   deprecation/sunset flags. It does not check the payer's trustline.
    *   Throws the same manifest errors as `pay()` / `estimateCost()` when the
@@ -287,7 +289,7 @@ export class RouteDockClient {
    *   (regions, latency hints, capabilities). For approval gates and manual
    *   trustline remediation.
    */
-  preflight(url: string): Promise<UrlPreflightResult>
+  preflight(url: string, options?: UrlPreflightOptions): Promise<UrlPreflightResult>
   preflight(
     manifest: RouteDockManifest,
     mode?: PaymentMode,
@@ -295,11 +297,14 @@ export class RouteDockClient {
   ): Promise<PreflightResult>
   async preflight(
     target: string | RouteDockManifest,
-    mode?: PaymentMode,
+    modeOrOptions?: PaymentMode | UrlPreflightOptions,
     endpoint?: string,
   ): Promise<PreflightResult | UrlPreflightResult> {
-    if (typeof target === 'string') return this._preflightUrl(target)
+    if (typeof target === 'string') {
+      return this._preflightUrl(target, typeof modeOrOptions === 'object' ? modeOrOptions : undefined)
+    }
     const manifest = target
+    const mode = typeof modeOrOptions === 'string' ? modeOrOptions : undefined
     assertManifestValid(manifest)
     const selectedAsset = mode
       ? selectAsset(manifest, mode, endpoint).asset
@@ -316,9 +321,9 @@ export class RouteDockClient {
   }
 
   /** Manifest-only preflight for a URL — no trustline check, no payment. */
-  private async _preflightUrl(url: string): Promise<UrlPreflightResult> {
+  private async _preflightUrl(url: string, options?: UrlPreflightOptions): Promise<UrlPreflightResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     assertEndpointActive(manifest, url)
 
     const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
@@ -417,7 +422,7 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     const request = options?.request
     assertEndpointActive(manifest, url, this.logger, request?.method)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
@@ -566,7 +571,7 @@ export class RouteDockClient {
    */
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     assertEndpointActive(manifest, url, this.logger)
 
     const mode = options?.mode ?? 'mpp-session'
