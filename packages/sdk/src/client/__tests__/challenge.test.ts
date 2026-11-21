@@ -223,3 +223,50 @@ describe('challenge guards — scoped asset contract policy', () => {
     )
   })
 })
+
+describe('caller payment ceilings', () => {
+  it('refuses x402 above maxAmount even when it is within the manifest price', () => {
+    // #given / #when: the unsigned challenge is cheaper than the manifest but over the caller's limit.
+    const rejection = checkX402Accept(accept({ amount: '60000' }), manifest(), 'stellar:testnet', X402_PRICE, {
+      maxAmount: '0.005',
+    })
+    // #then: the caller ceiling has a distinct policy reason.
+    assert.equal(reason(rejection), 'max_amount_exceeded')
+  })
+
+  it('filters over-ceiling x402 alternatives before the signer chooses one', () => {
+    const good = accept({ amount: '50000' })
+    const allowed = filterX402Accepts(
+      [accept({ amount: '60000' }), good], manifest(), 'stellar:testnet', X402_PRICE,
+      { maxAmount: '0.005' },
+    )
+    assert.deepEqual(allowed, [good])
+  })
+
+  it('refuses mpp-charge above maxAmount even when it is within the manifest price', () => {
+    const rejection = checkChargeChallenge({
+      amount: '6000', currency: ASSET_CONTRACT, recipient: PAYEE,
+    }, manifest(), 'stellar:testnet', CHARGE_PRICE, { maxAmount: '0.0005' })
+    assert.equal(reason(rejection), 'max_amount_exceeded')
+  })
+
+  it('accepts the exact ceiling and keeps the stricter manifest bound', () => {
+    assert.equal(checkX402Accept(accept({ amount: '50000' }), manifest(), 'stellar:testnet', X402_PRICE, {
+      maxAmount: '0.0050000',
+    }), null)
+    assert.equal(reason(checkX402Accept(accept({ amount: '100001' }), manifest(), 'stellar:testnet', X402_PRICE, {
+      maxAmount: '1',
+    })), 'challenge_amount_exceeds_manifest')
+  })
+
+  it('fails closed on malformed caller ceilings', () => {
+    for (const maxAmount of ['abc', '-1', '0.00000001']) {
+      assert.equal(reason(checkX402Accept(accept(), manifest(), 'stellar:testnet', X402_PRICE, {
+        maxAmount,
+      })), 'max_amount_invalid')
+      assert.equal(reason(checkChargeChallenge({
+        amount: '8000', currency: ASSET_CONTRACT, recipient: PAYEE,
+      }, manifest(), 'stellar:testnet', CHARGE_PRICE, { maxAmount })), 'max_amount_invalid')
+    }
+  })
+})

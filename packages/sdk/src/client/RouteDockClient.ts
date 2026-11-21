@@ -451,6 +451,7 @@ export class RouteDockClient {
    * per-instance mutex to prevent spend-cap overrun.
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
+    const maxAmount = options?.maxAmount
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     const request = options?.request
@@ -461,8 +462,6 @@ export class RouteDockClient {
 
     // Fail closed before any network call if the cap can't account for this asset.
     this._assertCapAsset(selectedAsset)
-
-    await this._checkTrustline(manifest, selectedAsset)
 
     let amount: string
     switch (mode) {
@@ -481,24 +480,38 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
+    if (maxAmount !== undefined) {
+      let ceiling: bigint
+      try {
+        ceiling = usdcToStroops(maxAmount)
+      } catch (cause) {
+        throw new RouteDockPolicyRejectError('max_amount_invalid', { cause })
+      }
+      if (usdcToStroops(amount) > ceiling) {
+        throw new RouteDockPolicyRejectError('max_amount_exceeded')
+      }
+    }
+
+    await this._checkTrustline(manifest, selectedAsset)
+
     // Reserve before dispatching so no path can spend outside the cap.
     const reserveId = await this._checkAndReserveSpend(amount, baseUrl, selectedAsset)
 
     let result: PaymentResult
     try {
       if (this.vault?.mode === 'agent-vault') {
-        result = await this._payWithAgentVault(this.vault, url, manifest, mode, request)
+        result = await this._payWithAgentVault(this.vault, url, manifest, mode, request, maxAmount)
       } else if (this.vault?.mode === 'nulth') {
         // Mode/prover validation errors thrown here must also release the
         // reservation, which is why the call sits inside this try block.
-        result = await this._payWithNulthVault(url, manifest, mode, request)
+        result = await this._payWithNulthVault(url, manifest, mode, request, maxAmount)
       } else {
         switch (mode) {
           case 'x402':
-            result = await this.x402.pay(url, manifest, request)
+            result = await this.x402.pay(url, manifest, request, maxAmount)
             break
           case 'mpp-charge':
-            result = await this.charge.pay(url, manifest, request)
+            result = await this.charge.pay(url, manifest, request, maxAmount)
             break
           default:
             throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
@@ -536,6 +549,7 @@ export class RouteDockClient {
     manifest: import('../types.js').RouteDockManifest,
     mode: import('../types.js').PaymentMode,
     request?: import('../types.js').PaymentRequest,
+    maxAmount?: string,
   ): Promise<PaymentResult> {
     if (mode !== 'x402') {
       throw new RouteDockManifestError(
@@ -545,7 +559,7 @@ export class RouteDockClient {
     assertAgentVaultManifest(manifest, this.network)
 
     try {
-      return await this.x402.withSigner(createAgentVaultSigner(vault)).pay(url, manifest, request)
+      return await this.x402.withSigner(createAgentVaultSigner(vault)).pay(url, manifest, request, maxAmount)
     } catch (err) {
       throw toAgentVaultPolicyReject(err) ?? err
     }
@@ -557,6 +571,7 @@ export class RouteDockClient {
     manifest: import('../types.js').RouteDockManifest,
     mode: import('../types.js').PaymentMode,
     request?: import('../types.js').PaymentRequest,
+    maxAmount?: string,
   ): Promise<PaymentResult> {
     const prover = (this.vault as NulthVaultConfig | undefined)?.prover ?? 'mock';
     if (this.network === 'mainnet' && prover === 'mock') {
@@ -571,7 +586,7 @@ export class RouteDockClient {
     try {
       const { signer } = await prepareNulthSigner(this.vault as NulthVaultConfig, manifest, mode, this.network)
       const x402 = this.x402.withSigner(signer)
-      const result = await x402.pay(url, manifest, request)
+      const result = await x402.pay(url, manifest, request, maxAmount)
       return result
     } catch (err) {
       if (err instanceof NulthPolicyError) {

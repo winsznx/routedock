@@ -1095,3 +1095,26 @@ test('X402Client - free non-402 probe is logged as a free response', async () =>
     globalThis.fetch = originalFetch
   }
 })
+
+test('X402Client - caller ceiling blocks a within-manifest challenge before signing', async (t) => {
+  // #given: the manifest allows 0.01, while the caller allows only 0.005.
+  const client = new X402Client(keypair.secret(), 'testnet')
+  const signCalls = t.mock.method(x402HTTPClient.prototype, 'createPaymentPayload', async () => makePayload())
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    requests++
+    return requests === 1
+      ? paymentRequiredResponse([{ ...baseRequirements, amount: '60000' }])
+      : jsonResponse({ ok: true })
+  })
+
+  // #when: the provider asks for 0.006 on the unpaid probe.
+  await assert.rejects(
+    client.pay('https://api.test/ceiling', manifest, undefined, '0.005'),
+    (error: unknown) => error instanceof RouteDockPolicyRejectError && error.reason === 'max_amount_exceeded',
+  )
+
+  // #then: no credential or paid request was created.
+  assert.equal(signCalls.mock.callCount(), 0)
+  assert.equal(requests, 1)
+})

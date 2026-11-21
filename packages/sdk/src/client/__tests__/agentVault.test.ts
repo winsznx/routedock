@@ -374,10 +374,21 @@ function makeClient(): { client: RouteDockClient; paid: string[] } {
  * real vault scheme still run, and a signing failure is wrapped exactly as
  * `X402Client` wraps it.
  */
-function installX402(client: RouteDockClient, tx: StubTransaction, payers: string[]): void {
+function installX402(
+  client: RouteDockClient,
+  tx: StubTransaction,
+  payers: string[],
+  expectedMaxAmount?: string,
+): void {
   ;(client as unknown as ClientInternals).x402 = {
     withSigner: (signer: ReturnType<typeof createAgentVaultSigner>) => ({
-      async pay(): Promise<PaymentResult> {
+      async pay(
+        _url: string,
+        _manifest: RouteDockManifest,
+        _request: unknown,
+        maxAmount?: string,
+      ): Promise<PaymentResult> {
+        assert.equal(maxAmount, expectedMaxAmount)
         payers.push(signer.address)
         try {
           await new AgentVaultStellarScheme(signer, stubIo(tx)).createPaymentPayload(2, requirements)
@@ -396,9 +407,9 @@ test('RouteDockClient pays an x402 endpoint from the agent vault', async () => {
     const { client } = makeClient()
     const tx = new StubTransaction()
     const payers: string[] = []
-    installX402(client, tx, payers)
+    installX402(client, tx, payers, '0.001')
 
-    const result = await client.pay(`${server.url}/test`)
+    const result = await client.pay(`${server.url}/test`, { maxAmount: '0.001' })
 
     assert.equal(result.mode, 'x402')
     assert.deepEqual(payers, [VAULT], 'paid from the vault contract')

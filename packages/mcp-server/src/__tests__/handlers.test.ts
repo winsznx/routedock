@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest, EstimateCostResult } from '@routedock/routedock'
-import { RouteDockPaidResponseError } from '@routedock/routedock'
+import { RouteDockManifestError, RouteDockPaidResponseError, RouteDockPolicyRejectError } from '@routedock/routedock'
 import { USDC_ISSUERS } from '@routedock/routedock/network'
 import {
   handlePayForData,
@@ -305,54 +305,68 @@ describe('handlePayForData', () => {
     )
   })
 
-  it('returns success when estimate is within max_amount', async () => {
+  it('returns the successful payment result with max_amount bound to pay', async () => {
+    const deps = baseDeps({
+      client: makeClient({
+        estimateCost: async () => { throw new Error('must not estimate before paying') },
+        pay: async (_url, options) => {
+          assert.deepEqual(options, { maxAmount: '1.00' })
+          return { mode: 'x402', amount: '0.001', txHash: 'TXHASH', timestamp: 123, data: {} }
+        },
+      }),
+    })
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
-      baseDeps(),
+      deps,
     )
     assert.equal(result.isError, undefined)
-    const body = parseResult(result) as any
-    assert.equal(body.success, true)
-    assert.equal(body.tx_hash, 'TXHASH')
+    assert.equal(payload(result).success, true)
+    assert.equal(payload(result).tx_hash, 'TXHASH')
   })
 
-  it('returns isError when estimate exceeds max_amount', async () => {
+  it('returns isError for the actual payment ceiling rejection without fetching an estimate', async () => {
+    // #given: the SDK refuses the price it will actually pay.
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async () => estimate('5.00'),
+        estimateCost: async () => { throw new Error('must not estimate before paying') },
+        pay: async (_url, options) => {
+          assert.equal(options?.maxAmount, '0.01')
+          throw new RouteDockPolicyRejectError('max_amount_exceeded')
+        },
       }),
     })
+
+    // #when / #then: the handler surfaces the rejection to the model.
     const result = await handlePayForData(
-      { url: 'https://provider.example.com/data', max_amount: '1.00' },
+      { url: 'https://provider.example.com/data', max_amount: '0.01' },
       deps,
     )
     assert.equal(result.isError, true)
-    const body = parseResult(result) as any
-    assert.ok(body.error.includes('exceeds max_amount'))
+    assert.match(String(payload(result).error), /exceeds max_amount/)
   })
 
-  it('returns isError when provider returns an undefined amount', async () => {
+  it('propagates invalid provider manifests to the tool dispatcher', async () => {
+    const rejection = new RouteDockManifestError('Provider returned an undefined or invalid price')
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async () => ({ ...estimate('0'), amount: undefined as unknown as string }),
+        estimateCost: async () => { throw new Error('must not estimate before paying') },
+        pay: async () => { throw rejection },
       }),
     })
-    const result = await handlePayForData(
-      { url: 'https://provider.example.com/data', max_amount: '1.00' },
-      deps,
+    await assert.rejects(
+      handlePayForData({ url: 'https://provider.example.com/data', max_amount: '1.00' }, deps),
+      (error: unknown) => error === rejection,
     )
-    assert.equal(result.isError, true)
-    const body = parseResult(result) as any
-    assert.ok(body.error.includes('undefined or invalid price'))
   })
 
-  it('passes forceMode (not preferredMode) to estimateCost and pay', async () => {
+  it('passes forceMode and maxAmount together to pay', async () => {
     let capturedModeOptions: unknown
     const deps = baseDeps({
       client: makeClient({
-        estimateCost: async (_url: string, opts: unknown) => {
-          capturedModeOptions = opts
-          return estimate('0.001')
+        estimateCost: async () => { throw new Error('must not estimate before paying') },
+        pay: async (_url, options) => {
+          capturedModeOptions = options
+          return { mode: 'mpp-charge', amount: '0.001', txHash: 'TXHASH', timestamp: 123, data: {} }
         },
       }),
     })
@@ -360,36 +374,10 @@ describe('handlePayForData', () => {
       { url: 'https://p.example.com/data', max_amount: '1.00', preferred_mode: 'mpp-charge' },
       deps,
     )
-    assert.deepEqual(capturedModeOptions, { forceMode: 'mpp-charge' })
+    assert.deepEqual(capturedModeOptions, { forceMode: 'mpp-charge', maxAmount: '1.00' })
   })
-  // -------------------------------------------------------------------------
-  // max_amount validation (issue #316). MCP never validates arguments against
-  // inputSchema, so a missing or non-numeric max_amount used to compare as NaN
-  // and pay with no ceiling.
-  // -------------------------------------------------------------------------
 
-  /** Deps whose fake client quotes `price` and records which calls ran. */
-  function payDeps(price: string | undefined) {
-    const calls = { estimateCost: 0, pay: 0 }
-    const deps = baseDeps({
-      client: makeClient({
-        estimateCost: async () => {
-          calls.estimateCost++
-          return { ...estimate('0'), amount: price as string }
-        },
-        pay: async () => {
-          calls.pay++
-          return { mode: 'x402' as const, amount: price ?? '', txHash: 'TXHASH', timestamp: Date.now(), data: {} }
-        },
-      }),
-    })
-    return { deps, calls }
-  }
-
-  function errorText(result: ToolResult): string {
-    return (parseResult(result) as { error: string }).error
-  }
-
+  // max_amount validation (issue #316): invalid tool arguments must not reach the SDK.
   const INVALID_MAX_AMOUNTS: Array<[string, unknown]> = [
     ['missing', undefined],
     ['""', ''],
@@ -400,66 +388,59 @@ describe('handlePayForData', () => {
     ['"0"', '0'],
     ['"-1"', '-1'],
     ['the number 0.01', 0.01],
+    ['excess precision', '0.00000001'],
   ]
 
   for (const [label, maxAmount] of INVALID_MAX_AMOUNTS) {
-    it(`rejects max_amount ${label} before estimating or paying`, async () => {
-      const { deps, calls } = payDeps('5.00')
-      const args = { url: 'https://provider.example.com/data', max_amount: maxAmount }
-      if (maxAmount === undefined) delete args.max_amount
+    it('rejects max_amount ' + label + ' before estimating or paying', async () => {
+      let calls = { estimateCost: 0, pay: 0 }
+      const deps = baseDeps({
+        client: makeClient({
+          estimateCost: async () => {
+            calls = { ...calls, estimateCost: calls.estimateCost + 1 }
+            return estimate('5.00')
+          },
+          pay: async () => {
+            calls = { ...calls, pay: calls.pay + 1 }
+            return { mode: 'x402', amount: '5.00', txHash: 'TXHASH', timestamp: 123, data: {} }
+          },
+        }),
+      })
+      const args = { url: 'https://provider.example.com/data', ...(maxAmount !== undefined && { max_amount: maxAmount }) }
       const result = await handlePayForData(args as unknown as PayForDataArgs, deps)
       assert.equal(result.isError, true)
-      assert.ok(errorText(result).includes('max_amount must be a positive USDC amount'))
+      assert.match(String(payload(result).error), /max_amount must be a positive USDC amount/)
       assert.deepEqual(calls, { estimateCost: 0, pay: 0 })
     })
   }
 
-  it('rejects a 5.00 price against max_amount "0.01" without paying', async () => {
-    const { deps, calls } = payDeps('5.00')
-    const result = await handlePayForData(
-      { url: 'https://provider.example.com/data', max_amount: '0.01' },
-      deps,
-    )
-    assert.equal(result.isError, true)
-    assert.ok(errorText(result).includes('exceeds max_amount'))
-    assert.equal(calls.pay, 0)
-  })
-
-  for (const price of ['0.01', '0.0100000']) {
-    it(`pays when price "${price}" equals max_amount "0.01"`, async () => {
-      const { deps, calls } = payDeps(price)
-      const result = await handlePayForData(
+  for (const amount of ['0.01', '0.0100000']) {
+    it('retains the SDK result at the exact ceiling for amount ' + amount, async () => {
+      const deps = baseDeps({
+        client: makeClient({
+          pay: async (_url, options) => {
+            assert.equal(options?.maxAmount, '0.01')
+            return { mode: 'x402', amount, txHash: 'TXHASH', timestamp: 123, data: {} }
+          },
+        }),
+      })
+      const response = await handlePayForData(
         { url: 'https://provider.example.com/data', max_amount: '0.01' },
         deps,
       )
-      assert.equal(result.isError, undefined)
-      assert.equal(calls.pay, 1)
+      assert.equal(response.isError, undefined)
+      assert.equal(payload(response).amount, amount)
     })
   }
 
-  it('rejects a price one stroop above max_amount', async () => {
-    const { deps, calls } = payDeps('0.0100001')
-    const result = await handlePayForData(
-      { url: 'https://provider.example.com/data', max_amount: '0.01' },
-      deps,
+  it('does not convert unrelated policy failures into a ceiling error', async () => {
+    const rejection = new RouteDockPolicyRejectError('challenge_payee_mismatch')
+    const deps = baseDeps({ client: makeClient({ pay: async () => { throw rejection } }) })
+    await assert.rejects(
+      handlePayForData({ url: 'https://provider.example.com/data', max_amount: '1' }, deps),
+      (error: unknown) => error === rejection,
     )
-    assert.equal(result.isError, true)
-    assert.ok(errorText(result).includes('exceeds max_amount'))
-    assert.equal(calls.pay, 0)
   })
-
-  for (const price of ['abc', '0.00000001']) {
-    it(`rejects an unparseable provider price "${price}" without paying`, async () => {
-      const { deps, calls } = payDeps(price)
-      const result = await handlePayForData(
-        { url: 'https://provider.example.com/data', max_amount: '1.00' },
-        deps,
-      )
-      assert.equal(result.isError, true)
-      assert.ok(errorText(result).includes('undefined or invalid price'))
-      assert.equal(calls.pay, 0)
-    })
-  }
 })
 
 // ---------------------------------------------------------------------------
@@ -1581,6 +1562,7 @@ describe('handlePayForData request options', () => {
 
     assert.equal(result.isError, undefined)
     const expected = {
+      maxAmount: '0.01',
       request: {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1588,19 +1570,19 @@ describe('handlePayForData request options', () => {
       },
     }
     assert.deepEqual(payCalls, [expected])
-    assert.deepEqual(estimateCalls, [expected])
+    assert.deepEqual(estimateCalls, [])
   })
 
   it('keeps forceMode alongside the request', async () => {
     const { deps, payCalls } = recordingDeps()
     await handlePayForData({ ...BASE, preferred_mode: 'mpp-charge', method: 'POST', body: '{}' }, deps)
-    assert.deepEqual(payCalls, [{ forceMode: 'mpp-charge', request: { method: 'POST', body: '{}' } }])
+    assert.deepEqual(payCalls, [{ maxAmount: '0.01', forceMode: 'mpp-charge', request: { method: 'POST', body: '{}' } }])
   })
 
-  it('passes no options when none of the new fields are given', async () => {
+  it('passes only the ceiling when no request options are given', async () => {
     const { deps, payCalls } = recordingDeps()
     await handlePayForData(BASE, deps)
-    assert.deepEqual(payCalls, [undefined])
+    assert.deepEqual(payCalls, [{ maxAmount: '0.01' }])
   })
 
   for (const name of ['Authorization', 'authorization', 'X-Payment', 'x-payment-signature', 'X-PAYMENT-RESPONSE']) {

@@ -28,6 +28,7 @@ export class MppChargeClient {
     url: string,
     manifest: RouteDockManifest,
     request?: PaymentRequest,
+    maxAmount?: string,
   ): Promise<PaymentResult> {
     const pricing = manifest.pricing['mpp-charge']
     if (!pricing) {
@@ -41,6 +42,7 @@ export class MppChargeClient {
     // Buffered once outside withRetry so the 402 probe, the paid retry inside
     // mppx and any RouteDock-level retry all send the same body.
     const prepared = await prepareRequest(request)
+    const policy = { assetContract, ...(maxAmount !== undefined && { maxAmount }) }
 
     let signedAmount: string | undefined
     // The credential is created at most once per pay() call. Every retry after
@@ -59,7 +61,7 @@ export class MppChargeClient {
       onChallenge: async (challenge, { createCredential }) => {
         // Bind the unsigned challenge to the signed manifest before signing.
         const request = challenge.request
-        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount, { assetContract })
+        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount, policy)
         if (rejection) throw rejection
 
         const amount = request['amount']

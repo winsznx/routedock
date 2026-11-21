@@ -383,3 +383,50 @@ describe('RouteDockClient — nulth vault spend cap (#396)', () => {
     }
   })
 })
+
+describe('RouteDockClient — nulth vault per-payment ceiling (#725)', () => {
+  it('rejects an over-ceiling payment before preparing the vault signer', async () => {
+    // #given: the daily cap allows the payment, but the caller's ceiling does not.
+    const server = await startTestServer(makeManifestHandler(makeManifest()))
+    try {
+      const client = makeClient({ spendCap: { daily: '1' } })
+      stubTrustlineCache(client)
+      installFakeX402(client)
+      prepareCalls = 0
+      x402PayCalls = 0
+
+      // #when / #then: the same per-call guard applies to vault custody.
+      await assert.rejects(
+        client.pay(server.url + '/test', { maxAmount: '0.0005' }),
+        (error: unknown) => error instanceof RouteDockPolicyRejectError && error.reason === 'max_amount_exceeded',
+      )
+      assert.equal(prepareCalls, 0)
+      assert.equal(x402PayCalls, 0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('forwards maxAmount to the x402 client created with the vault signer', async () => {
+    const server = await startTestServer(makeManifestHandler(makeManifest()))
+    try {
+      const client = makeClient({ spendCap: { daily: '1' } })
+      stubTrustlineCache(client)
+      prepareCalls = 0
+      prepareImpl = async () => ({ signer: { kind: 'fake-nulth-signer' }, config: {} })
+      let ceiling: string | undefined
+      const pay = async (_url: string, _manifest: RouteDockManifest, _request?: unknown, maxAmount?: string) => {
+        ceiling = maxAmount
+        return fakeResult('x402', '0.001')
+      }
+      internals(client).x402 = { pay, withSigner: () => ({ pay }) }
+
+      await client.pay(server.url + '/test', { maxAmount: '0.001' })
+
+      assert.equal(prepareCalls, 1)
+      assert.equal(ceiling, '0.001')
+    } finally {
+      await server.close()
+    }
+  })
+})
