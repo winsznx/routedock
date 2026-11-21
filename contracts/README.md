@@ -19,6 +19,46 @@ The RouteDock agent vault is a Soroban smart contract account built on top of
 
 All signed authorizations are default-deny: only SAC `transfer` contexts accepted by the policies above can pass `__check_auth`.
 
+### Storage layout and migration
+
+The instance entry contains only admin and agent keys, caps, expiry, freeze state,
+pending governance changes and a storage-version marker. Each allowlisted payee
+has a separate persistent `(Symbol("payee"), Address) -> i128` entry; the
+monotonic lifetime counter is a persistent `Symbol("ltspend") -> i128` entry.
+Payments read only the payees in their authorization contexts and write the
+small lifetime counter plus the existing temporary daily counters. Their write
+bytes do not grow with the total allowlist.
+
+`allowlist_sub_cap(payee)` returns `Some(sub_cap)` for an allowed payee and
+`None` for a removed or absent entry. It replaces the full-map `allowlist()`
+view. Index `allowlist_updated` events for enumeration: constructor and
+migration entries emit `Some(sub_cap)`, updates replace that value, and removals
+emit `None`. There is no instance-resident address index or aggregate 64 KiB
+allowlist entry limit; constructor batches and individual transactions still
+have the network's resource limits.
+
+After upgrading an existing vault, the preserved admin must call
+`migrate_storage()` repeatedly until its returned remaining count is zero. Each
+call copies at most 64 payees, extends their persistent TTLs, and retains the
+remaining legacy map plus lifetime counter in the instance. The final batch
+moves the nonzero lifetime counter exactly once, removes the two legacy keys,
+and marks migration complete. Other policy state and daily counters are retained.
+A 500-payee vault needs eight calls; each batch stays below the network's
+200-written-entry, 400-footprint-entry and 16,384-byte event/return limits.
+Payments and allowlist mutations return `StorageMigrationRequired` until all
+batches complete. Further migration calls return `StorageAlreadyMigrated`.
+New deployments use the new layout immediately. Complete batches promptly or
+restore any persistent entries archived during a long pause.
+
+Instance and persistent entries extend to 2,000,000 ledgers only when their TTL
+falls below 1,500,000. Payments and authenticated settlement records refresh the
+payees they touch; admin upserts refresh the written payee. Authenticated admin
+calls also refresh the lifetime counter so a frozen vault does not lose its
+spend history. Inactive payee entries can archive independently and need a
+ledger-entry restoration before reuse. Missing lifetime state fails closed with
+`StorageUnavailable` rather than resetting to zero; restore an archived counter
+before resuming payments. Read-only views do not refresh TTLs.
+
 ### Timelocked Wasm upgrades
 
 Wasm replacement is a two-step process with a fixed **17,280-ledger notice period** (approximately one day at the vault's existing ledger-day accounting rate):
@@ -63,26 +103,33 @@ If CI fails with “test_snapshots drifted”:
 
 Never hand-edit a snapshot.
 
-The three real Wasm upgrade tests are explicitly marked `ignored` in a native-only
+The four real Wasm upgrade tests are explicitly marked `ignored` in a native-only
 run, with a message explaining the required build. To run **all** tests, including
-the old immediate-upgrade bootstrap and current-to-current state-retention paths:
+the old immediate-upgrade bootstrap, pre-layout storage migration and
+current-to-current state-retention paths:
 
 ```bash
 rustup target add wasm32v1-none --toolchain 1.94.1
+bash scripts/build-vault-legacy-wasm.sh
 bash scripts/build-vault-wasm.sh
+AGENT_VAULT_LEGACY_WASM="$PWD/contracts/agent-vault/target/legacy/wasm32v1-none/release/agent_vault.wasm" \
 AGENT_VAULT_WASM="$PWD/contracts/agent-vault/target/wasm32v1-none/release/agent_vault.wasm" \
   cargo +1.94.1 test --locked --manifest-path contracts/agent-vault/Cargo.toml \
   --features testutils -- --include-ignored
 ```
 
-`AGENT_VAULT_WASM` is read at test runtime. An absent/unreadable path or the old
+Both Wasm paths are read at test runtime. An absent/unreadable path or the old
 fixture fails the explicitly requested Wasm tests; it never silently substitutes
 a stale fixture. Rebuild after changing contract source. The build script honors
 `CARGO_TARGET_DIR` (relative to the repository root) and prints the matching test
-command. Do not commit the generated current Wasm.
+command. The legacy build extracts upstream revision
+`37329733a43b98754967e255dbc0a4d250312e50` into a temporary directory and uses a
+separate target directory, so the migration test starts from the actual
+pre-layout executable. That revision must be present locally; CI fetches its
+history. Do not commit generated Wasm.
 
-The `contract-wasm` CI job builds the release target with Rust 1.94.1 and the
-locked dependencies, enforces a **65,536-byte** budget (below Soroban's 128 KiB
+The `contract-wasm` CI job first builds that pinned legacy executable, then builds
+the current release target with Rust 1.94.1 and the locked dependencies, enforces a **65,536-byte** budget (below Soroban's 128 KiB
 contract-code ceiling), prints the byte size and SHA-256 in its job summary, runs
 all tests against those bytes, and uploads `agent-vault-wasm-<commit>` for 90 days.
 The artifact contains the Wasm, a `.wasm.sha256` checksum file and `.wasm.json`

@@ -47,12 +47,17 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       AGENT_VAULT_WASM: ${{ github.workspace }}/target/wasm32v1-none/release/agent_vault.wasm
+      AGENT_VAULT_LEGACY_WASM: ${{ github.workspace }}/target/legacy/wasm32v1-none/release/agent_vault.wasm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # The migration test builds the pinned pre-layout revision.
       - name: Install pinned Rust and Soroban target
         uses: dtolnay/rust-toolchain@75be91dd2711b583df57c31d0873b4145c89f1d9 # branch 1.94.1
         with:
           targets: wasm32v1-none
+      - name: Build the pinned pre-layout Wasm for migration tests
+        run: bash scripts/build-vault-legacy-wasm.sh
       - name: Build release Wasm, enforce size budget and summarize SHA-256
         run: bash scripts/build-vault-wasm.sh
       - name: Test bootstrap and current Wasm upgrades with all invariants

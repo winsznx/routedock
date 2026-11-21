@@ -137,18 +137,18 @@ Record the output as `AGENT_VAULT_CONTRACT_ID`. This ID is used by operators in 
 
 Deploy-time arguments configure the vault atomically in `__constructor`:
 
-- **`--admin`**: Vault administrator Stellar G-address holding exclusive authorization for admin entrypoints (`set_daily_cap`, `set_lifetime_cap`, `add_to_allowlist`, `remove_from_allowlist`, `set_expiry`, `set_agent_pubkey`, `freeze`/`unfreeze`, `propose_upgrade`, `execute_upgrade`, `cancel_upgrade`, `transfer_admin`).
+- **`--admin`**: Vault administrator Stellar G-address holding exclusive authorization for admin entrypoints (`set_daily_cap`, `set_lifetime_cap`, `add_to_allowlist`, `remove_from_allowlist`, `set_expiry`, `set_agent_pubkey`, `freeze`/`unfreeze`, `propose_upgrade`, `execute_upgrade`, `cancel_upgrade`, `migrate_storage`, `transfer_admin`).
 - **`--agent_pk`**: Agent's 32-byte Ed25519 public key as 64 hex characters used to authorize payments via `__check_auth`.
 - **`--daily_cap`**: Daily spend cap in USDC stroops, where 1 USDC = 10,000,000 stroops (`250000000` = 25 USDC/day conservative cap).
 - **`--allowlist`**: Map of payee address to daily sub-cap in stroops (JSON object format, e.g. `'{"<PAYEE_G_ADDRESS>":"250000000"}'`). Restrict to production provider payee accounts.
 - **`--expiry_ledger`**: Absolute ledger sequence (compared against `env.ledger().sequence()`, **not** a relative duration). Set a short session key lifetime (e.g. current ledger + 720 for ~1 hour, or 4,320 for ~6 hours).
 - **`--lifetime_cap`**: Total USDC stroops the vault may ever spend over its lifetime. Set to `0` for unlimited.
 
-Read back the deployed policy to confirm it landed on-chain (simulate-only via `--send=no`):
+Read back the deployed policy to confirm it landed on-chain (simulate-only via `--send=no`). Repeat the per-payee lookup for every configured provider:
 
 ```bash
 stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- daily_cap
-stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- allowlist
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- allowlist_sub_cap --payee <PAYEE_G_ADDRESS>
 stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- expiry_ledger
 stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- agent_pubkey
 ```
@@ -165,6 +165,7 @@ stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_A
 | `set_lifetime_cap` | Set the lifetime cap (stroops, 0 disables). |
 | `add_to_allowlist` | Add or update an allowed payee address with a per-payee daily sub-cap (in stroops). |
 | `remove_from_allowlist` | Remove a payee address from the allowlist so payments to it are rejected. |
+| `migrate_storage` | After a legacy-layout upgrade, migrate up to 64 payees per admin call; repeat until the returned remaining count is zero. The final batch preserves lifetime spend and completes the migration. |
 | `propose_upgrade` | Propose a new contract wasm bytecode hash subject to the timelock delay (admin-only). |
 | `execute_upgrade` | Execute a proposed contract wasm upgrade once the timelock delay has elapsed (admin-only). |
 | `cancel_upgrade` | Cancel an active contract wasm upgrade proposal before or after readiness (admin-only). |
@@ -188,8 +189,25 @@ New deployments enforce a fixed 17,280-ledger delay (approximately one day) from
 2. Call `propose_upgrade(new_wasm_hash)` with the vault admin. Record the `upgrade_proposed` event and verify `pending_upgrade` returns the expected hash and `ready_at_ledger`.
 3. Notify vault operators and governed payers, link the reviewed build, and allow the full ledger delay. Rescheduling replaces the target and restarts the delay.
 4. If the proposal is no longer approved, call `cancel_upgrade` before execution and verify `upgrade_cancelled` plus an empty `pending_upgrade`.
-5. At or after `ready_at_ledger`, call `execute_upgrade()` with the vault admin. Verify the system executable update and custom `upgraded` event contain the approved hash.
-6. Re-check `daily_cap`, `allowlist`, `agent_pubkey`, and `expiry_ledger`, then run a capped authorization smoke test before restoring traffic.
+5. At or after `ready_at_ledger`, pause agent traffic and record `get_lifetime_spend()` plus the known payees/sub-caps before calling `execute_upgrade()` with the vault admin. Verify the system executable update and custom `upgraded` event contain the approved hash.
+6. When the previous executable stored its allowlist in instance storage, call `migrate_storage()` with the preserved admin repeatedly until the returned remaining count is zero. Each call copies up to 64 payees; the final batch moves lifetime spend once and completes the migration. Keep traffic paused and defer allowlist mutations throughout. New-layout vaults already migrated at deployment do not need this step.
+7. Re-check `daily_cap`, `agent_pubkey`, `expiry_ledger` and each known payee through `allowlist_sub_cap(payee)`. Confirm `get_lifetime_spend()` exactly matches the recorded pre-upgrade value, then run a capped authorization smoke test before restoring traffic.
+
+Submit each required migration batch with the vault admin; inspect its returned count and repeat until zero:
+
+```bash
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet -- migrate_storage
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- get_lifetime_spend
+stellar contract invoke --id <AGENT_VAULT_CONTRACT_ID> --source-account <VAULT_ADMIN_ALIAS> --network mainnet --send=no -- allowlist_sub_cap --payee <PAYEE_G_ADDRESS>
+```
+
+A simulation using `--send=no` does not persist migration progress. Payments and
+allowlist mutations return `StorageMigrationRequired` before all batches finish;
+after completion, another migration attempt returns `StorageAlreadyMigrated`.
+The legacy lifetime counter remains intact through partial batches. Preserve
+the deployment/upgrade payee list and index `allowlist_updated` events for
+enumeration, since the full-map `allowlist()` view is replaced. Complete batches
+promptly and restore any archived persistent entries before resuming traffic.
 
 Verify a downloaded artifact before upload (GitHub CLI example):
 

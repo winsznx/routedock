@@ -9,5 +9,6 @@ target_dir="$(cd "$target_dir" && pwd)"
 cargo +1.94.1 build --locked --manifest-path contracts/agent-vault/Cargo.toml \
   --target wasm32v1-none --release --target-dir "$target_dir"
 python3 scripts/check-vault-wasm.py "$target_dir/wasm32v1-none/release/agent_vault.wasm"
-printf 'Run Wasm upgrade tests with:\nAGENT_VAULT_WASM=%q cargo +1.94.1 test --locked --manifest-path contracts/agent-vault/Cargo.toml --features testutils -- --include-ignored\n' \
+printf 'Run all Wasm upgrade tests after bash scripts/build-vault-legacy-wasm.sh:\nAGENT_VAULT_LEGACY_WASM=%q AGENT_VAULT_WASM=%q cargo +1.94.1 test --locked --manifest-path contracts/agent-vault/Cargo.toml --features testutils -- --include-ignored\n' \
+  "$target_dir/legacy/wasm32v1-none/release/agent_vault.wasm" \
   "$target_dir/wasm32v1-none/release/agent_vault.wasm"
