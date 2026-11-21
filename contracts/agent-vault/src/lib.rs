@@ -36,6 +36,7 @@ const UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
 
 // ── Event names ──────────────────────────────────────────────────────────────
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
+const EVT_VAULT_INITIALIZED: &str = "vault_initialized";
 const EVT_PAYMENT_AUTHORIZED: &str = "payment_authorized";
 const EVT_SESSION_SETTLED: &str = "session_settled";
 const EVT_UPGRADED: &str = "upgraded";
@@ -143,6 +144,15 @@ impl AgentVault {
         storage.set(&INIT_KEY, &true);
         // Extend instance storage TTL to outlive any realistic session expiry
         bump_instance(&env);
+        // Record the deploy-time configuration so an indexer can reconstruct the
+        // vault's starting policy without reading instance storage. Later
+        // `cap_updated` / `allowlist_updated` / ... events then carry it forward.
+        // topics: (Symbol("vault_initialized"), admin)
+        // data:   (agent_pk, daily_cap, lifetime_cap, expiry_ledger, allowlist)
+        env.events().publish(
+            (Symbol::new(&env, EVT_VAULT_INITIALIZED), admin),
+            (agent_pk, daily_cap, lifetime_cap, expiry_ledger, allowlist),
+        );
     }
 
     /// Update the daily USDC spend cap (in stroops). Admin only.
@@ -174,15 +184,20 @@ impl AgentVault {
         let mut map: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
+        let previous: Option<i128> = map.get(payee.clone());
         map.set(payee.clone(), sub_cap);
         storage.set(&LIST_KEY, &map);
+        // topics: (Symbol("allowlist_updated"), payee)
+        // data:   (previous_sub_cap: Option<i128>, new_sub_cap: Option<i128>)
         env.events().publish(
             (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
-            Some(sub_cap),
+            (previous, Some(sub_cap)),
         );
     }
 
     /// Remove a payee address from the spend allowlist. Admin only.
+    /// Removing a payee that is not listed is a no-op and emits no event, so an
+    /// `allowlist_updated` event always reflects a real change.
     pub fn remove_from_allowlist(env: Env, payee: Address) {
         let storage = env.storage().instance();
         let admin: Address = storage
@@ -193,11 +208,17 @@ impl AgentVault {
         let mut map: Map<Address, i128> = storage
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
+        let previous: Option<i128> = map.get(payee.clone());
+        if previous.is_none() {
+            return;
+        }
         map.remove(payee.clone());
         storage.set(&LIST_KEY, &map);
+        // topics: (Symbol("allowlist_updated"), payee)
+        // data:   (previous_sub_cap: Option<i128>, None)
         env.events().publish(
             (Symbol::new(&env, EVT_ALLOWLIST_UPDATED), payee),
-            Option::<i128>::None,
+            (previous, Option::<i128>::None),
         );
     }
 
@@ -265,12 +286,13 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
+        let old_expiry: u32 = storage.get(&EXPIRY_KEY).unwrap_or(0);
         storage.set(&EXPIRY_KEY, &new_expiry);
         // topics: (Symbol("expiry_updated"), admin)
-        // data:   new_expiry
+        // data:   (old_expiry, new_expiry)
         env.events().publish(
             (Symbol::new(&env, EVT_EXPIRY_UPDATED), admin),
-            new_expiry,
+            (old_expiry, new_expiry),
         );
     }
 
@@ -284,12 +306,15 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
+        let old_pk: BytesN<32> = storage
+            .get(&AGENT_KEY)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         storage.set(&AGENT_KEY, &new_pk);
         // topics: (Symbol("agent_key_rotated"),)
-        // data:   new_pk
+        // data:   (old_pk, new_pk)
         env.events().publish(
             (Symbol::new(&env, EVT_AGENT_KEY_ROTATED),),
-            new_pk,
+            (old_pk, new_pk),
         );
     }
 
@@ -336,6 +361,7 @@ impl AgentVault {
     }
 
     /// Freeze the contract, preventing any agent transfers. Admin only.
+    /// Freezing an already-frozen vault is a no-op and emits no event.
     pub fn freeze(env: Env) {
         let storage = env.storage().instance();
         let admin: Address = storage
@@ -343,11 +369,18 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
+        if storage.get::<Symbol, bool>(&FROZEN_KEY).unwrap_or(false) {
+            return;
+        }
         storage.set(&FROZEN_KEY, &true);
-        env.events().publish((Symbol::new(&env, EVT_VAULT_FROZEN),), ());
+        // topics: (Symbol("vault_frozen"), admin)
+        // data:   ()
+        env.events()
+            .publish((Symbol::new(&env, EVT_VAULT_FROZEN), admin), ());
     }
 
     /// Unfreeze the contract, allowing agent transfers again. Admin only.
+    /// Unfreezing a vault that is not frozen is a no-op and emits no event.
     pub fn unfreeze(env: Env) {
         let storage = env.storage().instance();
         let admin: Address = storage
@@ -355,8 +388,14 @@ impl AgentVault {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         admin.require_auth();
         bump_instance(&env);
+        if !storage.get::<Symbol, bool>(&FROZEN_KEY).unwrap_or(false) {
+            return;
+        }
         storage.set(&FROZEN_KEY, &false);
-        env.events().publish((Symbol::new(&env, EVT_VAULT_UNFROZEN),), ());
+        // topics: (Symbol("vault_unfrozen"), admin)
+        // data:   ()
+        env.events()
+            .publish((Symbol::new(&env, EVT_VAULT_UNFROZEN), admin), ());
     }
 
     /// Propose a Wasm upgrade to `new_wasm_hash`. Admin only.
@@ -2696,8 +2735,9 @@ mod tests {
             })
             .collect();
         assert_eq!(expiry_events.len(), 1, "exactly one expiry_updated event expected");
-        let data_expiry: u32 = expiry_events[0].2.clone().into_val(&env);
-        assert_eq!(data_expiry, 100_000, "event data should carry the new expiry");
+        let (old_expiry, new_expiry) = <(u32, u32)>::from_val(&env, &expiry_events[0].2);
+        assert_eq!(old_expiry, 10_000, "event data should carry the previous expiry");
+        assert_eq!(new_expiry, 100_000, "event data should carry the new expiry");
 
         assert_eq!(client.expiry_ledger(), 100_000, "expiry should be extended");
 
@@ -2920,20 +2960,28 @@ mod tests {
         let (_, topics, data) = env.events().all().last().unwrap();
         assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "allowlist_updated"));
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), payee);
-        assert_eq!(Option::<i128>::from_val(&env, &data), Some(2_000_000));
+        assert_eq!(
+            <(Option<i128>, Option<i128>)>::from_val(&env, &data),
+            (None, Some(2_000_000))
+        );
 
         client.remove_from_allowlist(&payee);
         let (_, topics, data) = env.events().all().last().unwrap();
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), payee);
-        assert_eq!(Option::<i128>::from_val(&env, &data), None);
+        assert_eq!(
+            <(Option<i128>, Option<i128>)>::from_val(&env, &data),
+            (Some(2_000_000), None)
+        );
 
         client.freeze();
         let (_, topics, _) = env.events().all().last().unwrap();
         assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_frozen"));
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
 
         client.unfreeze();
         let (_, topics, _) = env.events().all().last().unwrap();
         assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "vault_unfrozen"));
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
 
         let new_admin = Address::generate(&env);
         client.transfer_admin(&new_admin);
@@ -2947,6 +2995,205 @@ mod tests {
         assert_eq!(Symbol::from_val(&env, &topics.get(0).unwrap()), Symbol::new(&env, "admin_changed"));
         assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
         assert_eq!(Address::from_val(&env, &topics.get(2).unwrap()), new_admin);
+    }
+
+    // ── Event completeness (issue #734) ───────────────────────────────────────
+
+    /// Events the vault emitted in the most recent invocation (the test
+    /// environment only retains the last call's events), filtered by name.
+    fn vault_events_named(
+        env: &Env,
+        vault_id: &Address,
+        name: &str,
+    ) -> std::vec::Vec<(Vec<soroban_sdk::Val>, soroban_sdk::Val)> {
+        use soroban_sdk::testutils::Events;
+        let name = Symbol::new(env, name);
+        env.events()
+            .all()
+            .iter()
+            .filter(|(addr, topics, _)| {
+                addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| Symbol::from_val(env, &t) == name)
+            })
+            .map(|(_, topics, data)| (topics, data))
+            .collect()
+    }
+
+    /// Deploying a vault emits exactly one `vault_initialized` event whose data
+    /// matches the constructor arguments.
+    #[test]
+    fn test_constructor_emits_vault_initialized() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let (_, agent_pk) = gen_keypair(&env);
+        let payee_a = Address::generate(&env);
+        let payee_b = Address::generate(&env);
+        let allowlist = Map::from_array(
+            &env,
+            [(payee_a.clone(), 1_000_000_i128), (payee_b.clone(), 2_000_000_i128)],
+        );
+        let vault_id = env.register(
+            AgentVault,
+            (
+                admin.clone(),
+                agent_pk.clone(),
+                5_000_000_i128,
+                allowlist.clone(),
+                10_000_u32,
+                9_000_000_i128,
+            ),
+        );
+
+        let events = vault_events_named(&env, &vault_id, "vault_initialized");
+        assert_eq!(events.len(), 1, "deploy must emit exactly one vault_initialized");
+        let (topics, data) = &events[0];
+        assert_eq!(topics.len(), 2);
+        assert_eq!(Address::from_val(&env, &topics.get(1).unwrap()), admin);
+        let (pk, daily, lifetime, expiry, list) =
+            <(BytesN<32>, i128, i128, u32, Map<Address, i128>)>::from_val(&env, data);
+        assert_eq!(pk, agent_pk);
+        assert_eq!(daily, 5_000_000);
+        assert_eq!(lifetime, 9_000_000);
+        assert_eq!(expiry, 10_000);
+        assert_eq!(list, allowlist);
+    }
+
+    /// `expiry_updated` carries `(old, new)`.
+    #[test]
+    fn test_expiry_updated_carries_previous_value() {
+        let env = Env::default();
+        let (client, _, vault_id, _) = setup(&env);
+        env.mock_all_auths();
+
+        client.set_expiry(&20_000_u32);
+        let events = vault_events_named(&env, &vault_id, "expiry_updated");
+        assert_eq!(events.len(), 1);
+        assert_eq!(<(u32, u32)>::from_val(&env, &events[0].1), (10_000, 20_000));
+
+        client.set_expiry(&30_000_u32);
+        let events = vault_events_named(&env, &vault_id, "expiry_updated");
+        assert_eq!(<(u32, u32)>::from_val(&env, &events[0].1), (20_000, 30_000));
+    }
+
+    /// `agent_key_rotated` carries `(old_pk, new_pk)`.
+    #[test]
+    fn test_agent_key_rotated_carries_previous_key() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let (_, first_pk) = gen_keypair(&env);
+        let vault_id = env.register(
+            AgentVault,
+            (
+                admin,
+                first_pk.clone(),
+                5_000_000_i128,
+                Map::<Address, i128>::new(&env),
+                10_000_u32,
+                0_i128,
+            ),
+        );
+        let client = AgentVaultClient::new(&env, &vault_id);
+        env.mock_all_auths();
+
+        let second_pk = fixed_hash(&env, 0x22);
+        client.set_agent_pubkey(&second_pk);
+        let events = vault_events_named(&env, &vault_id, "agent_key_rotated");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            <(BytesN<32>, BytesN<32>)>::from_val(&env, &events[0].1),
+            (first_pk, second_pk.clone())
+        );
+
+        let third_pk = fixed_hash(&env, 0x33);
+        client.set_agent_pubkey(&third_pk);
+        let events = vault_events_named(&env, &vault_id, "agent_key_rotated");
+        assert_eq!(
+            <(BytesN<32>, BytesN<32>)>::from_val(&env, &events[0].1),
+            (second_pk, third_pk)
+        );
+    }
+
+    /// `allowlist_updated` carries the previous sub-cap on add, update and remove.
+    #[test]
+    fn test_allowlist_updated_carries_previous_sub_cap() {
+        let env = Env::default();
+        let (client, _, vault_id, existing) = setup(&env);
+        env.mock_all_auths();
+        let new_payee = Address::generate(&env);
+
+        // First listing: no previous value.
+        client.add_to_allowlist(&new_payee, &1_000_000_i128);
+        let events = vault_events_named(&env, &vault_id, "allowlist_updated");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            <(Option<i128>, Option<i128>)>::from_val(&env, &events[0].1),
+            (None, Some(1_000_000))
+        );
+
+        // Upsert: previous sub-cap reported.
+        client.add_to_allowlist(&new_payee, &3_000_000_i128);
+        let events = vault_events_named(&env, &vault_id, "allowlist_updated");
+        assert_eq!(
+            <(Option<i128>, Option<i128>)>::from_val(&env, &events[0].1),
+            (Some(1_000_000), Some(3_000_000))
+        );
+
+        // A payee listed at deploy time reports its deploy-time sub-cap.
+        client.remove_from_allowlist(&existing);
+        let events = vault_events_named(&env, &vault_id, "allowlist_updated");
+        assert_eq!(
+            <(Option<i128>, Option<i128>)>::from_val(&env, &events[0].1),
+            (Some(5_000_000), None)
+        );
+    }
+
+    /// Removing a payee that is not listed is a no-op: no event, no state change.
+    #[test]
+    fn test_redundant_remove_from_allowlist_emits_nothing() {
+        let env = Env::default();
+        let (client, _, vault_id, existing) = setup(&env);
+        env.mock_all_auths();
+
+        let stranger = Address::generate(&env);
+        client.remove_from_allowlist(&stranger);
+        assert_eq!(
+            vault_events_named(&env, &vault_id, "allowlist_updated").len(),
+            0,
+            "removing an unlisted payee must not emit allowlist_updated"
+        );
+
+        // The existing listing is untouched, and removing it twice only emits once.
+        client.remove_from_allowlist(&existing);
+        assert_eq!(vault_events_named(&env, &vault_id, "allowlist_updated").len(), 1);
+        client.remove_from_allowlist(&existing);
+        assert_eq!(vault_events_named(&env, &vault_id, "allowlist_updated").len(), 0);
+    }
+
+    /// Freeze/unfreeze emit only on a real state change.
+    #[test]
+    fn test_redundant_freeze_and_unfreeze_emit_nothing() {
+        let env = Env::default();
+        let (client, _, vault_id, _) = setup(&env);
+        env.mock_all_auths();
+
+        // Not frozen yet: unfreeze is a no-op.
+        client.unfreeze();
+        assert_eq!(vault_events_named(&env, &vault_id, "vault_unfrozen").len(), 0);
+
+        client.freeze();
+        assert_eq!(vault_events_named(&env, &vault_id, "vault_frozen").len(), 1);
+
+        // Already frozen: a second freeze is a no-op, and the vault stays frozen.
+        client.freeze();
+        assert_eq!(vault_events_named(&env, &vault_id, "vault_frozen").len(), 0);
+
+        client.unfreeze();
+        assert_eq!(vault_events_named(&env, &vault_id, "vault_unfrozen").len(), 1);
+
+        client.unfreeze();
+        assert_eq!(vault_events_named(&env, &vault_id, "vault_unfrozen").len(), 0);
     }
 
     /// A SAC approve() auth context (from, spender, amount, expiration_ledger).
