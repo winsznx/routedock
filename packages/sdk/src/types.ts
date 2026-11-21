@@ -264,6 +264,12 @@ export interface PreflightComplianceFlags {
   endpoint_sunset_at?: string
 }
 
+/** Options accepted by client.preflight(url, options). */
+export interface UrlPreflightOptions {
+  /** Out-of-band manifest payee for this call; overrides the client's default anchor. */
+  expectedPayee?: string
+}
+
 /** Result returned by client.preflight(url) — manifest compatibility check with no money movement */
 export interface UrlPreflightResult {
   /** Payment modes supported by this provider */
@@ -330,6 +336,12 @@ export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
 
 /** Options accepted by client.openSession() */
 export interface SessionOptions {
+  /**
+   * Out-of-band manifest payee for this session (e.g. a registry record's payee).
+   * Overrides RouteDockClientConfig.expectedPayee for this call only. A mismatch
+   * rejects before opening a channel or signing a voucher, including cache hits.
+   */
+  expectedPayee?: string
   /**
    * Session payment mode. Defaults to 'mpp-session' (SSE-style one HTTP
    * request per voucher). Set to 'mpp-session-ws' to negotiate the channel

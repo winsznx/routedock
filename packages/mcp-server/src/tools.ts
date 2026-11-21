@@ -45,6 +45,11 @@ export const TOOLS: Tool[] = [
           description:
             'Optional preferred payment mode. If not specified, the best mode is selected automatically. mpp-session-ws opens a WebSocket-transport MPP session instead of the default HTTP/SSE variant.',
         },
+        expected_payee: {
+          type: 'string',
+          description:
+            'Optional trusted Stellar payee (G...). Pass expected_payee returned by list_providers for a verified provider to reject a substituted manifest before paying.',
+        },
       },
       required: ['url', 'max_amount'],
     },
@@ -65,6 +70,11 @@ export const TOOLS: Tool[] = [
           type: 'string',
           description:
             "Amount in USDC you intend the channel to be funded with (e.g., \"1.0\"). RouteDock channels are pre-deployed and funded out-of-band before the agent runs — this is checked against the provider's advertised min_deposit as a safety guard, it does not itself move funds.",
+        },
+        expected_payee: {
+          type: 'string',
+          description:
+            'Optional trusted Stellar payee (G...). Pass expected_payee returned by list_providers for a verified provider to reject a substituted manifest before opening the session.',
         },
       },
       required: ['url'],

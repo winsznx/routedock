@@ -140,6 +140,39 @@ const store: SpendStore = {
 }
 ```
 
+### Discovering providers with one shared spend cap
+
+Keep one `RouteDockClient` when discovering multiple providers so all payments
+share its daily accumulator. Bind each call to the payee from a trusted registry
+record:
+
+```ts
+import { ProviderRegistry } from '@routedock/routedock/client'
+
+const registry = new ProviderRegistry({
+  onChain: {
+    horizonUrl: 'https://horizon-testnet.stellar.org',
+    knownAccounts: trustedProviderAccounts,
+  },
+})
+
+for (const record of await registry.listProviders()) {
+  const options = registry.paymentOptions(record)
+  const endpoint = new URL('/price', record.base_url).href
+  await client.preflight(endpoint, options)
+  await client.pay(endpoint, options)
+}
+```
+
+The same `expectedPayee` option is accepted by `estimateCost()` and
+`openSession()`. It replaces the constructor's `expectedPayee` for that call
+only; omitting it uses the constructor default. The anchor is checked on both
+newly fetched and cached manifests, so a manifest warmed by an unbound call
+cannot bypass a later bound payment. A mismatch throws `RouteDockSignatureError`
+before a payment or voucher is signed. `fetchProviderManifest(record)` validates
+the registry binding for discovery; retain `paymentOptions(record)` on the
+subsequent payment rather than relying on that earlier fetch.
+
 ## Provider Usage
 
 ```ts

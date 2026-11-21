@@ -22,7 +22,7 @@ import { usdcToStroops } from '@routedock/routedock'
 // Horizon URL and USDC issuer tables instead of its own next to the providers
 // and the SDK.
 import { HORIZON_URLS, USDC_ISSUERS } from '@routedock/routedock/network'
-import { Keypair, Horizon } from '@stellar/stellar-sdk'
+import { Keypair, Horizon, StrKey } from '@stellar/stellar-sdk'
 import { MAX_PROVIDER_ROWS, MAX_STREAM_MESSAGES } from './tools.js'
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,7 @@ export interface ProviderRow {
   modes: string[]
   tags: string[]
   verified?: boolean | null
+  payee?: string
   registered_at?: string
   asset?: string
   assets?: AssetConfig[]
@@ -131,6 +132,11 @@ export interface PayForDataArgs {
   url: string
   max_amount: string
   preferred_mode?: PaymentMode
+  expected_payee?: string
+}
+
+function isPayee(value: unknown): value is string {
+  return typeof value === 'string' && StrKey.isValidEd25519PublicKey(value)
 }
 
 /** Parse a decimal USDC string to stroops, or null when it is not one. */
@@ -159,7 +165,7 @@ export async function handlePayForData(
   args: PayForDataArgs,
   deps: HandlerDeps,
 ): Promise<ToolResult> {
-  const { url, max_amount, preferred_mode } = args
+  const { url, max_amount, preferred_mode, expected_payee } = args
   const { client } = deps
 
   const maxStroops = parseUsdc(max_amount)
@@ -170,8 +176,15 @@ export async function handlePayForData(
     )
   }
 
-  const modeOptions = preferred_mode
-    ? { forceMode: preferred_mode as PaymentMode }
+  if (expected_payee !== undefined && !isPayee(expected_payee)) {
+    return err('expected_payee must be a Stellar account address (G...) from a trusted registry record')
+  }
+
+  const modeOptions = preferred_mode || expected_payee !== undefined
+    ? {
+        ...(preferred_mode && { forceMode: preferred_mode }),
+        ...(expected_payee !== undefined && { expectedPayee: expected_payee }),
+      }
     : undefined
 
   const estimate = await client.estimateCost(url, modeOptions)
@@ -206,6 +219,7 @@ export async function handlePayForData(
 export interface OpenSessionArgs {
   url: string
   initial_deposit?: string
+  expected_payee?: string
 }
 
 /** The manifest fields open_session reads. The JSON is unverified, so every
@@ -290,11 +304,15 @@ export async function handleOpenSession(
   deps: HandlerDeps,
   commitmentSecret: string | undefined,
 ): Promise<ToolResult> {
-  const { url, initial_deposit } = args
+  const { url, initial_deposit, expected_payee } = args
   const { client, openSessions, fetchManifest } = deps
 
   if (!commitmentSecret) {
     return err('COMMITMENT_SECRET environment variable is required for session mode')
+  }
+
+  if (expected_payee !== undefined && !isPayee(expected_payee)) {
+    return err('expected_payee must be a Stellar account address (G...) from a trusted registry record')
   }
 
   const parsed = new URL(url)
@@ -336,7 +354,10 @@ export async function handleOpenSession(
     endpointUrl = resolution.url
   }
 
-  const session = await client.openSession(endpointUrl)
+  const session = await client.openSession(
+    endpointUrl,
+    expected_payee !== undefined ? { expectedPayee: expected_payee } : undefined,
+  )
   openSessions.set(session.channelId, session)
 
   return ok({
@@ -602,12 +623,12 @@ export interface ListProvidersArgs {
 
 /**
  * The registry columns this tool surfaces.  Never `select('*')`: the full
- * `manifest` JSONB is far larger than anything the model needs, and `id` and
- * `payee` are not part of the tool's contract.  `providers` has no `asset`
+ * `manifest` JSONB is far larger than anything the model needs. The public
+ * `payee` supplies a per-call trust anchor for verified records. `providers` has no `asset`
  * column, so the accepted assets are projected out of the manifest.
  */
 const PROVIDER_COLUMNS =
-  'name, description, base_url, modes, tags, network, verified, registered_at, ' +
+  'name, description, base_url, modes, tags, network, verified, registered_at, payee, ' +
   'manifest->asset, manifest->assets'
 
 /**
@@ -728,6 +749,7 @@ export async function handleListProviders(
         modes: p.modes,
         tags: p.tags,
         verified: p.verified ?? false,
+        ...(p.verified === true && isPayee(p.payee) && { expected_payee: p.payee }),
         assets,
         // The primary asset, kept alongside `assets` because single-asset
         // providers — the common case — only advertise one.

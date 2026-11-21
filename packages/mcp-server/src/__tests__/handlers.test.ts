@@ -301,6 +301,46 @@ describe('handlePayForData', () => {
     )
     assert.deepEqual(capturedModeOptions, { forceMode: 'mpp-charge' })
   })
+
+  it('passes a registry expected_payee to both estimateCost and pay', async () => {
+    const expectedPayee = Keypair.random().publicKey()
+    let estimateOptions: unknown
+    let payOptions: unknown
+    const deps = baseDeps({
+      client: makeClient({
+        estimateCost: async (_url, options) => {
+          estimateOptions = options
+          return estimate('0.001')
+        },
+        pay: async (_url, options) => {
+          payOptions = options
+          return { mode: 'mpp-charge', amount: '0.001', txHash: 'TXHASH', timestamp: Date.now(), data: {} }
+        },
+      }),
+    })
+
+    await handlePayForData({
+      url: 'https://p.example.com/data', max_amount: '1.00',
+      preferred_mode: 'mpp-charge', expected_payee: expectedPayee,
+    }, deps)
+
+    assert.deepEqual(estimateOptions, { forceMode: 'mpp-charge', expectedPayee })
+    assert.deepEqual(payOptions, estimateOptions)
+  })
+
+  it('rejects a malformed expected_payee before estimating or paying', async () => {
+    const deps = baseDeps({ client: makeClient({
+      estimateCost: async () => { assert.fail('invalid anchor must not reach estimateCost') },
+      pay: async () => { assert.fail('invalid anchor must not reach pay') },
+    }) })
+
+    const result = await handlePayForData({
+      url: 'https://p.example.com/data', max_amount: '1.00', expected_payee: '',
+    }, deps)
+
+    assert.equal(result.isError, true)
+    assert.match(String(payload(result).error), /expected_payee must be a Stellar account address/)
+  })
   // -------------------------------------------------------------------------
   // max_amount validation (issue #316). MCP never validates arguments against
   // inputSchema, so a missing or non-numeric max_amount used to compare as NaN
@@ -429,6 +469,38 @@ describe('handleOpenSession', () => {
     assert.equal(body.success, true)
     assert.equal(body.channel_id, 'CHAN1')
     assert.ok(sessions.has('CHAN1'))
+  })
+
+  it('passes expected_payee to the SDK session opener', async () => {
+    const expectedPayee = Keypair.random().publicKey()
+    const defaultClient = makeClient()
+    let options: unknown
+    const deps = baseDeps({ client: makeClient({
+      openSession: async (url, passedOptions) => {
+        options = passedOptions
+        return defaultClient.openSession(url)
+      },
+    }) })
+
+    await handleOpenSession({
+      url: 'https://p.example.com/stream', expected_payee: expectedPayee,
+    }, deps, 'secret123')
+
+    assert.deepEqual(options, { expectedPayee })
+  })
+
+  it('rejects a malformed session anchor before fetching a manifest or opening a channel', async () => {
+    const deps = baseDeps({
+      fetchManifest: async () => { assert.fail('invalid anchor must not fetch a manifest') },
+      client: makeClient({ openSession: async () => { assert.fail('invalid anchor must not open a session') } }),
+    })
+
+    const result = await handleOpenSession({
+      url: 'https://p.example.com', expected_payee: 'not-a-payee',
+    }, deps, 'secret123')
+
+    assert.equal(result.isError, true)
+    assert.match(String(payload(result).error), /expected_payee must be a Stellar account address/)
   })
 
   it('returns isError when initial_deposit is below min_deposit', async () => {
@@ -1116,6 +1188,24 @@ describe('handleListProviders', () => {
     assert.equal(body.success, true)
     assert.equal(body.count, 1)
     assert.equal(body.providers[0].name, 'ProvA')
+  })
+
+  it('returns expected_payee only for a verified registry payee', async () => {
+    const expectedPayee = Keypair.random().publicKey()
+    const base = {
+      name: 'Provider', description: '', network: 'testnet', modes: ['x402'],
+      tags: [], base_url: 'https://p.example.com', payee: expectedPayee,
+    }
+    const result = await handleListProviders({}, baseDeps({ supabase: makeSupabase([
+      { ...base, verified: true },
+      { ...base, verified: false },
+      { ...base, verified: true, payee: 'not-a-payee' },
+    ]) }))
+    const providers = payload(result).providers as Array<Record<string, unknown>>
+
+    assert.equal(providers[0]!.expected_payee, expectedPayee)
+    assert.ok(!Object.hasOwn(providers[1]!, 'expected_payee'))
+    assert.ok(!Object.hasOwn(providers[2]!, 'expected_payee'))
   })
 
   it('returns isError when supabase reports an error', async () => {
