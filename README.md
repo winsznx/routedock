@@ -81,11 +81,33 @@ The `agent-vault` contract emits structured events that indexers and Stellar Exp
 
 | Event | Topics | Data | When |
 |---|---|---|---|
+| `vault_initialized` | `(Symbol, admin: Address)` | `(agent_pk: BytesN<32>, daily_cap: i128, lifetime_cap: i128, expiry_ledger: u32, allowlist: Map<Address, i128>)` | Once, from `__constructor` at deploy. The vault's starting policy |
 | `payment_authorized` | `(Symbol, payer: Address, payee: Address)` | `(amount: i128, asset: Address, daily_cumulative: i128)` | Each successful auth pass in `__check_auth` |
 | `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | After channel close, the provider calls `record_session_settlement`, authorized by its own allowlisted payee key |
+| `cap_updated` | `(Symbol, scope: Symbol)` where `scope` is `daily` or `lifetime` | `(old_cap: i128, new_cap: i128)` | `set_daily_cap` / `set_lifetime_cap` |
+| `allowlist_updated` | `(Symbol, payee: Address)` | `(previous_sub_cap: Option<i128>, new_sub_cap: Option<i128>)` | `add_to_allowlist` (`new_sub_cap` is `Some`; `previous_sub_cap` is `None` for a first listing) or `remove_from_allowlist` (`new_sub_cap` is `None`). Removing a payee that is not listed emits nothing |
+| `expiry_updated` | `(Symbol, admin: Address)` | `(old_expiry: u32, new_expiry: u32)` | `set_expiry` |
+| `agent_key_rotated` | `(Symbol)` | `(old_pk: BytesN<32>, new_pk: BytesN<32>)` | `set_agent_pubkey` |
+| `admin_transfer_requested` | `(Symbol, admin: Address, new_admin: Address)` | `()` | `transfer_admin` |
+| `admin_changed` | `(Symbol, old_admin: Address, new_admin: Address)` | `()` | `accept_admin` |
+| `vault_frozen` | `(Symbol, admin: Address)` | `()` | `freeze`, only when the vault was not already frozen |
+| `vault_unfrozen` | `(Symbol, admin: Address)` | `()` | `unfreeze`, only when the vault was frozen |
 | `upgrade_proposed` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin schedules a Wasm change and starts the notice period |
 | `upgrade_cancelled` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin cancels a scheduled Wasm change |
 | `upgraded` | `(Symbol)` | `(new_wasm_hash: BytesN<32>)` | A ready Wasm proposal executes successfully |
+
+> **Breaking change for event consumers.** `expiry_updated` data was `new_expiry: u32`; it is now `(old_expiry, new_expiry)`. `agent_key_rotated` data was `new_pk`; it is now `(old_pk, new_pk)`. `allowlist_updated` data was `Option<i128>` (the new sub-cap, or `None` on removal); it is now `(previous_sub_cap, new_sub_cap)`. `vault_frozen` and `vault_unfrozen` gained an `admin` topic. `vault_initialized` is new, and vaults deployed before it existed never emitted it.
+
+### Reconstructing vault state from events
+
+Replay the vault's events in ledger order:
+
+1. Start from `vault_initialized`: admin, agent key, daily cap, lifetime cap, expiry and the full deploy-time allowlist.
+2. Apply `cap_updated`, `allowlist_updated`, `expiry_updated`, `agent_key_rotated` and `admin_changed` as they arrive. Each carries the previous value, so a gap in the stream is detectable: the `old`/`previous` value must equal what you hold.
+3. Toggle frozen state on `vault_frozen` / `vault_unfrozen`. These only fire on a real change, so every event is a transition.
+4. `admin_transfer_requested` is a pending request, not a change of admin; the admin only changes on `admin_changed`.
+
+`payment_authorized` reflects spend the vault enforced; `session_settled` is asserted by the payee. A vault deployed before `vault_initialized` existed has no starting-state event, so read its storage (or its deploy transaction arguments) for the initial configuration.
 
 ```bash
 stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
