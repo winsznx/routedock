@@ -37,7 +37,7 @@ function provider(payee = Keypair.random()) {
 }
 
 function serve(t: TestContext, providers: ReturnType<typeof provider>[]) {
-  const manifests = new Map(providers.map((p) => [`${p.baseUrl}/.well-known/routedock.json`, p.manifest] as const))
+  const manifests = new Map<string, RouteDockManifest>(providers.map((p) => [`${p.baseUrl}/.well-known/routedock.json`, p.manifest] as const))
   return t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     const manifest = manifests.get(url)
