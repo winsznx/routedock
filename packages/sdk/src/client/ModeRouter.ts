@@ -279,6 +279,14 @@ export interface ModeSelectOptions {
   /** Optional maximum acceptable per-request amount for cost-based selection. */
   budget_per_request?: string
   /**
+   * Maximum amount for a discrete pay() call, as a decimal string with at
+   * most 7 decimal places. The actual payment manifest and its unsigned
+   * challenge are checked before spend is reserved or a payment is signed.
+   * Throws RouteDockPolicyRejectError('max_amount_exceeded') when over the
+   * ceiling, or 'max_amount_invalid' when the ceiling is malformed.
+   */
+  maxAmount?: string
+  /**
    * Override mode selection and use this specific mode.
    * Throws RouteDockNoSupportedModeError if the provider does not support it.
    */
