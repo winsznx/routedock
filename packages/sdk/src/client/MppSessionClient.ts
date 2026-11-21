@@ -373,6 +373,8 @@ export class MppSessionClient {
       }
     }
 
+    const activeSocketTeardowns = new Set<() => void>()
+
     // Bound before the handle literal so the transport can be selected inside
     // the SessionHandle (whose `this` is the handle, not this client).
     const streamWs = (
@@ -381,8 +383,17 @@ export class MppSessionClient {
       createCredential: GuardedCredentialCreator,
       onSigned: () => void,
       request: PreparedRequest,
+      assertOpen: () => void,
     ): AsyncIterable<unknown> =>
-      this.streamWebSocket(u, m, createCredential, onSigned, request)
+      this.streamWebSocket(
+        u,
+        m,
+        createCredential,
+        onSigned,
+        request,
+        assertOpen,
+        activeSocketTeardowns,
+      )
 
     const mppx = Mppx.create({
       polyfill: false,
@@ -417,6 +428,14 @@ export class MppSessionClient {
     const listeners = new Map<SessionEvent, Set<SessionListener>>()
     let timeoutId: ReturnType<typeof setTimeout> | undefined
     let closed = false
+    let closePromise: Promise<SessionCloseResult> | null = null
+
+    const closeActiveSockets = (): void => {
+      for (const teardown of activeSocketTeardowns) {
+        teardown()
+      }
+      activeSocketTeardowns.clear()
+    }
 
     const emit = <E extends SessionEvent>(
       event: E,
@@ -475,6 +494,22 @@ export class MppSessionClient {
       },
 
       async *stream(options?: StreamOptions): AsyncIterable<unknown> {
+        // close() flips this guard, whether the caller invoked it or the
+        // maxDurationMs lifetime guard fired it. Once set, the stream must stop
+        // issuing vouchers over either transport: a value signed after close()
+        // would sit above the cumulative close() is committing on-chain. Throws
+        // RouteDockChannelStateError('session closed') so the consumer can tell
+        // why the stream ended.
+        const assertOpen = (): void => {
+          if (closed) {
+            throw new RouteDockChannelStateError('session closed')
+          }
+        }
+
+        // Refuse immediately before buffering the request body, checking spend,
+        // or probing the provider — applies to both mpp-session and mpp-session-ws.
+        assertOpen()
+
         // Buffer the caller's request once per stream so every voucher request
         // and every retry sends the same method/headers/body.
         const prepared = await prepareRequest(options?.request)
@@ -491,7 +526,9 @@ export class MppSessionClient {
           // WebSocket transport: one connection per stream() call, with one
           // voucher negotiated over HTTP before the upgrade. Each signed
           // connection counts as one voucher issued.
+          assertOpen()
           await checkSpend()
+          assertOpen()
           const onSigned = (): void => {
             vouchersIssued++
           }
@@ -501,6 +538,7 @@ export class MppSessionClient {
             createGuardedCredential,
             onSigned,
             prepared,
+            assertOpen,
           )) {
             yield item
           }
@@ -508,19 +546,6 @@ export class MppSessionClient {
         }
 
         const concurrency = Math.max(1, options?.concurrency ?? 1)
-
-        // close() flips this guard, whether the caller invoked it or the
-        // maxDurationMs lifetime guard fired it. Once set, the stream must stop
-        // issuing vouchers: every doFetch() signs a new cumulative via
-        // mppx.fetch, and a value signed after close() would sit above the
-        // cumulative close() is committing on-chain. Throws
-        // RouteDockChannelStateError('session closed') so the consumer can tell
-        // why the stream ended.
-        const assertOpen = (): void => {
-          if (closed) {
-            throw new RouteDockChannelStateError('session closed')
-          }
-        }
 
         const abortController = new AbortController()
 
@@ -632,126 +657,146 @@ export class MppSessionClient {
         }
       },
 
-      async close(): Promise<SessionCloseResult> {
-        // Manual close — cancel the lifetime guard so it can't fire later.
+      close(): Promise<SessionCloseResult> {
+        // Cancel the lifetime guard and tear down any open WebSockets right away
+        // so no new vouchers are signed while the settlement request is running.
         clearSessionTimer()
         closed = true
+        closeActiveSockets()
 
-        const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
-          await import('@stellar/stellar-sdk')
-        const rpcUrl = network === 'testnet'
-          ? 'https://soroban-testnet.stellar.org'
-          : 'https://soroban.stellar.org'
-        const server = new rpcMod.Server(rpcUrl)
-        const contract = new Contract(channelFactory)
-        const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+        // Idempotent close: return the in-flight or already-resolved settlement
+        // promise so duplicate, concurrent, or post-auto-close calls never send
+        // a second DELETE against an already-settled channel (#726).
+        if (closePromise) return closePromise
 
-        const account = await withRetry(async () => {
-          try {
-            return await server.getAccount(agentPublicKey)
-          } catch (err) {
-            throw wrapFetchError(err, 'Horizon getAccount')
+        const runClose = async (): Promise<SessionCloseResult> => {
+          const { rpc: rpcMod, Contract, nativeToScVal, TransactionBuilder, BASE_FEE } =
+            await import('@stellar/stellar-sdk')
+          const rpcUrl = network === 'testnet'
+            ? 'https://soroban-testnet.stellar.org'
+            : 'https://soroban.stellar.org'
+          const server = new rpcMod.Server(rpcUrl)
+          const contract = new Contract(channelFactory)
+          const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+
+          const account = await withRetry(async () => {
+            try {
+              return await server.getAccount(agentPublicKey)
+            } catch (err) {
+              throw wrapFetchError(err, 'Horizon getAccount')
+            }
+          }, retryPolicy)
+
+          const simResult = await withRetry(async () => {
+            try {
+              const simTx = new TransactionBuilder(account, {
+                fee: BASE_FEE,
+                networkPassphrase: passphrase,
+              })
+                .addOperation(
+                  contract.call(
+                    'prepare_commitment',
+                    nativeToScVal(currentCumulative, { type: 'i128' }),
+                  ),
+                )
+                .setTimeout(30)
+                .build()
+              return await server.simulateTransaction(simTx)
+            } catch (err) {
+              throw wrapFetchError(err, 'prepare_commitment RPC')
+            }
+          }, retryPolicy)
+
+          if (rpcMod.Api.isSimulationError(simResult)) {
+            throw new RouteDockChannelStateError(
+              `prepare_commitment simulation failed: ${simResult.error}`,
+            )
           }
-        }, retryPolicy)
 
-        const simResult = await withRetry(async () => {
+          const commitmentBytes = (
+            simResult as { result?: { retval?: { bytes: () => Buffer } } }
+          ).result?.retval?.bytes()
+          if (!commitmentBytes) {
+            throw new RouteDockChannelStateError('prepare_commitment returned no bytes')
+          }
+
+          let signature: Buffer
           try {
-            const simTx = new TransactionBuilder(account, {
-              fee: BASE_FEE,
-              networkPassphrase: passphrase,
+            signature = commitmentKey.sign(commitmentBytes)
+          } catch (err) {
+            throw new RouteDockSignatureError('Channel close commitment signing failed', {
+              cause: err,
             })
-              .addOperation(
-                contract.call(
-                  'prepare_commitment',
-                  nativeToScVal(currentCumulative, { type: 'i128' }),
-                ),
-              )
-              .setTimeout(30)
-              .build()
-            return await server.simulateTransaction(simTx)
-          } catch (err) {
-            throw wrapFetchError(err, 'prepare_commitment RPC')
-          }
-        }, retryPolicy)
-
-        if (rpcMod.Api.isSimulationError(simResult)) {
-          throw new RouteDockChannelStateError(
-            `prepare_commitment simulation failed: ${simResult.error}`,
-          )
-        }
-
-        const commitmentBytes = (
-          simResult as { result?: { retval?: { bytes: () => Buffer } } }
-        ).result?.retval?.bytes()
-        if (!commitmentBytes) {
-          throw new RouteDockChannelStateError('prepare_commitment returned no bytes')
-        }
-
-        let signature: Buffer
-        try {
-          signature = commitmentKey.sign(commitmentBytes)
-        } catch (err) {
-          throw new RouteDockSignatureError('Channel close commitment signing failed', {
-            cause: err,
-          })
-        }
-
-        const closeData = await withRetry(async () => {
-          let closeResp: Response
-          try {
-            closeResp = await fetch(url, {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                amount: currentCumulative.toString(),
-                signature: bytesToHex(signature),
-              }),
-            })
-          } catch (err) {
-            throw wrapFetchError(err, 'Channel close request')
           }
 
-          if (!closeResp.ok) {
-            if (
-              closeResp.status >= 500 ||
-              closeResp.status === 429 ||
-              closeResp.status === 503
-            ) {
-              throw httpStatusToError(
+          const closeData = await withRetry(async () => {
+            let closeResp: Response
+            try {
+              closeResp = await fetch(url, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  amount: currentCumulative.toString(),
+                  signature: bytesToHex(signature),
+                }),
+              })
+            } catch (err) {
+              throw wrapFetchError(err, 'Channel close request')
+            }
+
+            if (!closeResp.ok) {
+              if (
+                closeResp.status >= 500 ||
+                closeResp.status === 429 ||
+                closeResp.status === 503
+              ) {
+                throw httpStatusToError(
+                  `Channel close failed: HTTP ${closeResp.status}`,
+                  closeResp.status,
+                  closeResp,
+                )
+              }
+              throw new RouteDockChannelStateError(
                 `Channel close failed: HTTP ${closeResp.status}`,
-                closeResp.status,
-                closeResp,
               )
             }
-            throw new RouteDockChannelStateError(
-              `Channel close failed: HTTP ${closeResp.status}`,
-            )
-          }
 
-          let body: { closeTxHash?: string }
-          try {
-            body = (await closeResp.json()) as { closeTxHash?: string }
-          } catch (cause) {
-            throw new RouteDockChannelStateError(
-              `Channel close response was not valid JSON (HTTP ${closeResp.status})`,
-              { cause },
-            )
-          }
-          const closeTxHash = body.closeTxHash ?? null
-          if (!closeTxHash) {
-            throw new RouteDockChannelStateError(
-              'Channel close response missing closeTxHash',
-            )
-          }
-          return { closeTxHash, body }
-        }, retryPolicy)
+            let body: { closeTxHash?: string }
+            try {
+              body = (await closeResp.json()) as { closeTxHash?: string }
+            } catch (cause) {
+              throw new RouteDockChannelStateError(
+                `Channel close response was not valid JSON (HTTP ${closeResp.status})`,
+                { cause },
+              )
+            }
+            const closeTxHash = body.closeTxHash ?? null
+            if (!closeTxHash) {
+              throw new RouteDockChannelStateError(
+                'Channel close response missing closeTxHash',
+              )
+            }
+            return { closeTxHash, body }
+          }, retryPolicy)
 
-        const totalPaid = (Number(currentCumulative) / 1e7).toFixed(7)
-        return {
-          closeTxHash: closeData.closeTxHash,
-          totalPaid,
-          vouchersIssued,
+          const totalPaid = (Number(currentCumulative) / 1e7).toFixed(7)
+          return {
+            closeTxHash: closeData.closeTxHash,
+            totalPaid,
+            vouchersIssued,
+          }
         }
+
+        const pending = runClose()
+        closePromise = pending
+        // Clear on failure so callers can retry a failed close; retain on
+        // success so later calls resolve to the same SessionCloseResult.
+        pending.catch(() => {
+          if (closePromise === pending) {
+            closePromise = null
+          }
+        })
+        return pending
       },
 
       /**
@@ -981,7 +1026,11 @@ export class MppSessionClient {
     createCredential: GuardedCredentialCreator,
     onSigned: (() => void) | undefined,
     request: PreparedRequest,
+    assertOpen?: () => void,
+    activeSocketTeardowns?: Set<() => void>,
   ): AsyncIterable<unknown> {
+    assertOpen?.()
+
     // ── 1 + 2: channel establishment + voucher negotiation over HTTP ────────
     // The caller's method/body apply to this probe only; the WebSocket upgrade
     // below is always a GET handshake.
@@ -1005,6 +1054,8 @@ export class MppSessionClient {
       )
     }
 
+    assertOpen?.()
+
     let credential: string
     try {
       // mppx.createCredential does not run onChallenge, so the WebSocket path
@@ -1017,6 +1068,8 @@ export class MppSessionClient {
     } catch (err) {
       throw wrapMppError(err, 'Voucher credential')
     }
+
+    assertOpen?.()
 
     // ── 3: upgrade the HTTP connection to WebSocket ─────────────────────────
     const wsUrl = url.replace(/^http/, 'ws')
@@ -1066,6 +1119,21 @@ export class MppSessionClient {
       },
     )
 
+    let socketClosed = false
+    const closeSocket = (reason: string): void => {
+      if (socketClosed) return
+      socketClosed = true
+      if (socket.readyState === WS_CONNECTING || socket.readyState === WS_OPEN) {
+        socket.close(1000, reason)
+      }
+    }
+    const teardownOnSessionClose = (): void => {
+      closeSocket('session closed')
+      queue.push({ type: 'close', code: 1000, reason: 'session closed' })
+      drain()
+    }
+    activeSocketTeardowns?.add(teardownOnSessionClose)
+
     try {
       // Await the upgrade: 'open' means the provider accepted the signed
       // voucher and switched protocols; error/close before open is a rejected
@@ -1079,6 +1147,7 @@ export class MppSessionClient {
           )
         }
         if (event.type === 'close') {
+          assertOpen?.()
           throw new RouteDockChannelStateError(
             `WebSocket upgrade failed: server closed the connection before upgrading (code ${event.code})`,
           )
@@ -1113,11 +1182,10 @@ export class MppSessionClient {
         )
       }
     } finally {
+      activeSocketTeardowns?.delete(teardownOnSessionClose)
       // Consumer stopped iterating or the stream ended — tear down the socket
       // so the provider sees a clean close and can flag/settle the channel.
-      if (socket.readyState === WS_CONNECTING || socket.readyState === WS_OPEN) {
-        socket.close(1000, 'stream ended')
-      }
+      closeSocket('stream ended')
     }
   }
 }
