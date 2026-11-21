@@ -90,6 +90,7 @@ export class X402Client {
     url: string,
     manifest: RouteDockManifest,
     request?: PaymentRequest,
+    maxAmount?: string,
   ): Promise<PaymentResult> {
     const pricing = manifest.pricing.x402
     if (!pricing) {
@@ -104,6 +105,7 @@ export class X402Client {
     // Buffer once, outside withRetry: the probe, the paid request and any
     // retry must all send the same method/headers/body.
     const prepared = await prepareRequest(request)
+    const policy = maxAmount === undefined ? undefined : { maxAmount }
 
     // Phase 1: unpaid probe. This can retry freely — no payment exists yet.
     const probe = await withRetry(async (): Promise<ProbeOutcome> => {
@@ -172,11 +174,11 @@ export class X402Client {
 
     // Phase 2: bind the unsigned 402 to the signed manifest BEFORE signing.
     // A mismatched challenge must never reach createPaymentPayload.
-    const allowed = filterX402Accepts(paymentRequired.accepts, manifest, caip2, pricing.amount)
+    const allowed = filterX402Accepts(paymentRequired.accepts, manifest, caip2, pricing.amount, policy)
     if (allowed.length === 0) {
       // `accepts` is non-empty here, so accepts[0] — the entry the scheme would
       // have signed — failed its own checks. That rejection is the report.
-      throw checkX402Accept(firstAccept, manifest, caip2, pricing.amount)
+      throw checkX402Accept(firstAccept, manifest, caip2, pricing.amount, policy)
     }
 
     // Optional pre-sign audit. Runs once, before signing; never on retries.

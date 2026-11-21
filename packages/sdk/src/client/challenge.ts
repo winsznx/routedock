@@ -18,6 +18,12 @@ import { resolvePayee } from '../internal/payee.js'
 
 export type Caip2Network = 'stellar:testnet' | 'stellar:pubnet'
 
+/** Additional caller constraints applied before a challenge can be signed. */
+export interface ChallengePolicyOptions {
+  /** Decimal ceiling from the current pay() call. */
+  maxAmount?: string
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -27,25 +33,35 @@ function isPositiveIntegerString(value: unknown): value is string {
   return typeof value === 'string' && /^[1-9]\d*$/.test(value)
 }
 
-/**
- * Validate a base-unit amount against the manifest price.
- * Returns a rejection when the value is malformed or exceeds the manifest.
- */
+/** Validate a base-unit amount against both the manifest and caller ceiling. */
 function checkAmount(
   amount: unknown,
-  maxAmount: string,
+  manifestAmount: string,
+  maxAmount?: string,
 ): RouteDockPolicyRejectError | null {
   if (!isPositiveIntegerString(amount)) {
     return new RouteDockPolicyRejectError('challenge_amount_invalid')
   }
-  let max: bigint
+  let manifestMax: bigint
   try {
-    max = usdcToStroops(maxAmount)
+    manifestMax = usdcToStroops(manifestAmount)
   } catch {
     return new RouteDockPolicyRejectError('challenge_amount_invalid')
   }
-  if (BigInt(amount) > max) {
+  const requested = BigInt(amount)
+  if (requested > manifestMax) {
     return new RouteDockPolicyRejectError('challenge_amount_exceeds_manifest')
+  }
+  if (maxAmount !== undefined) {
+    let callerMax: bigint
+    try {
+      callerMax = usdcToStroops(maxAmount)
+    } catch {
+      return new RouteDockPolicyRejectError('max_amount_invalid')
+    }
+    if (requested > callerMax) {
+      return new RouteDockPolicyRejectError('max_amount_exceeded')
+    }
   }
   return null
 }
@@ -54,15 +70,15 @@ function checkAmount(
  * Validate one x402 `accepts` entry against the manifest. Returns the rejection
  * to throw, or `null` when the entry is safe to sign.
  *
- * `maxAmount` is the price the caller already read from the manifest, in USDC
- * decimal string form. Passing it in keeps this module free of `pricing`
- * lookups that would need a non-null assertion.
+ * `manifestAmount` is the decimal price already read from the manifest.
+ * `policy.maxAmount` additionally bounds the amount by the caller's ceiling.
  */
 export function checkX402Accept(
   accept: PaymentRequirements,
   manifest: RouteDockManifest,
   network: Caip2Network,
-  maxAmount: string,
+  manifestAmount: string,
+  policy?: ChallengePolicyOptions,
 ): RouteDockPolicyRejectError | null {
   if (accept.network !== network) {
     return new RouteDockPolicyRejectError('challenge_network_mismatch')
@@ -73,7 +89,7 @@ export function checkX402Accept(
   if (accept.asset !== manifest.asset_contract) {
     return new RouteDockPolicyRejectError('challenge_asset_mismatch')
   }
-  return checkAmount(accept.amount, maxAmount)
+  return checkAmount(accept.amount, manifestAmount, policy?.maxAmount)
 }
 
 /**
@@ -84,9 +100,10 @@ export function filterX402Accepts(
   accepts: readonly PaymentRequirements[],
   manifest: RouteDockManifest,
   network: Caip2Network,
-  maxAmount: string,
+  manifestAmount: string,
+  policy?: ChallengePolicyOptions,
 ): PaymentRequirements[] {
-  return accepts.filter((accept) => checkX402Accept(accept, manifest, network, maxAmount) === null)
+  return accepts.filter((accept) => checkX402Accept(accept, manifest, network, manifestAmount, policy) === null)
 }
 
 /**
@@ -100,7 +117,8 @@ export function checkChargeChallenge(
   request: Record<string, unknown>,
   manifest: RouteDockManifest,
   network: Caip2Network,
-  maxAmount: string,
+  manifestAmount: string,
+  policy?: ChallengePolicyOptions,
 ): RouteDockPolicyRejectError | null {
   const methodDetails = request['methodDetails']
   const rawNetwork = isRecord(methodDetails) ? methodDetails['network'] : undefined
@@ -119,5 +137,5 @@ export function checkChargeChallenge(
     return new RouteDockPolicyRejectError('challenge_asset_mismatch')
   }
 
-  return checkAmount(request['amount'], maxAmount)
+  return checkAmount(request['amount'], manifestAmount, policy?.maxAmount)
 }
