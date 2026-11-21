@@ -1,5 +1,34 @@
+import { Asset, Networks } from '@stellar/stellar-sdk'
 import type { RouteDockManifest, AssetConfig, PaymentMode } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
+import { USDC_ISSUERS, type Network } from '../network.js'
+
+/**
+ * Derives the expected Stellar Asset Contract (SAC) address for `asset` on
+ * `network`. Returns `Asset.native().contractId(passphrase)` for `XLM`,
+ * `new Asset(asset, issuer).contractId(passphrase)` when an issuer is known
+ * (using the canonical Circle issuer table for `USDC`), and `undefined`
+ * otherwise.
+ */
+export function expectedAssetContract(
+  asset: string,
+  issuer: string | undefined,
+  network: Network,
+): string | undefined {
+  const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+  if (asset === 'XLM') {
+    return Asset.native().contractId(passphrase)
+  }
+  const resolvedIssuer = asset === 'USDC' ? USDC_ISSUERS[network] : issuer
+  if (!resolvedIssuer) {
+    return undefined
+  }
+  try {
+    return new Asset(asset, resolvedIssuer).contractId(passphrase)
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Normalizes a manifest to always have an assets array.
@@ -15,6 +44,7 @@ export function normalizeManifestAssets(manifest: RouteDockManifest): AssetConfi
       {
         asset: manifest.asset,
         asset_contract: manifest.asset_contract,
+        ...(manifest.asset_issuer !== undefined ? { asset_issuer: manifest.asset_issuer } : {}),
       },
     ]
   }
