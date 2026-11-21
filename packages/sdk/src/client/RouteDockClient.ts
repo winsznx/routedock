@@ -10,7 +10,7 @@ import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
-import { selectAsset } from '../internal/assetUtils.js'
+import { getEligibleAssets, selectAsset } from '../internal/assetUtils.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
 // appear in JSON.stringify, structured-clone, or console.log object dumps.
@@ -256,7 +256,7 @@ export class RouteDockClient {
     const baseUrl = new URL(url).origin
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     assertEndpointActive(manifest, url, this.logger, options?.request?.method)
-    const mode = selectMode(manifest, options)
+    const mode = selectMode(manifest, { ...options, endpoint: url })
     return { manifest, mode }
   }
 
@@ -277,7 +277,7 @@ export class RouteDockClient {
    * transaction or moves money.
    *
    * - `preflight(url)` fetches and validates the provider's manifest and
-   *   returns the supported modes, the estimated cost per mode, and
+   *   returns the asset-eligible modes for that URL, their estimated costs, and
    *   deprecation/sunset flags. It does not check the payer's trustline.
    *   Throws the same manifest errors as `pay()` / `estimateCost()` when the
    *   manifest is unreachable, invalid, unsupported by this SDK version, or
@@ -321,7 +321,8 @@ export class RouteDockClient {
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     assertEndpointActive(manifest, url)
 
-    const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
+    const eligibleModes = manifest.modes.filter((mode) => getEligibleAssets(manifest, mode, url).length > 0)
+    const costs: PreflightModeCost[] = eligibleModes.map((mode) => {
       const asset = selectAsset(manifest, mode, url).asset
       switch (mode) {
         case 'x402':
@@ -347,7 +348,7 @@ export class RouteDockClient {
       .sort((a, b) => Date.parse(a) - Date.parse(b))
 
     return {
-      modes: manifest.modes,
+      modes: eligibleModes,
       costs,
       compliance: {
         deprecated_modes: manifest.deprecated_modes ?? [],
@@ -420,7 +421,7 @@ export class RouteDockClient {
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     const request = options?.request
     assertEndpointActive(manifest, url, this.logger, request?.method)
-    const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
+    const mode = selectMode(manifest, { ...options, endpoint: url, ...(this.logger && { logger: this.logger }) })
 
     const selectedAsset = selectAsset(manifest, mode, url).asset
 

@@ -14,6 +14,7 @@ import {
   wrapFetchError,
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
+import { selectAsset } from '../internal/assetUtils.js'
 import { readSettleResult } from '../internal/settleResult.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { prepareRequest, toRequestInit } from '../internal/request.js'
@@ -100,6 +101,7 @@ export class X402Client {
     }
 
     const caip2 = CAIP2[this.network]
+    const assetContract = selectAsset(manifest, 'x402', url).asset_contract
 
     // Buffer once, outside withRetry: the probe, the paid request and any
     // retry must all send the same method/headers/body.
@@ -172,11 +174,11 @@ export class X402Client {
 
     // Phase 2: bind the unsigned 402 to the signed manifest BEFORE signing.
     // A mismatched challenge must never reach createPaymentPayload.
-    const allowed = filterX402Accepts(paymentRequired.accepts, manifest, caip2, pricing.amount)
+    const allowed = filterX402Accepts(paymentRequired.accepts, manifest, caip2, pricing.amount, { assetContract })
     if (allowed.length === 0) {
       // `accepts` is non-empty here, so accepts[0] — the entry the scheme would
       // have signed — failed its own checks. That rejection is the report.
-      throw checkX402Accept(firstAccept, manifest, caip2, pricing.amount)
+      throw checkX402Accept(firstAccept, manifest, caip2, pricing.amount, { assetContract })
     }
 
     // Optional pre-sign audit. Runs once, before signing; never on retries.
