@@ -13,6 +13,7 @@ import {
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { usdcToStroops } from '../internal/usdc.js'
+import { getEligibleAssets } from '../internal/assetUtils.js'
 import { noopLogger, type RouteDockLogger } from '../internal/logger.js'
 import pkg from '../../package.json' assert { type: 'json' }
 import { verifyManifestSignature } from '../manifest/sign.js'
@@ -275,6 +276,8 @@ function ttlFromHeaders(headers: Headers, now: number): number {
 export type { RouteDockLogger, RouteDockLogLevel, RouteDockLogFields } from '../internal/logger.js'
 
 export interface ModeSelectOptions {
+  /** Request URL or endpoint path used to filter modes by eligible assets. */
+  endpoint?: string
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
@@ -543,6 +546,7 @@ function logSelection(
 /**
  * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
  *
+ * Modes without an eligible asset for `options.endpoint` are excluded first.
  * Active modes are always considered before modes listed in `deprecated_modes`.
  * Deprecated modes remain usable as a compatibility fallback and produce a
  * logger warning when selected. An explicit forceMode remains authoritative,
@@ -552,14 +556,21 @@ export function selectMode(
   manifest: RouteDockManifest,
   options: ModeSelectOptions = {},
 ): PaymentMode {
-  const modes = manifest.modes
+  const modes = manifest.modes.filter((mode) =>
+    getEligibleAssets(manifest, mode, options.endpoint).length > 0,
+  )
   const log = options.logger ?? noopLogger
   const deprecatedSet = new Set(manifest.deprecated_modes ?? [])
 
   if (options.forceMode) {
+    if (!manifest.modes.includes(options.forceMode)) {
+      throw new RouteDockNoSupportedModeError(
+        `Provider does not support forced mode: ${options.forceMode} (available: ${manifest.modes.join(', ')})`,
+      )
+    }
     if (!modes.includes(options.forceMode)) {
       throw new RouteDockNoSupportedModeError(
-        `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
+        `Forced mode ${options.forceMode} has no eligible asset${options.endpoint ? ` for endpoint '${options.endpoint}'` : ''}`,
       )
     }
     if (deprecatedSet.has(options.forceMode)) {
