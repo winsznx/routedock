@@ -608,17 +608,26 @@ function PriceButton() {
 }
 ```
 
-### `useSession(url)`
+### `useSession(url, options?)`
 
 ```tsx
 import { useEffect } from 'react'
 import { useSession } from '@routedock/routedock/react'
 
 function StreamingFeed() {
-  const { open, close, status, vouchers, cumulative } = useSession(
+  const { open, stream, close, status, vouchers, cumulative } = useSession(
     'https://provider.example.com/stream/orderbook',
+    { mode: 'mpp-session-ws', maxDurationMs: 60_000 },
   )
-  useEffect(() => { void open() }, [])
+  useEffect(() => {
+    void (async () => {
+      const handle = await open()
+      if (!handle) return
+      for await (const tick of stream()) {
+        console.log(tick)
+      }
+    })()
+  }, [open, stream])
   return (
     <div>
       <p>Status: {status} — vouchers: {vouchers} — paid: {cumulative} USDC</p>
@@ -628,7 +637,7 @@ function StreamingFeed() {
 }
 ```
 
-The hook automatically fires `session.close()` in the background on unmount when status is `open` (best-effort settlement).
+Pass `SessionOptions` (`mode`, `maxDurationMs`, `store`) as the second argument to pick `mpp-session-ws`, adjust the lifetime guard, or persist channel state. Iterating through the hook's `stream(streamOptions?)` wrapper updates `vouchers` and `cumulative` live as each item arrives (or call `refreshStats()` when iterating `session.stream()` directly). The hook subscribes to `session:timeout`, `session:closed`, and `session:close-failed` so auto-close transitions `status` cleanly without double-closing on manual `close()` or unmount, and automatically fires `session.close()` in the background on unmount while a session is still open (best-effort settlement).
 
 ### `useTxLog(filter?)`
 
@@ -651,7 +660,7 @@ function ActivityFeed({ channelId }: { channelId: string }) {
 |---|---|---|
 | `useRouteDockClient(config)` | Memoized `RouteDockClient` | — (creator hook) |
 | `usePay(url, options?)` | `{ pay, result, loading, error }` | `client` |
-| `useSession(url)` | `{ session, status, vouchers, cumulative, error, open, close }` | `client` (with `commitmentSecret`) |
+| `useSession(url, options?)` | `{ session, status, vouchers, cumulative, error, open, close, stream, refreshStats }` | `client` (with `commitmentSecret`) |
 | `useTxLog(filter?)` | `TxLogRow[]` (newest first) | `supabase` |
 
 React is a peer dependency — install `react@^18` (or `^19`) in your app.
