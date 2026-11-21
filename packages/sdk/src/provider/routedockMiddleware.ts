@@ -7,6 +7,8 @@ import type { RouteDockManifest, PaymentMode } from '../types.js'
 import { signManifest } from '../manifest/sign.js'
 import type { SeenTxStore } from './SeenTxStore.js'
 import type { OrphanedSessionInfo } from './MppSessionHandler.js'
+import type { ChannelState } from '@stellar/mpp/channel/server'
+import type { ChannelStateCheckOptions } from './internal/channelStateCheck.js'
 import type { RouteDockLogger } from '../internal/logger.js'
 import type { VaultSettlementConfig } from '../internal/vaultConfig.js'
 
@@ -69,6 +71,20 @@ export interface RouteDockMiddlewareOptions {
    * `AGENT_VAULT_CONTRACT_ID` env vars when unset.
    */
   vaultSettlement?: VaultSettlementConfig
+  /**
+   * On-chain channel state check for mpp-session vouchers. When enabled, a
+   * voucher above the channel balance, or one arriving after the channel's
+   * close-effective ledger, is rejected with 402 before the route runs.
+   * Defaults to enabled on `mainnet` and disabled on `testnet`. Each check is
+   * five Soroban RPC simulations; set `maxAgeMs` to reuse a recent read.
+   */
+  channelStateCheck?: ChannelStateCheckOptions
+  /**
+   * Called when the on-chain check sees `close_start` on the channel. The
+   * session is then closed with the highest verified voucher, or flagged
+   * orphaned with reason `dispute` if that close fails.
+   */
+  onDisputeDetected?: (channelId: string, state: ChannelState) => void | Promise<void>
 }
 
 /**
@@ -165,6 +181,8 @@ export function routedock(opts: RouteDockMiddlewareOptions): RequestHandler {
           ...(opts.idleTimeoutMs != null ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
           ...(opts.logger ? { logger: opts.logger } : {}),
           ...(opts.vaultSettlement ? { vaultSettlement: opts.vaultSettlement } : {}),
+          ...(opts.channelStateCheck ? { channelStateCheck: opts.channelStateCheck } : {}),
+          ...(opts.onDisputeDetected ? { onDisputeDetected: opts.onDisputeDetected } : {}),
         }),
       )
     }

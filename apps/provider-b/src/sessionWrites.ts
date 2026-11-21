@@ -9,7 +9,7 @@ export interface OrphanedSessionInfo {
   cumulativeAmount: string
   lastSignature: string
   voucherCount: number
-  reason: 'connection-closed' | 'idle-timeout'
+  reason: 'connection-closed' | 'idle-timeout' | 'dispute'
 }
 
 export interface SessionWritersConfig {

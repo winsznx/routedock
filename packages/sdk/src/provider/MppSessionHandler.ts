@@ -1,6 +1,11 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { Keypair } from '@stellar/stellar-sdk'
-import { stellar, close as channelClose, Store } from '@stellar/mpp/channel/server'
+import {
+  stellar,
+  close as channelClose,
+  Store,
+  type ChannelState,
+} from '@stellar/mpp/channel/server'
 import { Mppx, Request as MppxRequest } from 'mppx/server'
 import { Store as MppxStore } from 'mppx'
 import type { RouteDockManifest } from '../types.js'
@@ -19,6 +24,13 @@ import {
 import type { Method } from 'mppx'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import { hexToBytes } from '../internal/encoding.js'
+import {
+  channelClosedKey,
+  channelClosedMarker,
+  resolveChannelStateCheck,
+  withCachedChannelStateCheck,
+  type ChannelStateCheckOptions,
+} from './internal/channelStateCheck.js'
 
 /** Store shape extended with optional atomic update operation. */
 export type ChannelStore = MppxStore.Store & {
@@ -54,8 +66,13 @@ const MPP_NETWORK: Record<Network, 'stellar:testnet' | 'stellar:pubnet'> = {
   mainnet: 'stellar:pubnet',
 }
 
-/** Why a live session was flagged as orphaned (never cleanly closed). */
-export type OrphanReason = 'connection-closed' | 'idle-timeout'
+/**
+ * Why a live session was flagged as orphaned (never cleanly closed).
+ * `dispute` means the payer called `close_start` on-chain and RouteDock's own
+ * close with the latest voucher failed, so the reconciler must settle before
+ * the refund waiting period ends.
+ */
+export type OrphanReason = 'connection-closed' | 'idle-timeout' | 'dispute'
 
 /** Latest signed state of an orphaned session, enough for the reconciler to settle. */
 export interface OrphanedSessionInfo {
@@ -101,6 +118,20 @@ export interface MppSessionHandlerOptions {
    * `AGENT_VAULT_CONTRACT`/`AGENT_VAULT_CONTRACT_ID` env vars when unset.
    */
   vaultSettlement?: VaultSettlementConfig
+  /**
+   * On-chain channel state check for vouchers. When enabled, a voucher above
+   * the channel balance, or one arriving after the channel's close-effective
+   * ledger, is rejected with 402. Defaults to enabled on `mainnet` and
+   * disabled on `testnet`. Each check is five Soroban RPC simulations; set
+   * `maxAgeMs` to reuse a recent read.
+   */
+  channelStateCheck?: ChannelStateCheckOptions
+  /**
+   * Called when the on-chain check sees `close_start` on the channel. The
+   * handler then closes the channel with the highest verified voucher, or
+   * flags the session orphaned with reason `dispute` if that close fails.
+   */
+  onDisputeDetected?: (channelId: string, state: ChannelState) => void | Promise<void>
 }
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
@@ -188,7 +219,9 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // session that was cleanly settled or already flagged is left untouched.
   async function flagOrphan(reason: OrphanReason): Promise<void> {
     await loadPersistedRecord()
-    if (!sessionOpened || settledCleanly || orphanFlagged) return
+    // A dispute re-flags an already orphaned session: the reconciler has to
+    // settle it before the refund waiting period ends, not at its own pace.
+    if (!sessionOpened || settledCleanly || (orphanFlagged && reason !== 'dispute')) return
     orphanFlagged = true
     closeListenerArmed = false
     clearIdleTimer()
@@ -277,24 +310,189 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     }
   }
 
+  const stateCheck = resolveChannelStateCheck(opts.channelStateCheck, opts.network)
+  // Set by mppx's dispute callback while a voucher is being verified and
+  // consumed once that verify finishes, so the close uses the voucher it was
+  // verifying when that one turns out valid.
+  let pendingDispute: ChannelState | null = null
+  let disputeSettling = false
+
+  function buildChannelMethod(checkOnChainState: boolean): Method.AnyServer {
+    return stellar.channel({
+      channel: opts.channelFactory,
+      commitmentKey: opts.commitmentPublicKey,
+      network: networkId,
+      store: wrappedStore,
+      sourceAccount: payeeKeypair.publicKey(),
+      feePayer: channelAuthorizer(payeeKeypair),
+      ...(checkOnChainState
+        ? {
+            checkOnChainState: true,
+            onDisputeDetected: (state: ChannelState) => { pendingDispute = state },
+          }
+        : {}),
+    }) as Method.AnyServer
+  }
+
+  let channelMethod: Method.AnyServer
+  if (!stateCheck.enabled) {
+    channelMethod = buildChannelMethod(false)
+  } else if (stateCheck.maxAgeMs != null) {
+    channelMethod = withCachedChannelStateCheck({
+      checked: buildChannelMethod(true),
+      unchecked: buildChannelMethod(false),
+      store: innerStore,
+      channel: opts.channelFactory,
+      maxAgeMs: stateCheck.maxAgeMs,
+    })
+  } else {
+    channelMethod = buildChannelMethod(true)
+  }
+
+  // Runs the dispute response after the whole verify (including `commit`) has
+  // finished, whether or not the voucher itself was accepted.
+  function withDisputeSettlement(method: Method.AnyServer): Method.AnyServer {
+    return {
+      ...method,
+      async verify(parameters: Parameters<Method.AnyServer['verify']>[0]) {
+        try {
+          return await method.verify(parameters)
+        } finally {
+          const state = pendingDispute
+          pendingDispute = null
+          if (state) handleDispute(state)
+        }
+      },
+    } as Method.AnyServer
+  }
+
   const mppx = Mppx.create({
     secretKey: opts.payeeSecretKey,
     methods: [
-      withTypedChannelErrors(
-        onVerifiedCredential(
-          stellar.channel({
-            channel: opts.channelFactory,
-            commitmentKey: opts.commitmentPublicKey,
-            network: networkId,
-            store: wrappedStore,
-            sourceAccount: payeeKeypair.publicKey(),
-            feePayer: channelAuthorizer(payeeKeypair),
-          }) as Method.AnyServer,
-          commit,
-        ),
+      withDisputeSettlement(
+        withTypedChannelErrors(onVerifiedCredential(channelMethod, commit)),
       ),
     ],
   })
+
+  // Writes the marker mppx checks before accepting any credential, so no
+  // voucher is served on a channel this handler has already closed. mppx only
+  // writes it for closes it performs itself.
+  async function markChannelClosed(txHash: string, amount: bigint): Promise<void> {
+    try {
+      await innerStore.put(channelClosedKey(opts.channelFactory), channelClosedMarker(txHash, amount))
+    } catch (err) {
+      logger('error', '[mpp-session] Failed to record channel close in the session store', {
+        error: err,
+      })
+    }
+  }
+
+  // Broadcasts the close and runs the clean-close bookkeeping shared by a
+  // DELETE and a dispute response. Throws if the close broadcast fails, with
+  // the orphan state still armed. `beforeVaultRecord` lets the DELETE path
+  // answer the client before the vault record is awaited.
+  async function settle(
+    closeAmount: bigint,
+    closeSig: string,
+    beforeVaultRecord?: (closeTxHash: string) => void,
+  ): Promise<string> {
+    const closePayer = record?.payer ?? null
+    const vouchersClosed = voucherCount
+    const closeTxHash = await channelClose({
+      channel: opts.channelFactory,
+      amount: closeAmount,
+      signature: hexToBytes(closeSig),
+      feePayer: channelAuthorizer(payeeKeypair),
+      network: networkId,
+    })
+
+    // Clean close — suppress any orphan flagging for this session.
+    settledCleanly = true
+    clearIdleTimer()
+    await markChannelClosed(closeTxHash, closeAmount)
+
+    if (opts.onSettled) {
+      const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
+      Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', closePayer)).catch(err => {
+        logger('error', '[mpp-session] onSettled callback error', { error: err })
+        opts.onCallbackError?.(err, 'onSettled')
+      })
+    }
+
+    // Respond before the vault record so confirmation polling can never
+    // delay the close response.
+    beforeVaultRecord?.(closeTxHash)
+
+    // Optionally record session_settled on the agent vault. The vault
+    // authorizes this call with the allowlisted payee's own key — the
+    // transaction source — so the payee secret is the only key held and
+    // the vault admin secret is never read. recordSessionSettlement
+    // never throws; it logs failures with the tx hash and reason and
+    // reports them through onCallbackError.
+    const vaultConfig = resolveVaultSettlementConfig(opts.vaultSettlement, logger)
+    if (vaultConfig) {
+      await recordSessionSettlement(
+        {
+          config: vaultConfig,
+          network: opts.network,
+          payeeSecretKey: opts.payeeSecretKey,
+          channelId: opts.channelFactory,
+          payer: closePayer,
+          amount: closeAmount,
+          voucherCount: vouchersClosed,
+        },
+        { logger, onCallbackError: opts.onCallbackError },
+      )
+    }
+    return closeTxHash
+  }
+
+  async function resetSession(): Promise<void> {
+    sessionOpened = false
+    voucherCount = 0
+    orphanFlagged = false
+    record = null
+    await innerStore.delete(voucherRecordKey)
+    closeListenerArmed = false
+    clearIdleTimer()
+  }
+
+  // The payer called close_start on-chain. Close now with the highest
+  // verified voucher instead of waiting for the refund window to run out;
+  // if that fails, hand the session to the reconciler.
+  function handleDispute(state: ChannelState): void {
+    logger('warn', '[mpp-session] Channel dispute detected on-chain', {
+      channel: opts.channelFactory,
+      closeEffectiveAtLedger: state.closeEffectiveAtLedger,
+      currentLedger: state.currentLedger,
+    })
+    if (opts.onDisputeDetected) {
+      Promise.resolve()
+        .then(() => opts.onDisputeDetected!(opts.channelFactory, state))
+        .catch((err) => {
+          logger('error', '[mpp-session] onDisputeDetected callback error', { error: err })
+          opts.onCallbackError?.(err, 'onDisputeDetected')
+        })
+    }
+    if (disputeSettling) return
+    disputeSettling = true
+    void settleOnDispute().finally(() => { disputeSettling = false })
+  }
+
+  async function settleOnDispute(): Promise<void> {
+    await loadPersistedRecord()
+    if (!record || !record.signature) return
+    try {
+      await settle(record.amount, record.signature)
+      await resetSession()
+    } catch (err) {
+      logger('error', '[mpp-session] Dispute close failed; flagging session for the reconciler', {
+        error: err,
+      })
+      await flagOrphan('dispute')
+    }
+  }
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -314,64 +512,14 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         }
 
         if (closeAmount > 0n && closeSig) {
-          const closePayer = record?.payer ?? null
-          const vouchersClosed = voucherCount
-          const closeTxHash = await channelClose({
-            channel: opts.channelFactory,
-            amount: closeAmount,
-            signature: hexToBytes(closeSig),
-            feePayer: channelAuthorizer(payeeKeypair),
-            network: networkId,
+          await settle(closeAmount, closeSig, (closeTxHash) => {
+            res.json({ closeTxHash })
           })
-
-          // Clean close — suppress any orphan flagging for this session.
-          settledCleanly = true
-          clearIdleTimer()
-
-          if (opts.onSettled) {
-            const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
-            Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, 'mpp-session', closePayer)).catch(err => {
-              logger('error', '[mpp-session] onSettled callback error', { error: err })
-              opts.onCallbackError?.(err, 'onSettled')
-            })
-          }
-
-          // Respond before the vault record so confirmation polling can never
-          // delay the close response.
-          res.json({ closeTxHash })
-
-          // Optionally record session_settled on the agent vault. The vault
-          // authorizes this call with the allowlisted payee's own key — the
-          // transaction source — so the payee secret is the only key held and
-          // the vault admin secret is never read. recordSessionSettlement
-          // never throws; it logs failures with the tx hash and reason and
-          // reports them through onCallbackError.
-          const vaultConfig = resolveVaultSettlementConfig(opts.vaultSettlement, logger)
-          if (vaultConfig) {
-            await recordSessionSettlement(
-              {
-                config: vaultConfig,
-                network: opts.network,
-                payeeSecretKey: opts.payeeSecretKey,
-                channelId: opts.channelFactory,
-                payer: closePayer,
-                amount: closeAmount,
-                voucherCount: vouchersClosed,
-              },
-              { logger, onCallbackError: opts.onCallbackError },
-            )
-          }
         } else {
           res.json({ closeTxHash: null, message: 'no vouchers received' })
         }
 
-        sessionOpened = false
-        voucherCount = 0
-        orphanFlagged = false
-        record = null
-        await innerStore.delete(voucherRecordKey)
-        closeListenerArmed = false
-        clearIdleTimer()
+        await resetSession()
         return
       }
 

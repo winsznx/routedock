@@ -405,3 +405,47 @@ test('reconcileAbandonedSessions marks a row closed when the channel is already 
   assert.equal(store[0]?.status, 'closed')
   assert.match(String(store[0]?.last_reconcile_error), /already closed/)
 })
+
+test('reconcileAbandonedSessions writes the closed marker to the channel store after a close', async () => {
+  // #given a closing session and the provider's channel store
+  const payeeKeypair = Keypair.random()
+  const { supabase } = makeSupabaseMock([closingSession(payeeKeypair)])
+  const channelStore = new Map<string, unknown>()
+
+  // #when the reconciler closes the channel
+  const stats = await reconcileAbandonedSessions({
+    supabase,
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async () => 'recovered-tx-hash',
+    store: { put: async (key, value) => { channelStore.set(key, value) } },
+  })
+
+  // #then mppx's closed marker carries the close tx and amount
+  assert.equal(stats.recoveredCount, 1)
+  const marker = channelStore.get(
+    'stellar:channel:closed:CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+  ) as { closedAt: string; txHash: string; amount: string } | undefined
+  assert.equal(marker?.txHash, 'recovered-tx-hash')
+  assert.equal(marker?.amount, '50000')
+})
+
+test('reconcileAbandonedSessions still records the recovery when the channel store write fails', async () => {
+  // #given a channel store that rejects writes
+  const payeeKeypair = Keypair.random()
+  const { supabase, store } = makeSupabaseMock([closingSession(payeeKeypair)])
+
+  // #when the reconciler closes the channel
+  const stats = await reconcileAbandonedSessions({
+    supabase,
+    network: 'testnet',
+    payeeSecretKey: payeeKeypair.secret(),
+    channelClose: async () => 'recovered-tx-hash',
+    store: { put: async () => { throw new Error('store unavailable') } },
+    logger: () => {},
+  })
+
+  // #then the on-chain close is still recorded as recovered
+  assert.equal(stats.recoveredCount, 1)
+  assert.equal(store[0]?.status, 'closed')
+})
