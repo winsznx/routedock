@@ -612,17 +612,20 @@ export class RouteDockClient {
   }
 
   /**
-   * Record spend for an MPP session voucher. Called before each voucher
-   * fetch in stream(). Enforces the same local daily and per-endpoint caps
-   * as discrete pay() calls. Returns a commit function to clean up the
-   * reservation after the voucher fetch succeeds.
+   * Record spend for an MPP session voucher. MppSessionClient calls this once
+   * per voucher, after the challenge passes the guard and the next cumulative
+   * is reserved, and before the commitment key signs it. Enforces the same
+   * local daily and per-endpoint caps as discrete pay() calls; a cap
+   * rejection throws, and the session releases the reservation without
+   * signing.
    */
   private async _recordSessionSpend(amount: string, endpointKey: string, asset: string): Promise<void> {
     const reserveId = await this._checkAndReserveSpend(amount, endpointKey, asset)
     if (reserveId) {
-      // For sessions, commit immediately — the spend is final once the
-      // voucher is issued. No rollback path on voucher fetch failure since
-      // the cap is checked before the fetch (if it fails, no reserve was made).
+      // Committed immediately: the voucher is signed right after this
+      // returns, and a retry replays that same voucher rather than signing
+      // another. If signing itself fails, this one rate stays counted, so
+      // the cap can over-count by a voucher but never under-count.
       await this._commitSpend(reserveId)
     }
   }

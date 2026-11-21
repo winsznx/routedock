@@ -363,9 +363,17 @@ export class MppSessionClient {
       }
     }
 
+    /**
+     * Spend is counted here, at the point of signing, so the local cap sees one
+     * charge per signed cumulative. A request that fails before this point
+     * (non-402 probe, rejected challenge, network error) never touches the cap,
+     * and a cap rejection releases the reservation before the commitment key
+     * signs anything.
+     */
     const createGuardedCredential: GuardedCredentialCreator = async (challenge, create) => {
       const next = await reserveNextCumulative(challenge)
       try {
+        if (onSpend) await onSpend(pricing.rate)
         return await create(next.toString())
       } catch (err) {
         releaseReservation(next)
@@ -379,32 +387,46 @@ export class MppSessionClient {
       u: string,
       m: WsMppxLike,
       createCredential: GuardedCredentialCreator,
-      onSigned: () => void,
       request: PreparedRequest,
     ): AsyncIterable<unknown> =>
-      this.streamWebSocket(u, m, createCredential, onSigned, request)
+      this.streamWebSocket(u, m, createCredential, request)
 
-    const mppx = Mppx.create({
-      polyfill: false,
-      methods: [
-        stellar.channel({
-          commitmentKey,
-          sourceAccount: this.keypair.publicKey(),
-          ...(store ? { store } : {}),
-          onProgress(event) {
-            if (event.type === 'signed') {
-              currentCumulative = BigInt(event.cumulativeAmount)
-            }
-          },
-        }),
-      ],
-      // mppx runs onChallenge on the HTTP path only (createCredential skips it),
-      // so the WebSocket path runs the same guard inside streamWebSocket.
-      onChallenge: (challenge, helpers) =>
-        createGuardedCredential(challenge, (cumulativeAmount) =>
-          helpers.createCredential({ cumulativeAmount }),
-        ),
+    // vouchersIssued and currentCumulative both move on the channel client's
+    // 'signed' event, so stats() always reports currentCumulative / rate
+    // vouchers, however many attempts a voucher request took.
+    const channelMethod = stellar.channel({
+      commitmentKey,
+      sourceAccount: this.keypair.publicKey(),
+      ...(store ? { store } : {}),
+      onProgress(event) {
+        if (event.type === 'signed') {
+          currentCumulative = BigInt(event.cumulativeAmount)
+          vouchersIssued++
+        }
+      },
     })
+
+    /**
+     * Builds an mppx client whose onChallenge runs the guard and hands every
+     * credential it signs to `onCredential`. The HTTP transport builds one per
+     * voucher request so a retry can replay that request's own credential.
+     */
+    const createMppx = (onCredential?: (credential: string) => void) =>
+      Mppx.create({
+        polyfill: false,
+        methods: [channelMethod],
+        // mppx runs onChallenge on the HTTP path only (createCredential skips
+        // it), so the WebSocket path runs the same guard inside streamWebSocket.
+        onChallenge: async (challenge, helpers) => {
+          const credential = await createGuardedCredential(challenge, (cumulativeAmount) =>
+            helpers.createCredential({ cumulativeAmount }),
+          )
+          onCredential?.(credential)
+          return credential
+        },
+      })
+
+    const mppx = createMppx()
 
     const retryPolicy = this.retryPolicy
 
@@ -458,10 +480,10 @@ export class MppSessionClient {
       openTxHash: null,
 
       /**
-       * Live session snapshot. vouchersIssued increments once per signed voucher
-       * and currentCumulative is updated by the channel client's onProgress when
-       * a voucher is signed, so a stats() call immediately after a yield always
-       * reflects everything consumed so far.
+       * Live session snapshot. vouchersIssued and currentCumulative are both
+       * updated by the channel client's onProgress when a voucher is signed, so
+       * a stats() call immediately after a yield always reflects everything
+       * consumed so far, and a retried voucher is never counted twice.
        */
       stats() {
         return {
@@ -479,27 +501,17 @@ export class MppSessionClient {
         // and every retry sends the same method/headers/body.
         const prepared = await prepareRequest(options?.request)
 
-        // Check the local daily spend cap before issuing a voucher over either
-        // transport. The WebSocket path signs a credential before the HTTP probe
-        // becomes a live stream, so it must run before any network request.
-        const checkSpend = (): Promise<void> => {
-          if (!onSpend) return Promise.resolve()
-          return onSpend(pricing.rate)
-        }
+        // The local daily spend cap is checked inside createGuardedCredential,
+        // once per signed voucher, so neither transport charges it up front.
 
         if (mode === 'mpp-session-ws') {
           // WebSocket transport: one connection per stream() call, with one
           // voucher negotiated over HTTP before the upgrade. Each signed
           // connection counts as one voucher issued.
-          await checkSpend()
-          const onSigned = (): void => {
-            vouchersIssued++
-          }
           for await (const item of streamWs(
             url,
             mppx,
             createGuardedCredential,
-            onSigned,
             prepared,
           )) {
             yield item
@@ -524,23 +536,46 @@ export class MppSessionClient {
 
         const abortController = new AbortController()
 
-        // Shared fetch-one helper — retries on transient errors.
-        const doFetch = (): Promise<unknown> =>
-          withRetry(async () => {
+        // Shared fetch-one helper — retries on transient errors. Each call signs
+        // at most one cumulative: once its credential exists, every retry
+        // replays it instead of answering a fresh 402 with a higher cumulative.
+        // Only the unpaid probe may retry through mppx.fetch.
+        const doFetch = (): Promise<unknown> => {
+          let credential: string | undefined
+          const voucherMppx = createMppx((signed) => {
+            credential = signed
+          })
+          return withRetry(async () => {
+            const replay = credential !== undefined
             let resp: Response
             try {
               // mppx swaps any caller Authorization header for the signed
               // voucher credential, so the payment header always wins. The
+              // replay path re-sends the caller's method/body explicitly. The
               // abort signal stays on the same request.
-              resp = await mppx.fetch(url, {
-                ...toRequestInit(prepared),
-                signal: abortController.signal,
-              })
+              resp = credential !== undefined
+                ? await voucherMppx.rawFetch(url, {
+                    ...toRequestInit(prepared, { Authorization: credential }),
+                    signal: abortController.signal,
+                  })
+                : await voucherMppx.fetch(url, {
+                    ...toRequestInit(prepared),
+                    signal: abortController.signal,
+                  })
             } catch (err) {
               if (abortController.signal.aborted) {
                 throw err
               }
               throw wrapMppError(err, 'Voucher request')
+            }
+            if (replay && resp.status === 402) {
+              // The provider rejected or never recorded the voucher this
+              // request already signed. Signing a higher cumulative here would
+              // pay twice for one item, so stop and surface it.
+              throw new RouteDockChannelStateError(
+                'Voucher request failed: provider answered the replayed voucher with HTTP 402; ' +
+                  'refusing to sign a higher cumulative for the same request',
+              )
             }
             if (!resp.ok) {
               if (resp.status >= 500 || resp.status === 429 || resp.status === 503) {
@@ -563,6 +598,7 @@ export class MppSessionClient {
               )
             }
           }, retryPolicy)
+        }
 
         if (concurrency === 1) {
           // Default: strictly sequential.
@@ -570,12 +606,10 @@ export class MppSessionClient {
           // for the current one, preventing out-of-order sequence numbers.
           try {
             while (true) {
-              // A closed session must not run checkSpend() or issue another
-              // voucher, even if the consumer keeps pulling the iterator.
+              // A closed session must not issue another voucher, even if the
+              // consumer keeps pulling the iterator.
               assertOpen()
-              await checkSpend()
               const data = await doFetch()
-              vouchersIssued++
               yield data
             }
           } finally {
@@ -591,7 +625,6 @@ export class MppSessionClient {
             for (let i = 0; i < concurrency; i++) {
               // Stop filling the window as soon as the session is closed.
               assertOpen()
-              await checkSpend()
               const p = doFetch()
               p.catch(() => {})
               queue.push(p)
@@ -603,11 +636,9 @@ export class MppSessionClient {
               assertOpen()
               const data = await queue.shift()!
               // Replenish the window immediately after draining one slot.
-              await checkSpend()
               const p = doFetch()
               p.catch(() => {})
               queue.push(p)
-              vouchersIssued++
               yield data
             }
           } finally {
@@ -979,7 +1010,6 @@ export class MppSessionClient {
     url: string,
     mppx: WsMppxLike,
     createCredential: GuardedCredentialCreator,
-    onSigned: (() => void) | undefined,
     request: PreparedRequest,
   ): AsyncIterable<unknown> {
     // ── 1 + 2: channel establishment + voucher negotiation over HTTP ────────
@@ -1013,7 +1043,6 @@ export class MppSessionClient {
       credential = await createCredential(Challenge.fromResponse(probe), (cumulativeAmount) =>
         mppx.createCredential(probe, { cumulativeAmount }),
       )
-      onSigned?.()
     } catch (err) {
       throw wrapMppError(err, 'Voucher credential')
     }
