@@ -4,6 +4,21 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
+-- #given session rows were published by an older deployment
+-- #when migration 002 removes them, including an already-absent second call
+ALTER PUBLICATION supabase_realtime ADD TABLE public.sessions;
+\ir ../migrations/002_restrict_public_sessions.sql
+\ir ../migrations/002_restrict_public_sessions.sql
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication_tables
+             WHERE pubname = 'supabase_realtime' AND schemaname = 'public'
+               AND tablename = 'sessions') THEN
+    RAISE EXCEPTION 'private sessions are still published to Realtime';
+  END IF;
+END;
+$$;
+
 -- #given the platform grants used for a fresh Supabase installation
 -- #then both browser roles have effective SELECT-only view privileges
 DO $$
