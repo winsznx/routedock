@@ -65,7 +65,9 @@ mock.module('@x402/core/server', {
 mock.module('@x402/core/http', {
   namedExports: {
     decodePaymentSignatureHeader: () => ({
-      authorization: { credentials: [{ publicKey: PAYER }] },
+      x402Version: 2,
+      accepted: {},
+      payload: { transaction: 'signed-xdr' },
     }),
     encodePaymentRequiredHeader: (value: unknown) => `requirements:${JSON.stringify(value)}`,
     encodePaymentResponseHeader: (value: unknown) => `response:${JSON.stringify(value)}`,
