@@ -1,0 +1,30 @@
+# Throwaway registry for scripts/release-rehearsal.sh (issue #718).
+#
+# @routedock/* is served and published locally and is never proxied, so a
+# rehearsal can never reach registry.npmjs.org for our own packages. Everything
+# else is proxied so install-time lookups behave normally. The script copies
+# this file to a temp directory, so `storage` below lands there and is deleted
+# with it.
+storage: ./storage
+
+max_body_size: 200mb
+
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+    timeout: 60s
+
+packages:
+  '@routedock/*':
+    access: $all
+    publish: $all
+    unpublish: $all
+  '**':
+    access: $all
+    publish: $all
+    proxy: npmjs
+
+log:
+  type: stdout
+  format: pretty
+  level: warn

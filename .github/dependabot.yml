@@ -23,3 +23,10 @@ updates:
       # tsup's DTS build and typescript-eslint don't support TS 7 yet.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # @changesets/cli 3 prints "Created git tags:" instead of "New tag:", which
+      # changesets/action (release.yml) parses to decide what to tag and release.
+      # Until the action supports that output, a bump would publish to npm with
+      # no tags and no GitHub Releases while the workflow stays green (#718).
+      # scripts/release-rehearsal.sh (CI job `release-rehearsal`) fails on it.
+      - dependency-name: "@changesets/cli"
+        update-types: ["version-update:semver-major"]
