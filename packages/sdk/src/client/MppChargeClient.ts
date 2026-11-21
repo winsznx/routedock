@@ -11,6 +11,7 @@ import {
   wrapMppError,
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
+import { selectAsset } from '../internal/assetUtils.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { prepareRequest, toRequestInit } from '../internal/request.js'
 import { checkChargeChallenge, type Caip2Network } from './challenge.js'
@@ -32,6 +33,7 @@ export class MppChargeClient {
       throw new RouteDockManifestError('manifest.pricing.mpp-charge missing')
     }
 
+    const assetContract = selectAsset(manifest, 'mpp-charge', url).asset_contract
     const caip2: Caip2Network =
       this.network === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet'
 
@@ -56,7 +58,7 @@ export class MppChargeClient {
       onChallenge: async (challenge, { createCredential }) => {
         // Bind the unsigned challenge to the signed manifest before signing.
         const request = challenge.request
-        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount)
+        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount, { assetContract })
         if (rejection) throw rejection
 
         const amount = request['amount']

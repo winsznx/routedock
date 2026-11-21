@@ -80,6 +80,19 @@ The cap is a single USDC total. If the asset selected for a payment is not
 USDC total. USDC-only providers are unaffected. See
 `docs/MULTI_ASSET_SUPPORT.md`.
 
+### Endpoint-scoped assets
+
+For manifests with `assets[]`, `pay()` and `estimateCost()` select only modes
+that have an eligible asset for the request URL. Default ordering, cost
+optimization, and session preferences apply after this filtering. A forced
+mode without an eligible asset throws `RouteDockNoSupportedModeError`.
+
+`preflight(url)` returns only eligible modes and their costs. The payment
+challenge must use the selected asset's contract; a root USDC contract cannot
+replace an endpoint's scoped XLM contract. Single-asset manifests keep their
+existing behavior. Standalone `selectMode(manifest, { endpoint: url })` uses
+the same filtering; `pay()` and `estimateCost()` always use their actual URL.
+
 ### Durable spend cap
 
 The `spendCap` is enforced via a pluggable `SpendStore` (`read()` / `write()`).
