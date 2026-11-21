@@ -4,13 +4,14 @@ import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
-import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
+import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost, AssetConfig } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
+import { resolveLogger } from '../internal/logger.js'
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
-import { selectAsset } from '../internal/assetUtils.js'
+import { expectedAssetContract, selectAsset } from '../internal/assetUtils.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
 // appear in JSON.stringify, structured-clone, or console.log object dumps.
@@ -301,10 +302,16 @@ export class RouteDockClient {
     if (typeof target === 'string') return this._preflightUrl(target)
     const manifest = target
     assertManifestValid(manifest)
-    const selectedAsset = mode
-      ? selectAsset(manifest, mode, endpoint).asset
-      : manifest.asset
-    await this._checkTrustline(manifest, selectedAsset)
+    const selected: AssetConfig = mode
+      ? selectAsset(manifest, mode, endpoint)
+      : {
+          asset: manifest.asset,
+          asset_contract: manifest.asset_contract,
+          ...(manifest.asset_issuer !== undefined ? { asset_issuer: manifest.asset_issuer } : {}),
+        }
+    this._assertAssetContract(manifest, selected)
+    const selectedAsset = selected.asset
+    await this._checkTrustline(manifest, selectedAsset, this._resolveAssetIssuer(manifest, selected))
     return {
       hasTrustline: true,
       asset: selectedAsset,
@@ -321,8 +328,11 @@ export class RouteDockClient {
     const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
     assertEndpointActive(manifest, url)
 
+    const warned = new Set<string>()
     const costs: PreflightModeCost[] = manifest.modes.map((mode) => {
-      const asset = selectAsset(manifest, mode, url).asset
+      const selected = selectAsset(manifest, mode, url)
+      this._assertAssetContract(manifest, selected, warned)
+      const asset = selected.asset
       switch (mode) {
         case 'x402':
         case 'mpp-charge': {
@@ -368,8 +378,17 @@ export class RouteDockClient {
   private async _checkTrustline(
     manifest: RouteDockManifest,
     targetAsset: string = manifest.asset,
+    targetIssuer?: string,
   ): Promise<void> {
-    const cacheKey = `${this.network}:${this.keypair.publicKey()}:${targetAsset}`
+    const builtInIssuer = getAssetIssuer(targetAsset, this.network)
+    const customIssuer =
+      builtInIssuer || targetAsset === 'XLM'
+        ? ''
+        : (targetIssuer ?? (targetAsset === manifest.asset ? (manifest.asset_issuer ?? '') : ''))
+    const expectedIssuer = builtInIssuer || customIssuer
+    const cacheKey = customIssuer
+      ? `${this.network}:${this.keypair.publicKey()}:${targetAsset}:${customIssuer}`
+      : `${this.network}:${this.keypair.publicKey()}:${targetAsset}`
     const cached = RouteDockClient._trustlineCache.get(cacheKey)
     if (cached && Date.now() < cached.expiresAt) return
 
@@ -377,7 +396,6 @@ export class RouteDockClient {
     try {
       const account = await server.loadAccount(this.keypair.publicKey())
       const balances = account.balances as unknown[]
-      const expectedIssuer = getAssetIssuer(targetAsset, this.network)
       const hasTrustline = balances.some(
         (b) =>
           typeof b === 'object' &&
@@ -422,12 +440,17 @@ export class RouteDockClient {
     assertEndpointActive(manifest, url, this.logger, request?.method)
     const mode = selectMode(manifest, { ...options, ...(this.logger && { logger: this.logger }) })
 
-    const selectedAsset = selectAsset(manifest, mode, url).asset
+    const selected = selectAsset(manifest, mode, url)
+    const selectedAsset = selected.asset
+
+    // Verify that the selected asset_contract matches the SAC for selected.asset
+    // before any cap check, trustline check, spend reservation, or fetch call.
+    this._assertAssetContract(manifest, selected)
 
     // Fail closed before any network call if the cap can't account for this asset.
     this._assertCapAsset(selectedAsset)
 
-    await this._checkTrustline(manifest, selectedAsset)
+    await this._checkTrustline(manifest, selectedAsset, this._resolveAssetIssuer(manifest, selected))
 
     let amount: string
     switch (mode) {
@@ -543,7 +566,9 @@ export class RouteDockClient {
         throw new RouteDockManifestError(`Unknown payment mode: ${mode as string}`)
     }
 
-    const selectedAsset = selectAsset(manifest, mode, url).asset
+    const selected = selectAsset(manifest, mode, url)
+    this._assertAssetContract(manifest, selected)
+    const selectedAsset = selected.asset
 
     return {
       amount,
@@ -583,18 +608,71 @@ export class RouteDockClient {
       )
     }
 
+    const selected = selectAsset(manifest, mode, url)
+    this._assertAssetContract(manifest, selected)
+
     const endpointKey = new URL(url).origin
 
     // Reject before the channel opens (opening deposits on-chain), so a
     // non-capped asset never gets as far as locking funds.
     let onSpend: ((amount: string) => Promise<void>) | undefined
     if (this.spendCap) {
-      const sessionAsset = selectAsset(manifest, mode, url).asset
+      const sessionAsset = selected.asset
       this._assertCapAsset(sessionAsset)
       onSpend = (amount: string) => this._recordSessionSpend(amount, endpointKey, sessionAsset)
     }
 
     return this.session.openSession(url, manifest, secret, options, onSpend)
+  }
+
+  private _resolveAssetIssuer(manifest: RouteDockManifest, selected: AssetConfig): string | undefined {
+    if (selected.asset_issuer !== undefined) return selected.asset_issuer
+    if (selected.asset === manifest.asset && selected.asset_contract === manifest.asset_contract) {
+      return manifest.asset_issuer
+    }
+    return undefined
+  }
+
+  /**
+   * Verify that the selected asset's `asset_contract` matches the canonical SAC
+   * derived for `(selected.asset, issuer, this.network)`.
+   *
+   * When the contract cannot be derived (unknown asset with no `asset_issuer`),
+   * fail closed with `asset_contract_mismatch` if a `spendCap` is configured,
+   * or log a single warning and continue when uncapped.
+   */
+  private _assertAssetContract(
+    manifest: RouteDockManifest,
+    selected: AssetConfig,
+    warned?: Set<string>,
+  ): void {
+    const issuer = this._resolveAssetIssuer(manifest, selected)
+    const expected = expectedAssetContract(selected.asset, issuer, this.network)
+    if (expected === undefined) {
+      if (this.spendCap) {
+        throw new RouteDockPolicyRejectError('asset_contract_mismatch', {
+          cause: new Error(
+            `Cannot derive Stellar Asset Contract for ${selected.asset} on ${this.network} while spendCap is configured`,
+          ),
+        })
+      }
+      const warnKey = `${selected.asset}:${selected.asset_contract}`
+      if (!warned || !warned.has(warnKey)) {
+        warned?.add(warnKey)
+        resolveLogger(this.logger)(
+          'warn',
+          `[RouteDock] WARNING: cannot derive Stellar Asset Contract for ${selected.asset} on ${this.network}; proceeding with manifest asset_contract ${selected.asset_contract}`,
+        )
+      }
+      return
+    }
+    if (selected.asset_contract !== expected) {
+      throw new RouteDockPolicyRejectError('asset_contract_mismatch', {
+        cause: new Error(
+          `Manifest asset ${selected.asset} on ${this.network} declared asset_contract ${selected.asset_contract}, expected ${expected}`,
+        ),
+      })
+    }
   }
 
   /**
