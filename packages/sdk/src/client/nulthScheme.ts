@@ -99,6 +99,9 @@ const defaultIo: NulthSchemeIo = {
   },
 }
 
+/** Upper bound for the provider-supplied maxTimeoutSeconds. */
+export const NULTH_MAX_TIMEOUT_SECONDS = 300
+
 export class NulthStellarScheme implements SchemeNetworkClient {
   readonly scheme = 'exact'
 
@@ -125,7 +128,9 @@ export class NulthStellarScheme implements SchemeNetworkClient {
       throw new Error('Nulth exact scheme requires areFeesSponsored to be true')
     }
 
-    const maxLedger = await this.io.expirationLedger(network, maxTimeoutSeconds)
+    // A provider controls maxTimeoutSeconds; never let it stretch the auth validity window.
+    const clampedTimeout = Math.min(maxTimeoutSeconds, NULTH_MAX_TIMEOUT_SECONDS)
+    const maxLedger = await this.io.expirationLedger(network, clampedTimeout)
     const tx = await this.io.assemble({
       asset,
       from,

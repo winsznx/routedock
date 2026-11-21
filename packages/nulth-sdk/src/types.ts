@@ -75,6 +75,11 @@ export interface NulthClientConfig {
   policy: NulthPolicyState
   /** Optional verifier contract deployed alongside the Nulth account */
   verifierContract?: string
+  /**
+   * Max ledgers the signed auth entry's `signatureExpirationLedger` may sit
+   * past `paymentContext.ledgerSequence`. Defaults to 120 (~10 minutes).
+   */
+  authExpiryWindowLedgers?: number
   /** Log sink for the mock-prover warning. Defaults to no-op (silent). */
   logger?: NulthLogger
 }
@@ -91,7 +96,7 @@ export class NulthConfigError extends Error {
 }
 
 export class NulthPolicyError extends Error {
-  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired' | 'auth_entry_mismatch'
+  readonly code: 'payee_not_allowed' | 'daily_cap_exceeded' | 'session_expired' | 'auth_entry_mismatch' | 'auth_expiry_out_of_policy'
 
   constructor(code: NulthPolicyError['code'], message: string) {
     super(message)
