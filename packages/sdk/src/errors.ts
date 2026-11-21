@@ -1,3 +1,5 @@
+import type { PaymentResult } from './types.js'
+
 /** Stable error codes for programmatic handling. */
 export type RouteDockErrorCode =
   | 'MANIFEST'
@@ -10,6 +12,7 @@ export type RouteDockErrorCode =
   | 'VOUCHER_MONOTONICITY'
   | 'POLICY_REJECT'
   | 'PAYMENT_REJECTED'
+  | 'PAID_RESPONSE'
   | 'CHANNEL_STATE'
   | 'DISPUTE'
   | 'REFUND_WINDOW'
@@ -188,6 +191,31 @@ export class RouteDockPaymentRejectedError extends RouteDockError {
     this.status = status
     if (details.reason !== undefined) this.reason = details.reason
     if (details.providerError !== undefined) this.providerError = details.providerError
+  }
+}
+
+/**
+ * A paid request succeeded, but its response body could not be read.
+ * Payment must remain counted against spend caps and must not be retried.
+ */
+export class RouteDockPaidResponseError extends RouteDockError {
+  readonly paid = true
+  readonly txHash: string | null
+  readonly amount: string
+  readonly mode: PaymentResult['mode']
+  readonly contentType?: string
+
+  constructor(
+    message: string,
+    payment: Pick<PaymentResult, 'txHash' | 'amount' | 'mode' | 'contentType'>,
+    options: RouteDockErrorOptions = {},
+  ) {
+    super(message, 'PAID_RESPONSE', false, options)
+    this.name = 'RouteDockPaidResponseError'
+    this.txHash = payment.txHash
+    this.amount = payment.amount
+    this.mode = payment.mode
+    if (payment.contentType !== undefined) this.contentType = payment.contentType
   }
 }
 

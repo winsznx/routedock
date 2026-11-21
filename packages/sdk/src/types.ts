@@ -210,8 +210,10 @@ export interface RouteDockManifest {
 
 /** Result returned by client.pay() for any payment mode */
 export interface PaymentResult {
-  /** Parsed response body from the provider */
+  /** Parsed JSON body from the provider, or its original text when it is not JSON. */
   data: unknown
+  /** Provider response Content-Type, when present. */
+  contentType?: string
   /** On-chain Stellar transaction hash, or null for session voucher calls */
   txHash: string | null
   /** Payment mode that was used for this call */
