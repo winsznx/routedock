@@ -649,10 +649,12 @@ function ActivityFeed({ channelId }: { channelId: string }) {
 
 | Hook | Returns | Requires from `RouteDockProvider` |
 |---|---|---|
-| `useRouteDockClient(config)` | Memoized `RouteDockClient` | — (creator hook) |
+| `useRouteDockClient(config)` | Memoized `RouteDockClient`; rebuilt when any config field changes (scalars by value, functions/stores by identity) | — (creator hook) |
 | `usePay(url, options?)` | `{ pay, result, loading, error }` | `client` |
 | `useSession(url)` | `{ session, status, vouchers, cumulative, error, open, close }` | `client` (with `commitmentSecret`) |
 | `useTxLog(filter?)` | `TxLogRow[]` (newest first) | `supabase` |
+
+For `useRouteDockClient`, scalar config (including `expectedPayee`, `spendCap.endpointCaps`, `retryPolicy` and `vault` values) is compared by value; `preSignHook`, `spendStore`, `logger`, `retryPolicy.onRetry` and `retryPolicy.logger` are keyed by identity, so memoize those in the caller to keep the client stable across renders.
 
 React is a peer dependency — install `react@^18` (or `^19`) in your app.
 
