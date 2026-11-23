@@ -788,6 +788,60 @@ mod tests {
         })
     }
 
+    /// Decode a fixed-width hex fixture file (`testdata/ts_auth/*.hex`).
+    fn hex_fixture<const N: usize>(hex: &str) -> [u8; N] {
+        let hex = hex.trim();
+        assert_eq!(hex.len(), N * 2, "fixture must be {N} bytes of hex");
+        let mut out = [0u8; N];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("fixture is hex");
+        }
+        out
+    }
+
+    /// #721: the SDK's `agentVaultAuthorizeEntry` writes the credential signature
+    /// as raw `scvBytes` (64 bytes) over `sha256(HashIdPreimageSorobanAuthorization)`.
+    /// The three fixture files are produced by that TS helper (the SDK test
+    /// `agentVault.test.ts` fails if the helper's output ever differs from them;
+    /// regenerate with `UPDATE_AGENT_VAULT_FIXTURE=1`). This test decodes them as
+    /// `BytesN<64>` and runs the real `__check_auth`, so a drift between what the
+    /// SDK signs and what the vault verifies fails here.
+    #[test]
+    fn test_signature_from_ts_helper_passes_check_auth() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let agent_pk = BytesN::<32>::from_array(
+            &env,
+            &hex_fixture::<32>(include_str!("../testdata/ts_auth/agent_pk.hex")),
+        );
+        let payload = BytesN::<32>::from_array(
+            &env,
+            &hex_fixture::<32>(include_str!("../testdata/ts_auth/payload.hex")),
+        );
+        let sig = BytesN::<64>::from_array(
+            &env,
+            &hex_fixture::<64>(include_str!("../testdata/ts_auth/signature.hex")),
+        );
+
+        let payee = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
+        let vault_id = env.register(
+            AgentVault,
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+        );
+
+        // The payload is opaque to the vault; the policy contexts only need to be a
+        // transfer to an allowlisted payee within the caps.
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &payee, 100_000)]);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "TS-produced signature must pass __check_auth: {result:?}");
+    }
+
     /// Test 1: valid payment within cap to allowlisted address passes
     #[test]
     fn test_valid_payment_within_cap_passes() {

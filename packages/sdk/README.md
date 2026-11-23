@@ -140,6 +140,34 @@ const store: SpendStore = {
 }
 ```
 
+### Agent vault (on-chain spend policies)
+
+Pay from an AgentVault contract account (`C...`) instead of a plain keypair, so the
+vault's on-chain policies (daily cap, payee allowlist, session expiry, per-payee
+and lifetime caps, freeze) apply to every payment:
+
+```ts
+const client = new RouteDockClient({
+  wallet: feePayerKeypair,
+  network: 'testnet',
+  vault: {
+    mode: 'agent-vault',
+    vaultContract: 'C...',   // the deployed AgentVault
+    agentSecret: 'S...',     // the ed25519 key registered on the vault as agent_pk
+  },
+})
+```
+
+- **x402 only.** `mpp-charge` and `mpp-session` / `mpp-session-ws` throw a clear
+  error: the session channel address is not on the vault allowlist and the vault
+  rejects create-contract contexts.
+- The provider's manifest must be on the same network and, if it declares a
+  `vault`, declare `agent-vault`.
+- The payment is simulated again after signing, which is when the vault runs its
+  policies. A refusal surfaces as `RouteDockPolicyRejectError` with `reason`
+  `vault_session_expired` (`#3`), `vault_daily_cap_exceeded` (`#4`),
+  `vault_payee_not_allowed` (`#5`) or `vault_frozen` (`#9`).
+
 ## Provider Usage
 
 ```ts
