@@ -16,6 +16,7 @@ import type {
   SessionHandle,
   PaymentMode,
   AssetConfig,
+  PaymentRequest,
 } from '@routedock/routedock'
 import { usdcToStroops } from '@routedock/routedock'
 // Canonical network constants (issue #578): the server keeps one copy of the
@@ -23,7 +24,7 @@ import { usdcToStroops } from '@routedock/routedock'
 // and the SDK.
 import { HORIZON_URLS, USDC_ISSUERS } from '@routedock/routedock/network'
 import { Keypair, Horizon } from '@stellar/stellar-sdk'
-import { MAX_PROVIDER_ROWS, MAX_STREAM_MESSAGES } from './tools.js'
+import { MAX_PROVIDER_ROWS, MAX_REQUEST_BODY_BYTES, MAX_STREAM_MESSAGES, REQUEST_METHODS } from './tools.js'
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -131,6 +132,72 @@ export interface PayForDataArgs {
   url: string
   max_amount: string
   preferred_mode?: PaymentMode
+  method?: (typeof REQUEST_METHODS)[number]
+  headers?: Record<string, string>
+  body?: string
+}
+
+/** Headers the SDK owns: a caller must never supply payment credentials. */
+function isPaymentHeader(name: string): boolean {
+  const lower = name.trim().toLowerCase()
+  return lower === 'authorization' || lower.startsWith('x-payment')
+}
+
+/**
+ * Validate the optional method/headers/body and map them to the SDK's
+ * `options.request`. MCP does not validate arguments against inputSchema, so
+ * every field is checked here. Returns `undefined` when none were supplied.
+ */
+function buildPaymentRequest(args: {
+  method: PayForDataArgs['method'] | undefined
+  headers: PayForDataArgs['headers'] | undefined
+  body: PayForDataArgs['body'] | undefined
+}): { request?: PaymentRequest } | { error: string } {
+  const { method, headers, body } = args
+  if (method === undefined && headers === undefined && body === undefined) return {}
+
+  if (method !== undefined && !(REQUEST_METHODS as readonly unknown[]).includes(method)) {
+    return { error: `method must be one of ${REQUEST_METHODS.join(', ')} (received ${JSON.stringify(method)})` }
+  }
+
+  let cleanHeaders: Record<string, string> | undefined
+  if (headers !== undefined) {
+    if (headers === null || typeof headers !== 'object' || Array.isArray(headers)) {
+      return { error: 'headers must be an object mapping header names to string values' }
+    }
+    cleanHeaders = {}
+    for (const [name, value] of Object.entries(headers)) {
+      if (typeof value !== 'string') {
+        return { error: `header ${JSON.stringify(name)} must have a string value` }
+      }
+      if (isPaymentHeader(name)) {
+        return {
+          error:
+            `header ${JSON.stringify(name)} is not allowed: Authorization and x-payment* headers ` +
+            `are set by RouteDock and cannot be supplied by the caller`,
+        }
+      }
+      cleanHeaders[name] = value
+    }
+  }
+
+  if (body !== undefined) {
+    if (typeof body !== 'string') return { error: 'body must be a string' }
+    const bytes = Buffer.byteLength(body, 'utf8')
+    if (bytes > MAX_REQUEST_BODY_BYTES) {
+      return { error: `body is ${bytes} bytes, above the ${MAX_REQUEST_BODY_BYTES} byte (64 KiB) limit` }
+    }
+    if (method === undefined || method === 'GET') {
+      return { error: 'body requires method POST, PUT, PATCH or DELETE (a GET request cannot carry a body)' }
+    }
+  }
+
+  const request: PaymentRequest = {
+    ...(method !== undefined && { method }),
+    ...(cleanHeaders !== undefined && { headers: cleanHeaders }),
+    ...(body !== undefined && { body }),
+  }
+  return { request }
 }
 
 /** Parse a decimal USDC string to stroops, or null when it is not one. */
@@ -159,7 +226,7 @@ export async function handlePayForData(
   args: PayForDataArgs,
   deps: HandlerDeps,
 ): Promise<ToolResult> {
-  const { url, max_amount, preferred_mode } = args
+  const { url, max_amount, preferred_mode, method, headers, body } = args
   const { client } = deps
 
   const maxStroops = parseUsdc(max_amount)
@@ -170,9 +237,18 @@ export async function handlePayForData(
     )
   }
 
-  const modeOptions = preferred_mode
-    ? { forceMode: preferred_mode as PaymentMode }
-    : undefined
+  const built = buildPaymentRequest({ method, headers, body })
+  if ('error' in built) return err(built.error)
+
+  // The same options go to estimateCost and pay so the quoted request (method
+  // scopes the endpoint sunset check) is the one that is paid for.
+  const modeOptions =
+    preferred_mode || built.request
+      ? {
+          ...(preferred_mode && { forceMode: preferred_mode as PaymentMode }),
+          ...(built.request && { request: built.request }),
+        }
+      : undefined
 
   const estimate = await client.estimateCost(url, modeOptions)
 
@@ -735,4 +811,47 @@ export async function handleListProviders(
       }
     }),
   })
+}
+
+// ---------------------------------------------------------------------------
+// quote_provider
+// ---------------------------------------------------------------------------
+
+export interface QuoteProviderArgs {
+  url: string
+}
+
+/**
+ * Report a provider's per-mode costs and compliance flags from its manifest.
+ * Backed by `client.preflight(url)`, which fetches the manifest only: it never
+ * pays and never opens a session.
+ */
+export async function handleQuoteProvider(
+  args: QuoteProviderArgs,
+  deps: HandlerDeps,
+): Promise<ToolResult> {
+  const { url } = args
+  if (typeof url !== 'string' || url.length === 0) {
+    return err('url must be the full URL of a provider endpoint')
+  }
+
+  const quote = await deps.client.preflight(url)
+
+  return ok({
+    success: true,
+    url,
+    modes: quote.modes,
+    costs: quote.costs,
+    compliance: quote.compliance,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// get_spend_status
+// ---------------------------------------------------------------------------
+
+/** Report today's spend against the configured caps. Never pays. */
+export async function handleGetSpendStatus(deps: HandlerDeps): Promise<ToolResult> {
+  const status = await deps.client.getSpendStatus()
+  return ok({ success: true, ...status })
 }

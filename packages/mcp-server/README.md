@@ -10,12 +10,14 @@ Node.js **22 or newer**, matching the supported runtime of all RouteDock npm pac
 
 This MCP server implements the thesis that base payment infrastructure should be built for machines, not humans. Instead of requiring every LLM agent to implement the full RouteDock SDK, agents can simply connect to this MCP server and use standardized tools:
 
-- `pay_for_data(url, max_amount)` - Pay for a single data request
+- `pay_for_data(url, max_amount)` - Pay for a single data request (optional `method`, `headers`, `body` for POST providers)
 - `open_session(url)` - Open a sustained MPP session for streaming
 - `stream_session(channel_id)` - Pull streamed data from an open session
 - `close_session(channel_id)` - Settle and close an open session
 - `check_balance()` - Check wallet balance
 - `list_providers(tags)` - Discover available providers
+- `quote_provider(url)` - Get a provider's price per mode without paying
+- `get_spend_status()` - Show today's spend and the remaining daily cap
 
 ## Installation
 
@@ -64,6 +66,10 @@ Pay for a single data request from a RouteDock provider. Automatically selects t
   number with at most 7 decimal places and no currency symbol. Anything else (missing, `"$0.01"`, `"0"`,
   a JSON number) is rejected before the provider is contacted.
 - `preferred_mode` (optional): Preferred payment mode (`x402`, `mpp-charge`, `mpp-session`)
+- `method` (optional): HTTP method for the paid request, one of `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE`
+- `headers` (optional): Extra request headers as a name-to-string map. `Authorization` and `x-payment*`
+  headers are rejected, because RouteDock sets the payment headers itself.
+- `body` (optional): Request body string, at most 64 KiB. Requires a method other than `GET`.
 
 **Returns:** Payment result with mode, amount, transaction hash, and response data
 
@@ -136,6 +142,33 @@ List available RouteDock providers from the registry. Requires Supabase credenti
 **Returns:** `count`, the `network` and `limit` that were applied, a `truncated` flag, and each provider's
 capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Verified providers
 are listed first, then the newest registrations.
+
+### quote_provider
+
+Get a provider's price without paying. Only the provider's manifest is fetched: no payment is made and no
+session is opened.
+
+**Parameters:**
+- `url` (required): Full URL of the provider endpoint
+
+**Returns:** `modes`, `costs` (per mode: `amount`, `per`, `asset`, and `min_deposit` for session modes) and
+`compliance` (deprecated modes and sunset flags)
+
+### get_spend_status
+
+Show how much of the daily spend cap (`ROUTEDOCK_DAILY_CAP`) has been used today.
+
+**Parameters:** none
+
+**Returns:** `asset`, `daily`, `spentToday`, `remainingToday`, `day` (UTC) and, when per-endpoint caps are
+configured, `endpoints` with each origin's `cap` and `spent`. A payment in flight counts; a failed one does not.
+
+### Tool annotations
+
+`check_balance`, `list_providers`, `quote_provider` and `get_spend_status` are marked `readOnlyHint: true`.
+`pay_for_data`, `open_session`, `stream_session` and `close_session` are marked `destructiveHint: true`,
+`idempotentHint: false` and `openWorldHint: true`, so MCP hosts can auto-approve the read-only tools while
+still confirming the ones that spend.
 
 ## Claude Desktop Configuration
 
