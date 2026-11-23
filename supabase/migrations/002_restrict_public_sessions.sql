@@ -23,4 +23,10 @@ GRANT SELECT ON public_sessions TO anon, authenticated;
 
 -- Realtime publishes whole changed rows. Do not publish `sessions` because rows
 -- contain last_signature, a broadcastable channel-close authorization.
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS sessions;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication_tables
+             WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'sessions') THEN
+    ALTER PUBLICATION supabase_realtime DROP TABLE sessions;
+  END IF;
+END $$;
