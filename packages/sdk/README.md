@@ -456,7 +456,18 @@ ctx.waitUntil(
 )
 ```
 
-This writes to the `providers` table from migration `001_init.sql`.
+This writes to the `providers` table from migration `001_init.sql`, plus the
+columns added by `009_providers_verified_guard.sql`.
+
+Registering never marks a provider verified. `registerProvider` does not send
+`verified`, new rows start unverified, and a database trigger rejects any change
+to `providers.verified` unless the session is a member of the `routedock_admin`
+role (the service key your provider uses is not). An operator verifies a
+provider by hand; the `verified` option is deprecated and ignored.
+
+If the stored manifest digest already matches, `registerProvider` skips the
+write, and refreshes `last_seen_at` at most once per `touchIntervalMs`
+(default one hour).
 
 ### Serving `mpp-session-ws`
 
