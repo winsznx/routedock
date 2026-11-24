@@ -16,8 +16,11 @@
  *   START_MOCK_PROVIDER=false
  */
 
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
 import { routedockHono } from '@routedock/routedock/provider/hono'
 import { RouteDockClient } from '@routedock/routedock'
@@ -41,10 +44,26 @@ const USDC_CONTRACT: string =
         ? 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
         : '')
 
-if (!USDC_CONTRACT) {
-    console.error('FATAL: USDC_ASSET_CONTRACT is required for mainnet')
-    process.exit(1)
+/** Path the provider serves. The manifest, the route and the client all use it. */
+export const INFER_PATH = '/infer'
+/** HTTP method of the paid route. The manifest, the route and the client all use it. */
+export const INFER_METHOD = 'POST'
+
+/** The request the client sends for one prompt: a JSON body `{ prompt }`. */
+export function buildInferRequest(prompt: string): {
+    method: typeof INFER_METHOD
+    headers: Record<string, string>
+    body: string
+} {
+    return {
+        method: INFER_METHOD,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+    }
 }
+
+/** The payment middleware slot. Defaults to `routedockHono`; tests inject a stub that settles without a chain. */
+export type PaymentGate = MiddlewareHandler
 
 // Canned responses so the mock needs no real LLM.
 const CANNED_RESPONSES: Record<string, string> = {
@@ -57,10 +76,8 @@ const CANNED_RESPONSES: Record<string, string> = {
 // Mock inference provider (Hono)
 // ---------------------------------------------------------------------------
 
-function buildMockServer(providerSecret: string): Hono {
-    const providerKp = Keypair.fromSecret(providerSecret)
-
-    const manifest: RouteDockManifest = {
+export function buildMockManifest(payee: string): RouteDockManifest {
+    return {
         routedock: '1.0',
         name: 'Mock Inference Provider',
         description: 'Simulated LLM inference endpoint — returns canned responses',
@@ -68,17 +85,25 @@ function buildMockServer(providerSecret: string): Hono {
         network: STELLAR_NETWORK as 'testnet' | 'mainnet',
         asset: 'USDC',
         asset_contract: USDC_CONTRACT,
-        payee: providerKp.publicKey(),
+        payee,
         pricing: {
             'mpp-charge': { amount: '0.0005', per: 'request' },
         },
-        endpoints: { infer: { method: 'GET', path: '/infer' } },
+        endpoints: { infer: { method: INFER_METHOD, path: INFER_PATH } },
         tags: ['inference', 'llm', 'ai'],
     }
+}
+
+export function buildMockServer(
+    providerSecret: string,
+    options: { paymentGate?: PaymentGate } = {},
+): Hono {
+    const providerKp = Keypair.fromSecret(providerSecret)
+    const manifest = buildMockManifest(providerKp.publicKey())
 
     const app = new Hono()
 
-    app.use(routedockHono({
+    app.use(options.paymentGate ?? routedockHono({
             modes: ['mpp-charge'],
             pricing: { 'mpp-charge': manifest.pricing['mpp-charge']!.amount },
             asset: manifest.asset,
@@ -93,8 +118,12 @@ function buildMockServer(providerSecret: string): Hono {
         }),
     )
 
-    app.get('/infer', async (c) => {
-        const prompt = (c.req.query('prompt') ?? '').toLowerCase()
+    // Registered for the method the manifest declares and the client sends. The
+    // payment middleware settles before it reaches this handler, so a route
+    // that does not match would answer the paid request with a 404.
+    app.post(INFER_PATH, async (c) => {
+        const body = (await c.req.json().catch(() => null)) as { prompt?: unknown } | null
+        const prompt = (typeof body?.prompt === 'string' ? body.prompt : '').toLowerCase()
         const key = Object.keys(CANNED_RESPONSES).find((k) => k !== 'default' && prompt.includes(k))
         return c.json({ response: CANNED_RESPONSES[key ?? 'default'], model: 'mock-v1' })
     })
@@ -119,6 +148,9 @@ function requireSecret(name: string, value: string): void {
 }
 
 async function main(): Promise<void> {
+    if (!USDC_CONTRACT) {
+        throw new Error('USDC_ASSET_CONTRACT is required for mainnet')
+    }
     requireSecret('AGENT_SECRET', AGENT_SECRET)
 
     let server: ReturnType<typeof serve> | null = null
@@ -132,7 +164,7 @@ async function main(): Promise<void> {
         await new Promise((r) => setTimeout(r, 50))
     }
 
-    const inferUrl = `${INFERENCE_PROVIDER_URL}/infer`
+    const inferUrl = `${INFERENCE_PROVIDER_URL}${INFER_PATH}`
 
     const client = new RouteDockClient({
         wallet: AGENT_SECRET,
@@ -153,11 +185,7 @@ async function main(): Promise<void> {
         // mpp-charge is the preferred mode for the mock manifest, so no forceMode needed.
         const result = await client.pay(inferUrl, {
             forceMode: 'mpp-charge',
-            request: {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ prompt }),
-            },
+            request: buildInferRequest(prompt),
         })
         const data = result.data as { response?: string; model?: string }
 
@@ -172,7 +200,10 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((err) => {
-    console.error('[fatal]', err)
-    process.exit(1)
-})
+// Run only when executed directly (node index.ts), not when imported by tests.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+    main().catch((err) => {
+        console.error('[fatal]', err)
+        process.exit(1)
+    })
+}

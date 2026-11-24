@@ -90,6 +90,10 @@ jobs:
         run: pnpm --filter @routedock/routedock build
       - name: Run MCP server tests
         run: pnpm --filter @routedock/mcp-server test
+      # No-funds smoke test of the example mock providers: the request each
+      # example's client sends must reach a 200 route (#761).
+      - name: Run example route tests
+        run: node --experimental-strip-types --test examples/__tests__/routes.test.ts
       - name: Run provider-a tests
         run: pnpm --filter provider-a test
       - name: Run provider-b tests
