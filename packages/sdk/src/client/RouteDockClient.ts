@@ -7,7 +7,7 @@ import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './N
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
-import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
+import { USDC_ISSUERS, usdcToStroops, stroopsToUsdc } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
 import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 import { selectAsset } from '../internal/assetUtils.js'
@@ -50,6 +50,28 @@ export interface SpendCap {
    * same origin as another key throws at construction time.
    */
   endpointCaps?: Record<string, string>
+}
+
+/**
+ * Snapshot of the local daily spend accumulator, returned by
+ * {@link RouteDockClient.getSpendStatus}. All amounts are USDC decimal strings.
+ */
+export interface SpendStatus {
+  /** The only asset the accumulator counts. */
+  asset: 'USDC'
+  /** Configured daily cap, or `null` when the client has no `spendCap`. */
+  daily: string | null
+  /** Spend recorded for the current UTC day, including payments still in flight. */
+  spentToday: string
+  /** `daily - spentToday` (never negative), or `null` when there is no `daily` cap. */
+  remainingToday: string | null
+  /** The UTC day the figures apply to (YYYY-MM-DD). */
+  day: string
+  /**
+   * Per-origin caps and their spend. Present only when `spendCap.endpointCaps`
+   * is configured; keys are normalized origins.
+   */
+  endpoints?: Record<string, { cap: string; spent: string }>
 }
 
 /**
@@ -645,6 +667,50 @@ export class RouteDockClient {
    */
   invalidateManifest(url: string): void {
     evictManifest(new URL(url).origin)
+  }
+
+  /**
+   * Report how much of the local daily spend cap has been used, without paying
+   * anything. The read goes through the same mutex as reserve/rollback, so it
+   * never observes a half-applied update from a payment in this client.
+   *
+   * Spend is recorded when a payment is reserved, so a payment in flight
+   * counts and a rolled-back (failed) payment does not. A stored accumulator
+   * from an earlier UTC day reads as zero. With no `spendCap` configured,
+   * `daily` and `remainingToday` are `null`.
+   */
+  async getSpendStatus(): Promise<SpendStatus> {
+    const stored = await this._withSpendMutex(() => this.spendStore.read())
+    const day = new Date().toISOString().slice(0, 10)
+    const current = stored && stored.date === day ? stored : null
+
+    const spent = BigInt(current?.totalMicros ?? '0')
+    const spendCap = this.spendCap
+
+    let remainingToday: string | null = null
+    if (spendCap) {
+      const cap = usdcToStroops(spendCap.daily)
+      remainingToday = stroopsToUsdc(spent >= cap ? 0n : cap - spent)
+    }
+
+    const status: SpendStatus = {
+      asset: 'USDC',
+      daily: spendCap ? spendCap.daily : null,
+      spentToday: stroopsToUsdc(spent),
+      remainingToday,
+      day,
+    }
+
+    if (spendCap?.endpointCaps) {
+      status.endpoints = Object.fromEntries(
+        Object.entries(spendCap.endpointCaps).map(([origin, cap]) => [
+          origin,
+          { cap, spent: stroopsToUsdc(BigInt(current?.endpoints[origin] ?? '0')) },
+        ]),
+      )
+    }
+
+    return status
   }
 
   /**

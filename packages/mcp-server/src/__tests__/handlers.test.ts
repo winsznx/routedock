@@ -10,6 +10,8 @@ import {
   handleCloseSession,
   handleCheckBalance,
   handleListProviders,
+  handleQuoteProvider,
+  handleGetSpendStatus,
   type HandlerDeps,
   type PayForDataArgs,
   type ToolResult,
@@ -17,7 +19,7 @@ import {
   type ProviderRow,
   type SupabaseQueryBuilder,
 } from '../handlers.js'
-import { MAX_PROVIDER_ROWS, MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
+import { MAX_PROVIDER_ROWS, MAX_REQUEST_BODY_BYTES, MAX_STREAM_MESSAGES, TOOLS } from '../tools.js'
 
 // ---------------------------------------------------------------------------
 // Tool schema regression guard (issue #272)
@@ -1313,5 +1315,291 @@ describe('handleListProviders', () => {
 
     const capped = payload(await handleListProviders({ limit: 2 }, deps))
     assert.equal(capped.truncated, true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tool annotations
+// ---------------------------------------------------------------------------
+
+describe('TOOLS annotations', () => {
+  const SPENDING = ['pay_for_data', 'open_session', 'stream_session', 'close_session']
+  const READ_ONLY = ['check_balance', 'list_providers', 'quote_provider', 'get_spend_status']
+
+  it('every tool has annotations', () => {
+    for (const tool of TOOLS) {
+      assert.ok(tool.annotations, `${tool.name} must have annotations`)
+    }
+  })
+
+  it('exposes exactly the spending and read-only tools', () => {
+    assert.deepEqual(TOOLS.map((t) => t.name).sort(), [...SPENDING, ...READ_ONLY].sort())
+  })
+
+  it('the four spending tools are not read-only and are non-idempotent', () => {
+    for (const name of SPENDING) {
+      const tool = TOOLS.find((t) => t.name === name)
+      assert.ok(tool, `${name} must exist`)
+      assert.notEqual(tool.annotations?.readOnlyHint, true, `${name} must not be readOnlyHint`)
+      assert.equal(tool.annotations?.destructiveHint, true, `${name} destructiveHint`)
+      assert.equal(tool.annotations?.idempotentHint, false, `${name} idempotentHint`)
+      assert.equal(tool.annotations?.openWorldHint, true, `${name} openWorldHint`)
+    }
+  })
+
+  it('the four non-spending tools are read-only', () => {
+    for (const name of READ_ONLY) {
+      const tool = TOOLS.find((t) => t.name === name)
+      assert.ok(tool, `${name} must exist`)
+      assert.equal(tool.annotations?.readOnlyHint, true, `${name} readOnlyHint`)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// quote_provider
+// ---------------------------------------------------------------------------
+
+describe('handleQuoteProvider', () => {
+  const QUOTE = {
+    modes: ['x402', 'mpp-session'],
+    costs: [
+      { mode: 'x402', amount: '0.001', per: 'request', asset: 'USDC' },
+      { mode: 'mpp-session', amount: '0.0001', per: 'voucher', asset: 'USDC', min_deposit: '0.10' },
+    ],
+    compliance: { deprecated_modes: ['mpp-charge'], endpoint_deprecated: false },
+  }
+
+  function quoteDeps(preflight: (url: string) => Promise<unknown>): HandlerDeps {
+    const forbidden = (name: string) => async () => {
+      throw new Error(`${name} must not be called by quote_provider`)
+    }
+    return {
+      client: {
+        preflight,
+        pay: forbidden('pay'),
+        openSession: forbidden('openSession'),
+        estimateCost: forbidden('estimateCost'),
+      } as unknown as HandlerDeps['client'],
+      openSessions: new Map(),
+      supabase: null,
+      stellarSecret: Keypair.random().secret(),
+      stellarNetwork: 'testnet',
+    }
+  }
+
+  it('returns per-mode costs and compliance flags without paying or opening a session', async () => {
+    const seen: string[] = []
+    const result = await handleQuoteProvider(
+      { url: 'https://api.example.com/price' },
+      quoteDeps(async (url) => {
+        seen.push(url)
+        return QUOTE
+      }),
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(seen, ['https://api.example.com/price'])
+    const body = payload(result)
+    assert.equal(body.success, true)
+    assert.deepEqual(body.modes, QUOTE.modes)
+    assert.deepEqual(body.costs, QUOTE.costs)
+    assert.deepEqual(body.compliance, QUOTE.compliance)
+  })
+
+  it('rejects a missing url without calling the client', async () => {
+    const result = await handleQuoteProvider(
+      {} as unknown as { url: string },
+      quoteDeps(async () => {
+        throw new Error('preflight must not be called')
+      }),
+    )
+    assert.equal(result.isError, true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// get_spend_status
+// ---------------------------------------------------------------------------
+
+describe('handleGetSpendStatus', () => {
+  it('returns the client spend status', async () => {
+    const status = {
+      asset: 'USDC',
+      daily: '1.00',
+      spentToday: '0.25',
+      remainingToday: '0.75',
+      day: '2026-11-22',
+    }
+    const deps = {
+      client: { getSpendStatus: async () => status } as unknown as HandlerDeps['client'],
+      openSessions: new Map(),
+      supabase: null,
+      stellarSecret: Keypair.random().secret(),
+      stellarNetwork: 'testnet',
+    } satisfies HandlerDeps
+
+    const result = await handleGetSpendStatus(deps)
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(payload(result), { success: true, ...status })
+  })
+
+  it('reflects a committed payment and a rolled-back one (real client)', async () => {
+    const { RouteDockClient } = await import('@routedock/routedock')
+    const { InMemorySpendStore } = await import('@routedock/routedock')
+    const client = new RouteDockClient({
+      wallet: Keypair.random(),
+      network: 'testnet',
+      spendCap: { daily: '1.00', asset: 'USDC' },
+      spendStore: new InMemorySpendStore({ warn: false }),
+    })
+    const internals = client as unknown as {
+      _checkAndReserveSpend(a: string, k: string, asset: string): Promise<string>
+      _commitSpend(id: string): Promise<void>
+      _rollbackSpend(id: string): Promise<void>
+    }
+    const deps = {
+      client,
+      openSessions: new Map(),
+      supabase: null,
+      stellarSecret: Keypair.random().secret(),
+      stellarNetwork: 'testnet',
+    } satisfies HandlerDeps
+
+    const committed = await internals._checkAndReserveSpend('0.25', 'https://api.example.com', 'USDC')
+    await internals._commitSpend(committed)
+    const rolledBack = await internals._checkAndReserveSpend('0.40', 'https://api.example.com', 'USDC')
+    await internals._rollbackSpend(rolledBack)
+
+    const body = payload(await handleGetSpendStatus(deps))
+    assert.equal(body.spentToday, '0.25')
+    assert.equal(body.remainingToday, '0.75')
+    assert.equal(body.daily, '1.00')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pay_for_data: method / headers / body
+// ---------------------------------------------------------------------------
+
+describe('handlePayForData request options', () => {
+  function recordingDeps() {
+    const estimateCalls: unknown[] = []
+    const payCalls: unknown[] = []
+    const client = makeClient({
+      estimateCost: (async (_url: string, options?: unknown) => {
+        estimateCalls.push(options)
+        return estimate('0.001')
+      }) as HandlerDeps['client']['estimateCost'],
+      pay: (async (_url: string, options?: unknown) => {
+        payCalls.push(options)
+        return { mode: 'x402' as const, amount: '0.001', txHash: 'TX', timestamp: 1, data: {} }
+      }) as HandlerDeps['client']['pay'],
+    })
+    const deps: HandlerDeps = {
+      client,
+      openSessions: new Map(),
+      supabase: null,
+      stellarSecret: Keypair.random().secret(),
+      stellarNetwork: 'testnet',
+    }
+    return { deps, estimateCalls, payCalls }
+  }
+
+  const BASE = { url: 'https://api.example.com/infer', max_amount: '0.01' }
+
+  it('passes method, headers and body through as options.request', async () => {
+    const { deps, estimateCalls, payCalls } = recordingDeps()
+    const result = await handlePayForData(
+      {
+        ...BASE,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"prompt":"hi"}',
+      },
+      deps,
+    )
+
+    assert.equal(result.isError, undefined)
+    const expected = {
+      request: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"prompt":"hi"}',
+      },
+    }
+    assert.deepEqual(payCalls, [expected])
+    assert.deepEqual(estimateCalls, [expected])
+  })
+
+  it('keeps forceMode alongside the request', async () => {
+    const { deps, payCalls } = recordingDeps()
+    await handlePayForData({ ...BASE, preferred_mode: 'mpp-charge', method: 'POST', body: '{}' }, deps)
+    assert.deepEqual(payCalls, [{ forceMode: 'mpp-charge', request: { method: 'POST', body: '{}' } }])
+  })
+
+  it('passes no options when none of the new fields are given', async () => {
+    const { deps, payCalls } = recordingDeps()
+    await handlePayForData(BASE, deps)
+    assert.deepEqual(payCalls, [undefined])
+  })
+
+  for (const name of ['Authorization', 'authorization', 'X-Payment', 'x-payment-signature', 'X-PAYMENT-RESPONSE']) {
+    it(`rejects the payment header ${name} without paying`, async () => {
+      const { deps, estimateCalls, payCalls } = recordingDeps()
+      const result = await handlePayForData(
+        { ...BASE, method: 'POST', headers: { [name]: 'secret', 'content-type': 'application/json' } },
+        deps,
+      )
+      assert.equal(result.isError, true)
+      assert.match(String(payload(result).error), /not allowed/)
+      assert.equal(estimateCalls.length, 0)
+      assert.equal(payCalls.length, 0)
+    })
+  }
+
+  it('rejects an unknown method, non-string header values and non-object headers', async () => {
+    const { deps, payCalls } = recordingDeps()
+    const badMethod = await handlePayForData({ ...BASE, method: 'TRACE' as never }, deps)
+    const badValue = await handlePayForData({ ...BASE, headers: { a: 1 as never } }, deps)
+    const badHeaders = await handlePayForData({ ...BASE, headers: ['a'] as never }, deps)
+    for (const result of [badMethod, badValue, badHeaders]) assert.equal(result.isError, true)
+    assert.equal(payCalls.length, 0)
+  })
+
+  it('caps the body at 64 KiB measured in bytes', async () => {
+    const { deps, payCalls } = recordingDeps()
+
+    const atLimit = await handlePayForData(
+      { ...BASE, method: 'POST', body: 'a'.repeat(MAX_REQUEST_BODY_BYTES) },
+      deps,
+    )
+    assert.equal(atLimit.isError, undefined)
+
+    // 32 769 two-byte characters: under the limit in characters, over it in bytes.
+    const multibyte = await handlePayForData(
+      { ...BASE, method: 'POST', body: 'é'.repeat(MAX_REQUEST_BODY_BYTES / 2 + 1) },
+      deps,
+    )
+    assert.equal(multibyte.isError, true)
+    assert.match(String(payload(multibyte).error), /64 KiB/)
+    assert.equal(payCalls.length, 1)
+  })
+
+  it('rejects a body on GET or without a method', async () => {
+    const { deps, payCalls } = recordingDeps()
+    const noMethod = await handlePayForData({ ...BASE, body: '{}' }, deps)
+    const get = await handlePayForData({ ...BASE, method: 'GET', body: '{}' }, deps)
+    assert.equal(noMethod.isError, true)
+    assert.equal(get.isError, true)
+    assert.equal(payCalls.length, 0)
+  })
+
+  it('declares method, headers and body in the schema', () => {
+    const tool = TOOLS.find((t) => t.name === 'pay_for_data')
+    const props = (tool?.inputSchema as unknown as { properties: Record<string, { enum?: string[] }> }).properties
+    assert.deepEqual(props.method?.enum, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+    assert.ok(props.headers)
+    assert.ok(props.body)
   })
 })

@@ -41,9 +41,11 @@ With the MCP server, agents simply connect to a local MCP server and use standar
 
 ## Available Tools
 
-### 1. pay_for_data(url, max_amount, preferred_mode)
+### 1. pay_for_data(url, max_amount, preferred_mode, method, headers, body)
 
 Pay for a single data request from a RouteDock provider. Automatically selects the best payment mode based on the provider's manifest.
+
+Optional `method` (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`), `headers` (a name-to-string map) and `body` (a string of at most 64 KiB) are forwarded as the SDK's `options.request`, so providers with POST endpoints can be paid. Calls that include `Authorization` or any `x-payment*` header are rejected (those are set by RouteDock), as is a `body` with `GET`. Use `quote_provider` first to pick `max_amount`.
 
 **Use case:** One-off API calls, price feeds, single data queries
 
@@ -111,6 +113,31 @@ server does not surface mainnet providers the agent cannot pay. `limit` is an in
 was reached, so more providers may exist), and each provider's `name`, `description`, `base_url`, `modes`,
 `tags`, `verified`, and the assets it accepts — `assets` from the provider manifest plus `asset` for its
 primary one. The registry's full `manifest` JSONB is never returned.
+
+### 7. quote_provider(url)
+
+Get a provider's price without paying. Backed by the SDK's `client.preflight(url)`, which only fetches the provider's manifest: it never pays and never opens a session.
+
+**Use case:** Choose a `max_amount` for `pay_for_data`, or check `min_deposit` before `open_session`, instead of guessing
+
+**Returns:** `modes`, `costs` (one entry per mode: `amount`, `per` — `request` or `voucher` — `asset`, and `min_deposit` for session modes) and `compliance` (`deprecated_modes`, `endpoint_deprecated`, and `sunset_at` / `endpoint_sunset_at` when set)
+
+### 8. get_spend_status()
+
+Show how much of the server's daily spend cap (`ROUTEDOCK_DAILY_CAP`) has been used. Backed by `RouteDockClient.getSpendStatus()`.
+
+**Use case:** Plan a series of paid calls without discovering the cap when one of them fails
+
+**Returns:** `asset`, `daily`, `spentToday`, `remainingToday`, `day` (UTC) and, when per-endpoint caps are configured, `endpoints` as `{ cap, spent }` per origin. Spend counts as soon as a payment is reserved, so a payment in flight is included and a failed one is not. `daily` and `remainingToday` are `null` when no cap is configured.
+
+### Tool annotations
+
+Every tool carries MCP `annotations` so hosts can decide what to auto-approve:
+
+| Tool | Annotations |
+|------|-------------|
+| `check_balance`, `list_providers`, `quote_provider`, `get_spend_status` | `readOnlyHint: true` |
+| `pay_for_data`, `open_session`, `stream_session`, `close_session` | `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true` |
 
 ## Quick Start
 
