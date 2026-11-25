@@ -359,6 +359,53 @@ the client-supplied amount and signature. Moving them into the same durable
 store is tracked separately — check the current state of that work before
 relying on it.
 
+### On-chain channel checks (`channelStateCheck`)
+
+Signature and monotonicity checks alone can't tell whether a voucher is
+collectable. With `channelStateCheck` enabled, `@stellar/mpp` reads the
+channel contract before accepting each voucher and returns 402 (the route
+never runs) when:
+
+- the voucher's cumulative amount exceeds the channel balance, or
+- the channel's close-effective ledger has passed.
+
+| Network | Default |
+|---|---|
+| `mainnet` | enabled |
+| `testnet` | disabled, so vouchers are only checked for signature and monotonicity. Pass `{ enabled: true }` to test the mainnet behaviour. |
+
+**RPC cost:** each check is one `getChannelState` call, which runs five Soroban
+RPC simulations, so by default every voucher costs five simulations against
+your RPC endpoint. Set `maxAgeMs` to reuse a recent read: while the cached
+`stellar:channel:state:<channel>` entry is younger than `maxAgeMs` and shows no
+pending close, the RPC read is skipped and the voucher is checked against the
+cached balance instead. A shorter window catches a refund dispute sooner.
+
+```ts
+app.use('*', routedockHono({
+  // ...
+  network: 'mainnet',
+  channelStateCheck: { enabled: true, maxAgeMs: 10_000 },
+  onDisputeDetected: async (channelId, state) => {
+    console.warn(`[dispute] ${channelId} closes at ledger ${state.closeEffectiveAtLedger}`)
+  },
+}))
+```
+
+The same two options are accepted by `routedock` (Express) and
+`routedockFastify`.
+
+When the check sees that the payer has called `close_start` (a refund dispute),
+RouteDock logs it through `logger`, calls `onDisputeDetected` if you set it,
+and closes the channel straight away with the highest verified voucher. If that
+close fails, the session is passed to `onOrphaned` with reason `'dispute'` so
+the reconciler can settle it before the refund waiting period ends.
+
+After any close RouteDock performs (a DELETE close, a dispute close, or the
+reconciler when given `store`), it writes `stellar:channel:closed:<channel>`
+to the channel store. mppx rejects every later credential on that channel,
+whether or not the on-chain check is enabled.
+
 ### Orphaned sessions and reconciliation
 
 Without recovery wiring, a session abandoned mid-stream (client disconnects,
@@ -423,6 +470,10 @@ export default {
   },
 }
 ```
+
+Pass the provider's `sessionStore` as `store` and the reconciler also writes
+the `stellar:channel:closed:<channel>` marker after each close, so a channel it
+settled can't take any more vouchers.
 
 Trigger it on a schedule in `wrangler.jsonc`:
 

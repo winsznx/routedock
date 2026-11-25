@@ -15,6 +15,7 @@ import { usdcToStroops } from '../internal/usdc.js'
 import { hexToBytes } from '../internal/encoding.js'
 import { channelAuthorizer, formatMppError } from './mppCompatibility.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
+import { channelClosedKey, channelClosedMarker } from './internal/channelStateCheck.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -40,6 +41,14 @@ export interface SessionReconcilerOptions {
   channelClose?: ChannelCloseFn
   /** Failed close attempts before a row is moved to the terminal `failed` status. Default 5. */
   maxReconcileAttempts?: number
+  /**
+   * The provider's mpp-session channel store (the Hono `sessionStore`). When
+   * given, each successful close writes `stellar:channel:closed:<channel>` so
+   * the provider rejects any later voucher on that channel.
+   */
+  store?: { put(key: string, value: unknown): Promise<unknown> }
+  /** Log sink for store write failures. Defaults to a console-backed logger. */
+  logger?: RouteDockLogger
 }
 
 export interface ReconciliationStats {
@@ -139,6 +148,18 @@ export async function reconcileAbandonedSessions(
           feePayer: channelAuthorizer(payeeKeypair),
           network: networkId as 'stellar:testnet' | 'stellar:pubnet',
         })
+
+        if (opts.store) {
+          try {
+            await opts.store.put(channelClosedKey(channelId), channelClosedMarker(closeTxHash, closeAmount))
+          } catch (err) {
+            resolveLogger(opts.logger)(
+              'error',
+              `[SessionReconciler] Failed to record channel close in the store: ${formatMppError(err)}`,
+              { channelId },
+            )
+          }
+        }
 
         // Mark session as recovered
         const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
