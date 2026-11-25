@@ -7,11 +7,21 @@
  * stellar-sdk writes for `G...` accounts, which aborts the host before any policy
  * runs. This module builds that credential and the signer that carries it.
  */
-import { Address, Keypair, StrKey, hash, xdr } from '@stellar/stellar-sdk'
+import { Address, Keypair, StrKey, xdr } from '@stellar/stellar-sdk'
 import type { SigningCallback } from '@stellar/stellar-sdk'
 import type { ClientStellarSigner } from '@x402/stellar'
 import type { RouteDockManifest } from '../types.js'
 import { RouteDockManifestError, RouteDockPolicyRejectError } from '../errors.js'
+import { base64ToBytes, bytesToBase64, utf8ToBytes } from '../internal/encoding.js'
+import { sha256 } from '../internal/hash.js'
+
+/**
+ * stellar-sdk declares its byte parameters as Node `Buffer`; any Uint8Array works
+ * at runtime. Cast instead of using the Node-only `Buffer` global, which the
+ * runtime-neutral bundles may not reference (scripts/check-runtime-neutral.mjs).
+ */
+type StellarBytes = Parameters<Keypair['sign']>[0]
+const asStellarBytes = (bytes: Uint8Array): StellarBytes => bytes as StellarBytes
 
 export interface AgentVaultConfig {
   mode: 'agent-vault'
@@ -113,22 +123,24 @@ export async function agentVaultAuthorizeEntry(
   credentials.signatureExpirationLedger(validUntilLedgerSeq)
   const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
     new xdr.HashIdPreimageSorobanAuthorization({
-      networkId: hash(Buffer.from(networkPassphrase)),
+      networkId: asStellarBytes(sha256(utf8ToBytes(networkPassphrase))),
       nonce: credentials.nonce(),
       invocation: clone.rootInvocation(),
       signatureExpirationLedger: credentials.signatureExpirationLedger(),
     }),
   )
-  const payload = hash(preimage.toXDR())
+  const payload = sha256(preimage.toXDR())
 
-  let signature: Buffer
+  let signature: Uint8Array
   if (typeof signer === 'function') {
     const signed = await signer(preimage)
-    signature = Buffer.from(signed !== null && typeof signed === 'object' && 'signature' in signed
-      ? (signed as { signature: Uint8Array }).signature
-      : (signed as unknown as Uint8Array))
+    signature = new Uint8Array(
+      signed !== null && typeof signed === 'object' && 'signature' in signed
+        ? (signed as { signature: Uint8Array }).signature
+        : (signed as unknown as Uint8Array),
+    )
   } else {
-    signature = Buffer.from(signer.sign(payload))
+    signature = new Uint8Array(signer.sign(asStellarBytes(payload)))
   }
 
   if (signature.length !== ED25519_SIGNATURE_BYTES) {
@@ -136,7 +148,7 @@ export async function agentVaultAuthorizeEntry(
       `agent vault signature must be ${ED25519_SIGNATURE_BYTES} bytes, got ${signature.length}`,
     )
   }
-  credentials.signature(xdr.ScVal.scvBytes(signature))
+  credentials.signature(xdr.ScVal.scvBytes(asStellarBytes(signature)))
   return clone
 }
 
@@ -151,9 +163,9 @@ export function createAgentVaultSigner(vault: AgentVaultConfig): AgentVaultStell
   return {
     address: vault.vaultContract,
     signAuthEntry: async (authEntry: string) => ({
-      signedAuthEntry: Buffer.from(
-        keypair.sign(hash(Buffer.from(authEntry, 'base64'))),
-      ).toString('base64'),
+      signedAuthEntry: bytesToBase64(
+        keypair.sign(asStellarBytes(sha256(base64ToBytes(authEntry)))),
+      ),
     }),
     [AGENT_VAULT_SIGNER_MARKER]: 'agent-vault',
   }
