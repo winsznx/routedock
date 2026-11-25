@@ -11,11 +11,13 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 # pull-requests: write — changesets opens/updates the release PR
 # issues: write   — the failure watchdog below files an issue
 # id-token: write — npm provenance obtains a GitHub OIDC identity token
+# checks: read    — wait-for-ci polls commit check-runs before publishing
 permissions:
   contents: write
   pull-requests: write
   issues: write
   id-token: write
+  checks: read
 
 jobs:
   release:
@@ -44,6 +46,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # Wait for all required CI checks on this exact SHA before installing or
+      # invoking changesets/action, so Release never publishes untested or red
+      # commits (#724).
+      - name: Wait for CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/wait-for-ci.mjs
 
       - run: pnpm install --frozen-lockfile
 

@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  merge_group:
 
 jobs:
   contract-tests:
@@ -212,6 +213,14 @@ jobs:
           done
           if ! grep -qE "^[[:space:]]+permission-workflows:[[:space:]]*write[[:space:]]*$" .github/workflows/release.yml; then
             echo "::error file=.github/workflows/release.yml::the release App token must request 'permission-workflows: write'"
+            exit 1
+          fi
+          if ! grep -qE "^[[:space:]]+checks:[[:space:]]*read[[:space:]]*$" .github/workflows/release.yml; then
+            echo "::error file=.github/workflows/release.yml::missing required permission 'checks: read' for the CI gate"
+            exit 1
+          fi
+          if ! grep -qE "^[[:space:]]+run:[[:space:]]*node scripts/wait-for-ci\.mjs[[:space:]]*$" .github/workflows/release.yml; then
+            echo "::error file=.github/workflows/release.yml::missing required CI gate step ('run: node scripts/wait-for-ci.mjs')"
             exit 1
           fi
 
