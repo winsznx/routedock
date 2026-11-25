@@ -9,7 +9,7 @@ import { decodePaymentRequiredHeader } from '@x402/core/http'
 import { routedock } from '../routedockMiddleware.js'
 import { routedockFastify } from '../fastify.js'
 import { routedockHono } from '../hono.js'
-import type { RouteDockManifest } from '../../types.js'
+import type { PaymentMode, RouteDockManifest } from '../../types.js'
 
 const USDC_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 const XLM_CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
@@ -450,6 +450,167 @@ describe('Mode-to-Asset Selection in Provider Adapters', () => {
           await new Promise<void>((resolve) => server.close(() => resolve()))
         }
       })
+    })
+  })
+
+  describe('Mounted Express and cross-adapter parity', () => {
+    const mountedManifest: RouteDockManifest = {
+      routedock: '1.0',
+      name: 'Mounted Endpoint-Scoped Multi-Asset Service',
+      description: 'USDC for inference, XLM for lookup, both x402 and mpp-charge',
+      modes: ['x402', 'mpp-charge'],
+      network: 'testnet',
+      asset: 'USDC',
+      asset_contract: USDC_CONTRACT,
+      assets: [
+        {
+          asset: 'USDC',
+          asset_contract: USDC_CONTRACT,
+          modes: ['x402', 'mpp-charge'],
+          endpoints: ['inference'],
+        },
+        {
+          asset: 'XLM',
+          asset_contract: XLM_CONTRACT,
+          modes: ['x402', 'mpp-charge'],
+          endpoints: ['lookup'],
+        },
+      ],
+      payee: payeeKeypair.publicKey(),
+      pricing: {
+        x402: { amount: '0.001', per: 'request' },
+        'mpp-charge': { amount: '0.0008', per: 'request' },
+      },
+      endpoints: {
+        inference: { method: 'POST', path: '/inference' },
+        lookup: { method: 'GET', path: '/lookup' },
+      },
+      tags: ['test'],
+    }
+
+    const providerOptions = {
+      manifest: mountedManifest,
+      modes: ['x402', 'mpp-charge'] as PaymentMode[],
+      pricing: { x402: '0.001', 'mpp-charge': '0.0008' },
+      payee: payeeKeypair.publicKey(),
+      network: 'testnet' as const,
+      payeeSecretKey: payeeKeypair.secret(),
+    }
+
+    async function makeMountedExpressServer(): Promise<{ url: string; close: () => Promise<void> }> {
+      const app = express()
+      app.use('/inference', routedock({ ...providerOptions }))
+      app.post('/inference', (_req: Request, res: Response) => {
+        res.json({ result: 'inferred' })
+      })
+      app.use('/lookup', routedock({ ...providerOptions }))
+      app.get('/lookup', (_req: Request, res: Response) => {
+        res.json({ result: 'found' })
+      })
+
+      return new Promise((resolve) => {
+        const server = createServer(app)
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address()
+          const port = typeof addr === 'object' && addr ? addr.port : 0
+          resolve({
+            url: `http://127.0.0.1:${port}`,
+            close: () => new Promise<void>((res) => server.close(() => res())),
+          })
+        })
+      })
+    }
+
+    async function makeFastifyServer(): Promise<{ url: string; close: () => Promise<void> }> {
+      const fastify = Fastify()
+      await fastify.register(routedockFastify({ ...providerOptions }))
+      fastify.post('/inference', async () => ({ result: 'inferred' }))
+      fastify.get('/lookup', async () => ({ result: 'found' }))
+      await fastify.listen({ port: 0, host: '127.0.0.1' })
+      const address = fastify.server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      return {
+        url: `http://127.0.0.1:${port}`,
+        close: () => fastify.close(),
+      }
+    }
+
+    function makeHonoApp() {
+      const app = new Hono()
+      app.use('*', routedockHono({ ...providerOptions }))
+      app.post('/inference', (c) => c.json({ result: 'inferred' }))
+      app.get('/lookup', (c) => c.json({ result: 'found' }))
+      return app
+    }
+
+    type RequestFn = (path: string, init?: RequestInit) => Promise<globalThis.Response>
+
+    async function collectAssets(
+      request: RequestFn,
+    ): Promise<{ x402: Array<string | undefined>; mppCharge: Array<string | undefined> }> {
+      const inferX402 = await request('/inference', {
+        method: 'POST',
+        headers: { 'x-preferred-mode': 'x402' },
+      })
+      const lookupX402 = await request('/lookup', {
+        headers: { 'x-preferred-mode': 'x402' },
+      })
+      const inferMpp = await request('/inference', { method: 'POST' })
+      const lookupMpp = await request('/lookup')
+
+      for (const res of [inferX402, lookupX402, inferMpp, lookupMpp]) {
+        assert.equal(res.status, 402)
+      }
+
+      return {
+        x402: [
+          extractX402Asset(inferX402.headers.get('x-payment-requirements')),
+          extractX402Asset(lookupX402.headers.get('x-payment-requirements')),
+        ],
+        mppCharge: [
+          extractMppCurrency(inferMpp.headers.get('www-authenticate')),
+          extractMppCurrency(lookupMpp.headers.get('www-authenticate')),
+        ],
+      }
+    }
+
+    const expectedAssets = {
+      x402: [USDC_CONTRACT, XLM_CONTRACT],
+      mppCharge: [USDC_CONTRACT, XLM_CONTRACT],
+    }
+
+    it('charges the endpoint asset when Express is mounted at /inference and /lookup', async () => {
+      const { url, close } = await makeMountedExpressServer()
+      try {
+        const assets = await collectAssets((path, init) => fetch(`${url}${path}`, init))
+        assert.deepEqual(assets, expectedAssets)
+      } finally {
+        await close()
+      }
+    })
+
+    it('returns identical assets across Express, Hono and Fastify', async () => {
+      const expressServer = await makeMountedExpressServer()
+      const fastifyServer = await makeFastifyServer()
+      const honoApp = makeHonoApp()
+      try {
+        const expressAssets = await collectAssets((path, init) =>
+          fetch(`${expressServer.url}${path}`, init),
+        )
+        const fastifyAssets = await collectAssets((path, init) =>
+          fetch(`${fastifyServer.url}${path}`, init),
+        )
+        const honoAssets = await collectAssets((path, init) =>
+          Promise.resolve(honoApp.request(path, init)),
+        )
+
+        assert.deepEqual(expressAssets, expectedAssets)
+        assert.deepEqual(fastifyAssets, expressAssets)
+        assert.deepEqual(honoAssets, expressAssets)
+      } finally {
+        await fastifyServer.close()
+        await expressServer.close()
+      }
     })
   })
 })
