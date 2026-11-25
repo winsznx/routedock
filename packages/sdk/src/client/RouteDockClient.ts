@@ -9,7 +9,8 @@ import { RouteDockManifestError, RouteDockPaidResponseError, RouteDockPolicyReje
 import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops, stroopsToUsdc } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
-import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
+import { resolveLogger } from '../internal/logger.js'
+import { InMemorySpendStore, parseDailySpend, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 import { selectAsset } from '../internal/assetUtils.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
@@ -747,7 +748,10 @@ export class RouteDockClient {
 
     // Pure function of the previous state: a store that retries (optimistic
     // concurrency) may call it more than once, so it must have no side effects.
-    const reserve = (prev: DailySpend | null): DailySpend => {
+    const reserve = (stored: DailySpend | null): DailySpend => {
+      // Never trust what a store returns: a malformed record rejects the payment
+      // (typed) instead of resetting the cap or growing its headroom.
+      const prev = parseDailySpend(stored)
       const today = new Date().toISOString().slice(0, 10)
       const current: DailySpend =
         prev && prev.date === today
@@ -821,15 +825,23 @@ export class RouteDockClient {
 
     // Pure function of the previous state (see _checkAndReserveSpend).
     // Returns undefined when there is nothing to roll back (e.g. day rollover).
-    const release = (prev: DailySpend | null): DailySpend | undefined => {
+    let clamped = false
+    const release = (stored: DailySpend | null): DailySpend | undefined => {
+      const prev = parseDailySpend(stored)
       const today = new Date().toISOString().slice(0, 10)
       if (!prev || prev.date !== today) return undefined
 
+      clamped = false
       const persisted: DailySpend = { ...prev, endpoints: { ...prev.endpoints } }
-      persisted.totalMicros = (BigInt(persisted.totalMicros) - amountMicros).toString()
+      // Floor at zero: a rollback must never leave a negative total, which
+      // would raise the effective cap.
+      const newTotal = BigInt(persisted.totalMicros) - amountMicros
+      if (newTotal < 0n) clamped = true
+      persisted.totalMicros = (newTotal < 0n ? 0n : newTotal).toString()
 
       if (persisted.endpoints[endpointKey]) {
         const newEndpointTotal = BigInt(persisted.endpoints[endpointKey]) - amountMicros
+        if (newEndpointTotal < 0n) clamped = true
         if (newEndpointTotal <= 0n) {
           delete persisted.endpoints[endpointKey]
         } else {
@@ -848,6 +860,14 @@ export class RouteDockClient {
         if (next) await store.write(next)
       }
     })
+
+    if (clamped) {
+      resolveLogger(this.logger)(
+        'warn',
+        `[RouteDock] Spend rollback for ${endpointKey} would have gone negative; clamped to zero. ` +
+          'The persisted spend accumulator was lower than the reservation being released.',
+      )
+    }
   }
 }
 
