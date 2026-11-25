@@ -240,8 +240,8 @@ importers:
   examples/agent-to-agent:
     dependencies:
       '@hono/node-server':
-        specifier: ^1.13.0
-        version: 1.19.17(hono@4.13.20)
+        specifier: ^2.1.11
+        version: 2.1.11(hono@4.13.20)
       '@routedock/routedock':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -259,8 +259,8 @@ importers:
   examples/inference-agent:
     dependencies:
       '@hono/node-server':
-        specifier: ^1.13.0
-        version: 1.19.17(hono@4.13.20)
+        specifier: ^2.1.11
+        version: 2.1.11(hono@4.13.20)
       '@routedock/routedock':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -1387,11 +1387,11 @@ packages:
     resolution: {integrity: sha512-Bbr0hW9hhDhBf3Jp0EyDlkCbFgbr0z2jd3BMKYOYW+fOkPM4Nx195GMXyCtRCGEgoNn6i09FabXrSkNFm2ONzg==}
     engines: {node: '>=20.0.0'}
 
-  '@hono/node-server@1.19.17':
-    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
-    engines: {node: '>=18.14.1'}
+  '@hono/node-server@2.1.11':
+    resolution: {integrity: sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==}
+    engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4
+      hono: ^4 || ^5.0.0-0
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -7357,7 +7357,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@hono/node-server@1.19.17(hono@4.13.20)':
+  '@hono/node-server@2.1.11(hono@4.13.20)':
     dependencies:
       hono: 4.13.20
 
@@ -7584,7 +7584,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.2(@cfworker/json-schema@4.1.6)(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.20)
+      '@hono/node-server': 2.1.11(hono@4.13.20)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
