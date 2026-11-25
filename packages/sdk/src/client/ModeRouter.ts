@@ -263,6 +263,12 @@ function ttlFromHeaders(headers: Headers, now: number): number {
 export type { RouteDockLogger, RouteDockLogLevel, RouteDockLogFields } from '../internal/logger.js'
 
 export interface ModeSelectOptions {
+  /**
+   * Out-of-band manifest payee for this call (e.g. a registry record's payee).
+   * Overrides RouteDockClientConfig.expectedPayee without changing the client
+   * or its shared spend cap. Checked on both fetched and cached manifests.
+   */
+  expectedPayee?: string
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean

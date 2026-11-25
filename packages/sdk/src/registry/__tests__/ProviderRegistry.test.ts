@@ -99,4 +99,17 @@ describe('ProviderRegistry.fetchProviderManifest', () => {
         err.message.includes('does not match expected payee'),
     )
   })
+
+  it('returns a fresh per-call trust anchor from a registry record', () => {
+    const registry = new ProviderRegistry({
+      onChain: { horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts: [] },
+    })
+    const record = recordFor(baseUrl, payeeKeypair.publicKey())
+
+    const first = registry.paymentOptions(record)
+    const second = registry.paymentOptions(record)
+
+    assert.deepEqual(first, { expectedPayee: record.payee })
+    assert.notEqual(first, second)
+  })
 })
