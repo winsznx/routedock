@@ -77,6 +77,9 @@ export function assertAuthEntryMatchesContext(
     )
   }
 
+  if (!Number.isSafeInteger(ctx.ledgerSequence) || ctx.ledgerSequence < 0) {
+    throw new RangeError(`Invalid ledgerSequence: ${ctx.ledgerSequence}`)
+  }
   const authExpiry = preimage.sorobanAuthorization().signatureExpirationLedger()
   const window = opts.authExpiryWindowLedgers ?? DEFAULT_AUTH_EXPIRY_WINDOW_LEDGERS
   if (authExpiry < ctx.ledgerSequence) {
