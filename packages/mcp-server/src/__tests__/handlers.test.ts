@@ -1231,14 +1231,14 @@ describe('handleListProviders', () => {
     }
   })
 
-  it('orders verified providers first, newest registration second', async () => {
+  it('orders verified providers first, most recently seen second', async () => {
     const calls = newSupabaseCalls()
     const deps = baseDeps({ supabase: makeSupabase([], null, calls) })
     await handleListProviders({}, deps)
 
     assert.deepEqual(calls.order, [
       ['verified', { ascending: false }],
-      ['registered_at', { ascending: false }],
+      ['last_seen_at', { ascending: false }],
     ])
   })
 

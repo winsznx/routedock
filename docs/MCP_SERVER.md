@@ -105,7 +105,7 @@ List available RouteDock providers from the registry, filterable by capability t
 
 `network` defaults to the network the server itself is configured with (`STELLAR_NETWORK`), so a testnet
 server does not surface mainnet providers the agent cannot pay. `limit` is an integer from 1 to 50
-(default 50), and rows are ordered verified-first, then most recently registered.
+(default 50), and rows are ordered verified-first (the flag is set only by an operator, never by a provider registering itself), then most recently seen.
 
 **Use case:** Discover providers by capability, find services for specific needs
 

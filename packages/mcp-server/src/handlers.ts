@@ -55,7 +55,7 @@ export interface ProviderRow {
   modes: string[]
   tags: string[]
   verified?: boolean | null
-  registered_at?: string
+  last_seen_at?: string
   asset?: string
   assets?: AssetConfig[]
   manifest?: { asset?: string; assets?: AssetConfig[] } | null
@@ -683,7 +683,7 @@ export interface ListProvidersArgs {
  * column, so the accepted assets are projected out of the manifest.
  */
 const PROVIDER_COLUMNS =
-  'name, description, base_url, modes, tags, network, verified, registered_at, ' +
+  'name, description, base_url, modes, tags, network, verified, last_seen_at, ' +
   'manifest->asset, manifest->assets'
 
 /**
@@ -767,11 +767,12 @@ export async function handleListProviders(
     }
   }
 
-  // Verified (signed and reviewed) providers first, newest registrations next.
+  // Operator-verified providers first (only an admin role can set the flag),
+  // then most recently seen. Self-registration alone never makes a provider verified.
   if (query.order) {
     query = query.order('verified', { ascending: false })
     if (query.order) {
-      query = query.order('registered_at', { ascending: false })
+      query = query.order('last_seen_at', { ascending: false })
     }
   }
 

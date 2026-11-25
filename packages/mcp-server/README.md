@@ -140,8 +140,8 @@ List available RouteDock providers from the registry. Requires Supabase credenti
 - `limit` (optional): Maximum number of providers to return (1 to 50, default 50)
 
 **Returns:** `count`, the `network` and `limit` that were applied, a `truncated` flag, and each provider's
-capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Verified providers
-are listed first, then the newest registrations.
+capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Operator-verified providers
+are listed first, then the most recently seen.
 
 ### quote_provider
 
