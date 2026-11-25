@@ -16,6 +16,7 @@ export type {
 } from '../internal/logger.js'
 export { usdcToStroops, usdcToUnits, USDC_DECIMALS } from '../internal/usdc.js'
 export {
+  expectedAssetContract,
   normalizeManifestAssets,
   getEligibleAssets,
   selectAsset,

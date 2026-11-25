@@ -289,6 +289,30 @@ describe('schema patterns (Ajv)', () => {
       }
     }
   })
+
+  it('accepts a valid G... asset_issuer and rejects non-G... values at root and in assets[]', () => {
+    assert.equal(ok(manifest({ asset_issuer: OTHER_PAYEE })), true)
+    assert.equal(
+      ok(
+        manifest({
+          assets: [{ asset: 'USDC', asset_contract: ASSET_CONTRACT, asset_issuer: OTHER_PAYEE }],
+        }),
+      ),
+      true,
+    )
+    for (const badIssuer of [PLACEHOLDER_PAYEE, 'GAAAA', ASSET_CONTRACT, OTHER_PAYEE.toLowerCase(), 'not-a-key']) {
+      assert.equal(ok(manifest({ asset_issuer: badIssuer })), false, `root asset_issuer=${badIssuer}`)
+      assert.equal(
+        ok(
+          manifest({
+            assets: [{ asset: 'USDC', asset_contract: ASSET_CONTRACT, asset_issuer: badIssuer }],
+          }),
+        ),
+        false,
+        `assets[0].asset_issuer=${badIssuer}`,
+      )
+    }
+  })
 })
 
 describe('fetchManifest — typed errors for malformed manifests', () => {

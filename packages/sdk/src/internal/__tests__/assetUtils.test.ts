@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { Asset, Keypair, Networks } from '@stellar/stellar-sdk'
 import {
+  expectedAssetContract,
   normalizeManifestAssets,
   getEligibleAssets,
   selectAsset,
@@ -8,6 +10,7 @@ import {
   resolveAssetContract,
 } from '../assetUtils.js'
 import { RouteDockManifestError } from '../../errors.js'
+import { USDC_ISSUERS } from '../../network.js'
 import type { RouteDockManifest } from '../../types.js'
 
 const legacyManifest: RouteDockManifest = {
@@ -219,5 +222,47 @@ describe('resolveAssetContract', () => {
       resolveAssetContract(legacyManifest, 'x402', '/price', 'CUSTOM_OVERRIDE_CONTRACT'),
       'CUSTOM_OVERRIDE_CONTRACT',
     )
+  })
+})
+
+describe('expectedAssetContract', () => {
+  it('derives the testnet and mainnet USDC and XLM Stellar Asset Contracts', () => {
+    assert.equal(
+      expectedAssetContract('USDC', USDC_ISSUERS.testnet, 'testnet'),
+      'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    )
+    assert.equal(
+      expectedAssetContract('USDC', undefined, 'testnet'),
+      'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    )
+    assert.equal(
+      expectedAssetContract('XLM', undefined, 'testnet'),
+      'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+    )
+    assert.equal(
+      expectedAssetContract('USDC', USDC_ISSUERS.mainnet, 'mainnet'),
+      new Asset('USDC', USDC_ISSUERS.mainnet).contractId(Networks.PUBLIC),
+    )
+    assert.equal(
+      expectedAssetContract('XLM', undefined, 'mainnet'),
+      Asset.native().contractId(Networks.PUBLIC),
+    )
+  })
+
+  it('always binds USDC to the canonical Circle issuer even if a different issuer is passed', () => {
+    const spoofedIssuer = Keypair.random().publicKey()
+    assert.equal(
+      expectedAssetContract('USDC', spoofedIssuer, 'testnet'),
+      'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    )
+  })
+
+  it('derives the SAC for a non-USDC asset when asset_issuer is provided and returns undefined without one', () => {
+    const issuer = Keypair.random().publicKey()
+    assert.equal(
+      expectedAssetContract('EURC', issuer, 'testnet'),
+      new Asset('EURC', issuer).contractId(Networks.TESTNET),
+    )
+    assert.equal(expectedAssetContract('EURC', undefined, 'testnet'), undefined)
   })
 })

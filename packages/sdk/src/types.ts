@@ -14,6 +14,8 @@ export interface AssetConfig {
   asset: string
   /** Stellar Asset Contract (SAC) address for this payment asset */
   asset_contract: string
+  /** Optional Stellar issuer address (G...) for this payment asset when not a built-in asset (USDC or XLM) */
+  asset_issuer?: string
   /** Optional: restrict this asset to specific payment modes. If omitted, available for all modes. */
   modes?: PaymentMode[]
   /** Optional: restrict this asset to specific endpoints (by name). If omitted, available for all endpoints. */
@@ -127,6 +129,8 @@ export interface RouteDockManifest {
   asset: string
   /** Stellar Asset Contract (SAC) address for the payment asset */
   asset_contract: string
+  /** Optional Stellar issuer address (G...) for the payment asset when not a built-in asset (USDC or XLM) */
+  asset_issuer?: string
   /**
    * Payment assets accepted by this provider. Each asset can be scoped to specific
    * modes and endpoints. When present, assets[0] must match the root-level

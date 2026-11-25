@@ -179,3 +179,32 @@ describe('checkChargeChallenge', () => {
     assert.equal(charge({ ...request, recipient: CHARGE_PAYEE }, withOverride), null)
   })
 })
+
+describe('challenge guards — scoped asset contract policy', () => {
+  const scopedContract = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
+  const policy = { assetContract: scopedContract }
+
+  it('accepts x402 in the selected asset instead of the root contract', () => {
+    assert.equal(
+      checkX402Accept(accept({ asset: scopedContract }), manifest(), 'stellar:testnet', X402_PRICE, policy),
+      null,
+    )
+  })
+
+  it('filters out root x402 assets when the selected asset is different', () => {
+    const scoped = accept({ asset: scopedContract })
+    assert.deepEqual(
+      filterX402Accepts([accept(), scoped], manifest(), 'stellar:testnet', X402_PRICE, policy),
+      [scoped],
+    )
+  })
+
+  it('accepts MPP charge in the selected asset and refuses the root asset', () => {
+    const request = { amount: '8000', recipient: PAYEE, currency: scopedContract }
+    assert.equal(checkChargeChallenge(request, manifest(), 'stellar:testnet', CHARGE_PRICE, policy), null)
+    assert.equal(
+      checkChargeChallenge({ ...request, currency: ASSET_CONTRACT }, manifest(), 'stellar:testnet', CHARGE_PRICE, policy)?.reason,
+      'challenge_asset_mismatch',
+    )
+  })
+})
