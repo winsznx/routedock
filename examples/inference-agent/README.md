@@ -45,7 +45,7 @@ Sends prompts to a mock inference provider and pays per request using the **MPP 
    - **Agent (`AGENT_SECRET`, payer)**: needs testnet XLM, the USDC trustline, and testnet USDC.
    - **Provider (`PROVIDER_SECRET`, receiver)**: needs testnet XLM and the USDC trustline.
 
-   > **Note:** `client.pay()` sends a `GET` request with no body, so a paid route must accept `GET` and read its input from the URL query string.
+   > **Note:** the client calls `pay()` with `request: { method: 'POST', headers, body: JSON.stringify({ prompt }) }`, and the body is replayed on the unpaid probe and the paid request. The provider's manifest declares `POST /infer`, and the mock server registers `app.post('/infer')` and reads `await c.req.json()`. The payment middleware settles before it reaches your route, so the manifest method, the route and the client request must match; `pay()` throws `RouteDockManifestError` before signing if the manifest does not declare the method for the path.
 
 4. Copy the env file:
 

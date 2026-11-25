@@ -90,9 +90,14 @@ function assertManifestActive(manifest: RouteDockManifest, baseUrl: string): voi
  * an active POST `/infer` (and vice versa). Without a method — `estimateCost()`
  * before a request is chosen, or `openSession()` — a shared path is refused
  * only when every matching descriptor has sunset. Paths the manifest does not
- * list, and (method-known) method/path pairs it does not declare, keep today's
- * behavior. Query strings and hashes are ignored because only `URL.pathname`
- * is compared.
+ * list keep today's behavior. Query strings and hashes are ignored because only
+ * `URL.pathname` is compared.
+ *
+ * When the manifest declares the path but none of its descriptors use the
+ * request's method, a `RouteDockManifestError` is thrown: the signed manifest
+ * never advertised that method on that path, so a payment signed for it would
+ * be settled by a middleware that hands off to a route that does not exist (a
+ * paid 404). It is thrown here, before mode selection and signing.
  */
 export function assertEndpointActive(
   manifest: RouteDockManifest,
@@ -112,7 +117,14 @@ export function assertEndpointActive(
         ([, descriptor]) => descriptor.method.toUpperCase() === requestedMethod,
       )
     : pathMatches
-  if (matches.length === 0) return
+  if (matches.length === 0) {
+    const declared = [...new Set(pathMatches.map(([, d]) => d.method.toUpperCase()))].join(', ')
+    throw new RouteDockManifestError(
+      `Manifest declares ${pathname} only for ${declared}, but the request uses ${requestedMethod}. ` +
+        'Refusing to pay for a method the provider did not advertise: the paid request would reach a route that does not exist. ' +
+        `Use a declared method, or have the provider declare ${requestedMethod} ${pathname} in its manifest endpoints.`,
+    )
+  }
 
   const now = Date.now()
   const allSunset = matches.every(([, descriptor]) => {
