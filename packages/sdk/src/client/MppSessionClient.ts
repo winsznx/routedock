@@ -974,16 +974,23 @@ export class MppSessionClient {
         // Best-effort auto-close. A rejection cannot be thrown into a timer
         // callback (nothing would catch it), so it is surfaced as a
         // 'session:close-failed' event and a warning — the caller has no other
-        // way to learn the collateral is still locked.
-        void handle.close().catch((error: unknown) => {
-          emit('session:close-failed', { maxDurationMs, error })
-          this.logger(
-            'warn',
-            `RouteDock: maxDuration auto-close failed after ${maxDurationMs}ms — ` +
-              'the channel may still hold collateral; retry close() or call requestRefund().',
-            { error },
-          )
-        })
+        // way to learn the collateral is still locked. On success, emit
+        // 'session:closed' so subscribers (e.g. React's useSession) can clear
+        // their handle and avoid closing a settled channel twice (#728).
+        void handle.close().then(
+          (result) => {
+            emit('session:closed', result)
+          },
+          (error: unknown) => {
+            emit('session:close-failed', { maxDurationMs, error })
+            this.logger(
+              'warn',
+              `RouteDock: maxDuration auto-close failed after ${maxDurationMs}ms — ` +
+                'the channel may still hold collateral; retry close() or call requestRefund().',
+              { error },
+            )
+          },
+        )
       }, maxDurationMs)
       // Don't keep a Node process alive solely for this safety timer.
       ;(timeoutId as { unref?: () => void }).unref?.()
