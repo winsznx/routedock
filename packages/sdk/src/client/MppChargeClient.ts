@@ -11,6 +11,7 @@ import {
   wrapMppError,
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
+import { readPaymentResponse } from '../internal/paidResponse.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { prepareRequest, toRequestInit } from '../internal/request.js'
 import { checkChargeChallenge, type Caip2Network } from './challenge.js'
@@ -95,20 +96,18 @@ export class MppChargeClient {
 
       const txHash = readSettlementHash(response)
 
-      let data: unknown
-      try {
-        data = await response.json()
-      } catch (cause) {
-        throw new RouteDockManifestError(
-          `Failed to parse JSON from response (HTTP ${response.status})`,
-          { cause },
-        )
-      }
+      const amount = signedAmount ?? pricing.amount
+      const body = await readPaymentResponse(
+        response,
+        signedAmount !== undefined || txHash !== null
+          ? { txHash, mode: 'mpp-charge', amount }
+          : undefined,
+      )
       return {
-        data,
+        ...body,
         txHash,
         mode: 'mpp-charge',
-        amount: signedAmount ?? pricing.amount,
+        amount,
         timestamp: Date.now(),
       }
     }, this.retryPolicy)

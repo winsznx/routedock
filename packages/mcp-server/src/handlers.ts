@@ -15,10 +15,11 @@ import type {
   RouteDockClient,
   SessionHandle,
   PaymentMode,
+  PaymentResult,
   AssetConfig,
   PaymentRequest,
 } from '@routedock/routedock'
-import { usdcToStroops } from '@routedock/routedock'
+import { RouteDockPaidResponseError, usdcToStroops } from '@routedock/routedock'
 // Canonical network constants (issue #578): the server keeps one copy of the
 // Horizon URL and USDC issuer tables instead of its own next to the providers
 // and the SDK.
@@ -263,10 +264,29 @@ export async function handlePayForData(
     )
   }
 
-  const result = await client.pay(url, modeOptions)
+  let result: PaymentResult
+  try {
+    result = await client.pay(url, modeOptions)
+  } catch (error) {
+    if (!(error instanceof RouteDockPaidResponseError)) throw error
+    return {
+      content: [{ type: 'text', text: JSON.stringify({
+        success: false,
+        paid: true,
+        error: error.message + ' Do not retry the same URL: payment was already accepted.',
+        mode: error.mode,
+        amount: error.amount,
+        tx_hash: error.txHash,
+        ...(error.contentType !== undefined ? { content_type: error.contentType } : {}),
+      }, null, 2) }],
+      isError: true,
+    }
+  }
 
   return ok({
     success: true,
+    paid: !(result.txHash === null && result.amount === '0'),
+    ...(result.contentType !== undefined ? { content_type: result.contentType } : {}),
     mode: result.mode,
     amount: result.amount,
     tx_hash: result.txHash,

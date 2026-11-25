@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Keypair } from '@stellar/stellar-sdk'
 import type { RouteDockManifest, EstimateCostResult } from '@routedock/routedock'
+import { RouteDockPaidResponseError } from '@routedock/routedock'
 import { USDC_ISSUERS } from '@routedock/routedock/network'
 import {
   handlePayForData,
@@ -246,6 +247,64 @@ function baseDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
 // ---------------------------------------------------------------------------
 
 describe('handlePayForData', () => {
+  it('reports paid text data with its settlement hash and content type', async () => {
+    // #given a paid provider response that contains text rather than JSON.
+    const result = await handlePayForData(
+      { url: 'https://provider.example.com/data', max_amount: '1.00' },
+      baseDeps({ client: makeClient({ pay: async () => ({
+        mode: 'x402', amount: '0.001', txHash: 'SETTLED_TX',
+        timestamp: 123, data: 'paid data', contentType: 'text/plain',
+      }) }) }),
+    )
+    // #then the agent sees a successful payment, not an invitation to retry.
+    assert.equal(result.isError, undefined)
+    assert.equal(payload(result).paid, true)
+    assert.equal(payload(result).tx_hash, 'SETTLED_TX')
+    assert.equal(payload(result).content_type, 'text/plain')
+    assert.equal(payload(result).data, 'paid data')
+  })
+
+  it('reports an unreadable paid response as paid and tells the agent not to retry', async () => {
+    // #given payment has settled before the provider body stream fails.
+    const error = new RouteDockPaidResponseError('Paid response body could not be read', {
+      mode: 'mpp-charge', amount: '0.001', txHash: 'SETTLED_TX', contentType: 'text/csv',
+    })
+    const result = await handlePayForData(
+      { url: 'https://provider.example.com/data', max_amount: '1.00' },
+      baseDeps({ client: makeClient({ pay: async () => { throw error } }) }),
+    )
+    // #then the tool preserves settlement evidence even though data delivery failed.
+    assert.equal(result.isError, true)
+    assert.equal(payload(result).success, false)
+    assert.equal(payload(result).paid, true)
+    assert.equal(payload(result).tx_hash, 'SETTLED_TX')
+    assert.equal(payload(result).amount, '0.001')
+    assert.equal(payload(result).mode, 'mpp-charge')
+    assert.equal(payload(result).content_type, 'text/csv')
+    assert.match(String(payload(result).error), /do not retry/i)
+  })
+
+  it('does not mark the x402 free response as paid', async () => {
+    const result = await handlePayForData(
+      { url: 'https://provider.example.com/data', max_amount: '1.00' },
+      baseDeps({ client: makeClient({ pay: async () => ({
+        mode: 'x402', amount: '0', txHash: null, timestamp: 123, data: {},
+      }) }) }),
+    )
+    assert.equal(payload(result).paid, false)
+  })
+
+  it('preserves ordinary pre-payment errors for the dispatcher', async () => {
+    const error = new Error('Signing failed before any payment')
+    await assert.rejects(
+      handlePayForData(
+        { url: 'https://provider.example.com/data', max_amount: '1.00' },
+        baseDeps({ client: makeClient({ pay: async () => { throw error } }) }),
+      ),
+      (caught: unknown) => caught === error,
+    )
+  })
+
   it('returns success when estimate is within max_amount', async () => {
     const result = await handlePayForData(
       { url: 'https://provider.example.com/data', max_amount: '1.00' },
