@@ -3,6 +3,13 @@ import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertM
 import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
+import {
+  assertAgentVaultConfig,
+  assertAgentVaultManifest,
+  createAgentVaultSigner,
+  toAgentVaultPolicyReject,
+  type AgentVaultConfig,
+} from './AgentVault.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
 import { RouteDockManifestError, RouteDockPaidResponseError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
@@ -120,7 +127,7 @@ function normalizeSpendCap(spendCap: SpendCap): SpendCap {
   return endpointCaps === undefined ? spendCap : { ...spendCap, endpointCaps }
 }
 
-export type VaultConfig = NulthVaultConfig
+export type VaultConfig = NulthVaultConfig | AgentVaultConfig
 
 export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
@@ -171,7 +178,9 @@ export interface RouteDockClientConfig {
 
   /**
    * Vault custody mode. When `nulth`, payments use a Nulth account as payer
-   * with off-chain ZK proofs attached as auth signatures.
+   * with off-chain ZK proofs attached as auth signatures. When `agent-vault`,
+   * x402 payments are paid from the AgentVault contract account and signed with
+   * the agent key, so the vault's on-chain spend policies apply.
    */
   vault?: VaultConfig
 }
@@ -260,6 +269,7 @@ export class RouteDockClient {
     if (config.commitmentSecret) {
       _secrets.set(this, config.commitmentSecret)
     }
+    if (config.vault?.mode === 'agent-vault') assertAgentVaultConfig(config.vault)
     this.vault = config.vault
 
     const secretKey = this.keypair.secret()
@@ -475,7 +485,9 @@ export class RouteDockClient {
 
     let result: PaymentResult
     try {
-      if (this.vault?.mode === 'nulth') {
+      if (this.vault?.mode === 'agent-vault') {
+        result = await this._payWithAgentVault(this.vault, url, manifest, mode, request)
+      } else if (this.vault?.mode === 'nulth') {
         // Mode/prover validation errors thrown here must also release the
         // reservation, which is why the call sits inside this try block.
         result = await this._payWithNulthVault(url, manifest, mode, request)
@@ -516,6 +528,28 @@ export class RouteDockClient {
     return result
   }
 
+  /** Agent vault path — x402 paid from the vault contract, signed with the agent key */
+  private async _payWithAgentVault(
+    vault: AgentVaultConfig,
+    url: string,
+    manifest: import('../types.js').RouteDockManifest,
+    mode: import('../types.js').PaymentMode,
+    request?: import('../types.js').PaymentRequest,
+  ): Promise<PaymentResult> {
+    if (mode !== 'x402') {
+      throw new RouteDockManifestError(
+        `agent-vault currently supports x402 mode only, not ${mode} — force x402 via { forceMode: "x402" }`,
+      )
+    }
+    assertAgentVaultManifest(manifest, this.network)
+
+    try {
+      return await this.x402.withSigner(createAgentVaultSigner(vault)).pay(url, manifest, request)
+    } catch (err) {
+      throw toAgentVaultPolicyReject(err) ?? err
+    }
+  }
+
   /** Nulth ZK vault path — proof built off-chain, attached as auth signature */
   private async _payWithNulthVault(
     url: string,
@@ -523,7 +557,7 @@ export class RouteDockClient {
     mode: import('../types.js').PaymentMode,
     request?: import('../types.js').PaymentRequest,
   ): Promise<PaymentResult> {
-    const prover = this.vault?.prover ?? 'mock';
+    const prover = (this.vault as NulthVaultConfig | undefined)?.prover ?? 'mock';
     if (this.network === 'mainnet' && prover === 'mock') {
       throw new RouteDockManifestError('nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet');
     }
@@ -534,7 +568,7 @@ export class RouteDockClient {
     }
 
     try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
+      const { signer } = await prepareNulthSigner(this.vault as NulthVaultConfig, manifest, mode, this.network)
       const x402 = this.x402.withSigner(signer)
       const result = await x402.pay(url, manifest, request)
       return result
@@ -602,6 +636,14 @@ export class RouteDockClient {
     if (!manifest.modes.includes(mode)) {
       throw new RouteDockManifestError(
         `Provider at ${baseUrl} does not support ${mode} mode`,
+      )
+    }
+
+    // The channel address is not on the vault's allowlist and the vault rejects
+    // create-contract contexts, so a session cannot be funded from it (#721).
+    if (this.vault?.mode === 'agent-vault') {
+      throw new RouteDockManifestError(
+        `agent-vault does not support ${mode} yet — sessions cannot be opened from a vault`,
       )
     }
 
