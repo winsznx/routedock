@@ -1,5 +1,18 @@
 # @routedock/mcp-server
 
+## 0.3.0
+
+### Minor Changes
+
+- [#767](https://github.com/winsznx/routedock/pull/767) [`b29fc6b`](https://github.com/winsznx/routedock/commit/b29fc6ba6d951f3b2ebb5a527294a1bfc62998c3) Thanks [@KingDavid9999](https://github.com/KingDavid9999)! - Add `quote_provider` (per-mode prices and compliance flags without paying) and `get_spend_status` (daily cap usage). `pay_for_data` now accepts optional `method`, `headers` and `body` (max 64 KiB) so POST providers can be paid; `Authorization` and `x-payment*` headers are rejected. Every tool now carries MCP `annotations`: the read-only tools are marked `readOnlyHint`, and the four spending tools are marked destructive, non-idempotent and open-world.
+
+### Patch Changes
+
+- [#739](https://github.com/winsznx/routedock/pull/739) [`e79465e`](https://github.com/winsznx/routedock/commit/e79465ebdcef293cae7add1f597064a32d0ab797) Thanks [@joydeelish](https://github.com/joydeelish)! - Preserve settled payments when provider responses are not JSON. Return raw text and content type, retain spend reservations on unreadable paid bodies, and expose paid settlement metadata to MCP callers so agents do not retry a completed payment.
+
+- Updated dependencies [[`8a3aa4a`](https://github.com/winsznx/routedock/commit/8a3aa4ab15bb2b31ca4a22021dda01daff24b47a), [`06a79e8`](https://github.com/winsznx/routedock/commit/06a79e834df6d46fbfbc9154d77e39cb1abdefb7), [`f020624`](https://github.com/winsznx/routedock/commit/f02062476b308d434e47a175390b664705591d68), [`29610f0`](https://github.com/winsznx/routedock/commit/29610f0e9644892e61c814549115816c62299742), [`1a747fb`](https://github.com/winsznx/routedock/commit/1a747fbdd4c4de1415a6a019e3ea701535db17fe), [`e79465e`](https://github.com/winsznx/routedock/commit/e79465ebdcef293cae7add1f597064a32d0ab797), [`99430bd`](https://github.com/winsznx/routedock/commit/99430bd065e883002ecb34247629e4da6caad733), [`d6fdac3`](https://github.com/winsznx/routedock/commit/d6fdac32113cb139352f7e577cfde820d550369c), [`c4d5912`](https://github.com/winsznx/routedock/commit/c4d591258345637c764b2bbdb408ffdf061a8f94), [`b29fc6b`](https://github.com/winsznx/routedock/commit/b29fc6ba6d951f3b2ebb5a527294a1bfc62998c3), [`c05040b`](https://github.com/winsznx/routedock/commit/c05040b85f5fca8e0fbe195fb25409e9a1d838d8)]:
+  - @routedock/routedock@0.5.0
+
 ## 0.2.3
 
 ### Patch Changes

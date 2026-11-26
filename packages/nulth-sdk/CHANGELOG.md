@@ -1,5 +1,11 @@
 # @routedock/nulth-sdk
 
+## 0.3.1
+
+### Patch Changes
+
+- [#751](https://github.com/winsznx/routedock/pull/751) [`1a747fb`](https://github.com/winsznx/routedock/commit/1a747fbdd4c4de1415a6a019e3ea701535db17fe) Thanks [@DanbabaJr](https://github.com/DanbabaJr)! - Nulth signer now refuses auth entries whose `signatureExpirationLedger` is outside the session policy (`auth_expiry_out_of_policy`), and `NulthStellarScheme` clamps provider `maxTimeoutSeconds` to 300.
+
 ## 0.3.0
 
 ### Minor Changes
