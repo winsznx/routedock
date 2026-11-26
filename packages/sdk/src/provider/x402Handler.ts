@@ -14,7 +14,6 @@ import type { RouteDockManifest } from '../types.js'
 import { RouteDockManifestError } from '../errors.js'
 import { resolvePayee } from '../internal/payee.js'
 import { usdcToUnits } from '../internal/usdc.js'
-import { extractPayerAddress } from './payer.js'
 import { resolveAssetContract } from '../internal/assetUtils.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import {
@@ -24,7 +23,7 @@ import {
   recordSettlement,
   type SeenTxStore,
 } from './SeenTxStore.js'
-import { readSettleResult } from '../internal/settleResult.js'
+import { readSettlePayer, readSettleResult } from '../internal/settleResult.js'
 
 type Network = 'testnet' | 'mainnet'
 
@@ -189,24 +188,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
       const payload = decodePaymentSignatureHeader(paymentHeader)
       let txHash: string | null = null
-      // Extract payer public key defensively from the decoded x402 payload.
-      // In the @x402/stellar ExactStellarScheme, the payer's G... address is at
-      // payload.authorization.credentials[0].publicKey (StrKey-encoded G...).
-      // Fall back to null if the path is absent — non-fatal for settlement.
       let payerAddress: string | null = null
-      try {
-        const creds = (
-          payload as unknown as {
-            authorization?: {
-              credentials?: Array<{ publicKey?: string }>
-            }
-          }
-        ).authorization?.credentials
-        const key = Array.isArray(creds) ? creds[0]?.publicKey : undefined
-        payerAddress = extractPayerAddress(key)
-      } catch {
-        // non-fatal
-      }
 
       if (ozServer) {
         const settleResult = await ozServer.settlePayment(payload, requirements)
@@ -216,6 +198,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           return
         }
         txHash = outcome.txHash
+        payerAddress = readSettlePayer(settleResult)
         res.setHeader(
           'X-Payment-Response',
           encodePaymentResponseHeader(
@@ -246,6 +229,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
           return
         }
         txHash = outcome.txHash
+        payerAddress = readSettlePayer(settleResult) ?? readSettlePayer(verifyResult)
         res.setHeader(
           'X-Payment-Response',
           encodePaymentResponseHeader(
