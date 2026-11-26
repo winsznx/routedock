@@ -1,5 +1,11 @@
 # @routedock/routedock
 
+## 0.5.1
+
+### Patch Changes
+
+- [#743](https://github.com/winsznx/routedock/pull/743) [`9f2f5b6`](https://github.com/winsznx/routedock/commit/9f2f5b63df00b1cfd66c201832783bb10875c511) Thanks [@TS-mfon](https://github.com/TS-mfon)! - Honor endpoint-scoped assets in client mode selection, cost estimates, preflight, and payment challenge validation.
+
 ## 0.5.0
 
 ### Minor Changes
