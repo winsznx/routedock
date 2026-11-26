@@ -5,6 +5,11 @@ CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
 CREATE ROLE service_role NOLOGIN BYPASSRLS;
 CREATE ROLE routedock_migrations NOLOGIN;
+CREATE ROLE routedock_admin NOLOGIN;
+
+-- Migration 009 delegates this role to postgres. Allow the migration owner
+-- to grant it without inheriting it or being able to switch to it.
+GRANT routedock_admin TO routedock_migrations WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT USAGE, CREATE ON SCHEMA public TO routedock_migrations;

@@ -35,7 +35,7 @@ Non-secret environment variables (such as `STELLAR_NETWORK` and `PUBLIC_BASE_URL
 
 When `SUPABASE_URL` is configured, apply the database migrations in [supabase/migrations/](../supabase/migrations/) to your Supabase project.
 
-Migration [009_lock_public_sessions.sql](../supabase/migrations/009_lock_public_sessions.sql) removes Supabase's default write grants from `public_sessions`. The view keeps its owner-rights metadata reads for the dashboard and rejects INSERT, UPDATE and DELETE even if a future grant restores those privileges. Session writes still go through the provider's `sessions` store and its RLS policy. Settlement cleanup is restricted to the function owner and `service_role`.
+Migration [010_lock_public_sessions.sql](../supabase/migrations/010_lock_public_sessions.sql) removes Supabase's default write grants from `public_sessions`. The view keeps its owner-rights metadata reads for the dashboard and rejects INSERT, UPDATE and DELETE even if a future grant restores those privileges. Session writes still go through the provider's `sessions` store and its RLS policy. Settlement cleanup is restricted to the function owner and `service_role`.
 
 To check the permissions on a disposable database with all migrations applied, configure the usual PostgreSQL connection variables (`PGHOST`, `PGDATABASE`, `PGUSER` and password authentication) and run:
 

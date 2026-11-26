@@ -39,6 +39,8 @@ jobs:
           for migration in supabase/migrations/*.sql; do
             psql -X -v ON_ERROR_STOP=1 -c 'SET ROLE routedock_migrations' -f "$migration"
           done
+      - name: Reapply the public session migration
+        run: psql -X -v ON_ERROR_STOP=1 -c 'SET ROLE routedock_migrations' -f supabase/migrations/010_lock_public_sessions.sql
       - name: Verify public session reads and write protection
         run: psql -X -v ON_ERROR_STOP=1 -f supabase/tests/rls_public_sessions.sql
 

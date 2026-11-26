@@ -11,7 +11,7 @@
 REVOKE ALL ON public.public_sessions FROM anon, authenticated, PUBLIC;
 GRANT SELECT ON public.public_sessions TO anon, authenticated;
 
-CREATE FUNCTION public.reject_public_sessions_write()
+CREATE OR REPLACE FUNCTION public.reject_public_sessions_write()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog
@@ -21,6 +21,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS public_sessions_read_only ON public.public_sessions;
 CREATE TRIGGER public_sessions_read_only
   INSTEAD OF INSERT OR UPDATE OR DELETE ON public.public_sessions
   FOR EACH ROW EXECUTE FUNCTION public.reject_public_sessions_write();
