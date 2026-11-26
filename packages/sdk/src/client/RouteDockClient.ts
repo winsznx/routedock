@@ -3,13 +3,21 @@ import { fetchManifest, selectMode, invalidateManifest as evictManifest, assertM
 import { X402Client, type X402PreSignHook } from './x402Client.js'
 import { MppChargeClient } from './MppChargeClient.js'
 import { MppSessionClient } from './MppSessionClient.js'
+import {
+  assertAgentVaultConfig,
+  assertAgentVaultManifest,
+  createAgentVaultSigner,
+  toAgentVaultPolicyReject,
+  type AgentVaultConfig,
+} from './AgentVault.js'
 import { prepareNulthSigner, NulthPolicyError, type NulthVaultConfig } from './NulthVault.js'
 import type { PaymentResult, SessionHandle, SessionOptions, RouteDockManifest, PaymentMode, EstimateCostResult, PreflightResult, UrlPreflightResult, PreflightModeCost } from '../types.js'
-import { RouteDockManifestError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
+import { RouteDockManifestError, RouteDockPaidResponseError, RouteDockPolicyRejectError, RouteDockTrustlineError } from '../errors.js'
 import type { RetryPolicy } from '../internal/retry.js'
-import { USDC_ISSUERS, usdcToStroops } from '../internal/usdc.js'
+import { USDC_ISSUERS, usdcToStroops, stroopsToUsdc } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
-import { InMemorySpendStore, type DailySpend, type SpendStore } from '../store/SpendStore.js'
+import { resolveLogger } from '../internal/logger.js'
+import { InMemorySpendStore, parseDailySpend, type DailySpend, type SpendStore } from '../store/SpendStore.js'
 import { selectAsset } from '../internal/assetUtils.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
@@ -50,6 +58,28 @@ export interface SpendCap {
    * same origin as another key throws at construction time.
    */
   endpointCaps?: Record<string, string>
+}
+
+/**
+ * Snapshot of the local daily spend accumulator, returned by
+ * {@link RouteDockClient.getSpendStatus}. All amounts are USDC decimal strings.
+ */
+export interface SpendStatus {
+  /** The only asset the accumulator counts. */
+  asset: 'USDC'
+  /** Configured daily cap, or `null` when the client has no `spendCap`. */
+  daily: string | null
+  /** Spend recorded for the current UTC day, including payments still in flight. */
+  spentToday: string
+  /** `daily - spentToday` (never negative), or `null` when there is no `daily` cap. */
+  remainingToday: string | null
+  /** The UTC day the figures apply to (YYYY-MM-DD). */
+  day: string
+  /**
+   * Per-origin caps and their spend. Present only when `spendCap.endpointCaps`
+   * is configured; keys are normalized origins.
+   */
+  endpoints?: Record<string, { cap: string; spent: string }>
 }
 
 /**
@@ -97,7 +127,7 @@ function normalizeSpendCap(spendCap: SpendCap): SpendCap {
   return endpointCaps === undefined ? spendCap : { ...spendCap, endpointCaps }
 }
 
-export type VaultConfig = NulthVaultConfig
+export type VaultConfig = NulthVaultConfig | AgentVaultConfig
 
 export interface RouteDockClientConfig {
   /** Stellar keypair or raw secret key (S...) — fee payer / fallback signer */
@@ -148,7 +178,9 @@ export interface RouteDockClientConfig {
 
   /**
    * Vault custody mode. When `nulth`, payments use a Nulth account as payer
-   * with off-chain ZK proofs attached as auth signatures.
+   * with off-chain ZK proofs attached as auth signatures. When `agent-vault`,
+   * x402 payments are paid from the AgentVault contract account and signed with
+   * the agent key, so the vault's on-chain spend policies apply.
    */
   vault?: VaultConfig
 }
@@ -237,6 +269,7 @@ export class RouteDockClient {
     if (config.commitmentSecret) {
       _secrets.set(this, config.commitmentSecret)
     }
+    if (config.vault?.mode === 'agent-vault') assertAgentVaultConfig(config.vault)
     this.vault = config.vault
 
     const secretKey = this.keypair.secret()
@@ -409,7 +442,8 @@ export class RouteDockClient {
   /**
    * Pay for one request at `url`. Fetches manifest, selects payment mode,
    * runs trustline preflight, reserves local spend cap BEFORE executing the
-   * payment, then commits the spend record on success. Rolls back the
+   * payment, then commits the spend record once the paid request succeeds,
+   * including response delivery failures. Rolls back the
    * reservation if the on-chain payment fails, and also when the call
    * completes without paying anything (an x402 endpoint answering a plain
    * 200 with no challenge). Concurrent pay() calls are serialized through a
@@ -451,7 +485,9 @@ export class RouteDockClient {
 
     let result: PaymentResult
     try {
-      if (this.vault?.mode === 'nulth') {
+      if (this.vault?.mode === 'agent-vault') {
+        result = await this._payWithAgentVault(this.vault, url, manifest, mode, request)
+      } else if (this.vault?.mode === 'nulth') {
         // Mode/prover validation errors thrown here must also release the
         // reservation, which is why the call sits inside this try block.
         result = await this._payWithNulthVault(url, manifest, mode, request)
@@ -468,7 +504,12 @@ export class RouteDockClient {
         }
       }
     } catch (err) {
-      await this._rollbackSpend(reserveId).catch(() => {})
+      if (err instanceof RouteDockPaidResponseError) {
+        // Delivery failed after the paid request succeeded: retain its spend.
+        await this._commitSpend(reserveId)
+      } else {
+        await this._rollbackSpend(reserveId).catch(() => undefined)
+      }
       throw err
     }
 
@@ -487,6 +528,28 @@ export class RouteDockClient {
     return result
   }
 
+  /** Agent vault path — x402 paid from the vault contract, signed with the agent key */
+  private async _payWithAgentVault(
+    vault: AgentVaultConfig,
+    url: string,
+    manifest: import('../types.js').RouteDockManifest,
+    mode: import('../types.js').PaymentMode,
+    request?: import('../types.js').PaymentRequest,
+  ): Promise<PaymentResult> {
+    if (mode !== 'x402') {
+      throw new RouteDockManifestError(
+        `agent-vault currently supports x402 mode only, not ${mode} — force x402 via { forceMode: "x402" }`,
+      )
+    }
+    assertAgentVaultManifest(manifest, this.network)
+
+    try {
+      return await this.x402.withSigner(createAgentVaultSigner(vault)).pay(url, manifest, request)
+    } catch (err) {
+      throw toAgentVaultPolicyReject(err) ?? err
+    }
+  }
+
   /** Nulth ZK vault path — proof built off-chain, attached as auth signature */
   private async _payWithNulthVault(
     url: string,
@@ -494,7 +557,7 @@ export class RouteDockClient {
     mode: import('../types.js').PaymentMode,
     request?: import('../types.js').PaymentRequest,
   ): Promise<PaymentResult> {
-    const prover = this.vault?.prover ?? 'mock';
+    const prover = (this.vault as NulthVaultConfig | undefined)?.prover ?? 'mock';
     if (this.network === 'mainnet' && prover === 'mock') {
       throw new RouteDockManifestError('nulth vault uses a MOCK Groth16 prover and cannot be used on mainnet');
     }
@@ -505,7 +568,7 @@ export class RouteDockClient {
     }
 
     try {
-      const { signer } = await prepareNulthSigner(this.vault!, manifest, mode, this.network)
+      const { signer } = await prepareNulthSigner(this.vault as NulthVaultConfig, manifest, mode, this.network)
       const x402 = this.x402.withSigner(signer)
       const result = await x402.pay(url, manifest, request)
       return result
@@ -576,6 +639,14 @@ export class RouteDockClient {
       )
     }
 
+    // The channel address is not on the vault's allowlist and the vault rejects
+    // create-contract contexts, so a session cannot be funded from it (#721).
+    if (this.vault?.mode === 'agent-vault') {
+      throw new RouteDockManifestError(
+        `agent-vault does not support ${mode} yet — sessions cannot be opened from a vault`,
+      )
+    }
+
     const secret = _secrets.get(this)
     if (!secret) {
       throw new RouteDockManifestError(
@@ -612,17 +683,20 @@ export class RouteDockClient {
   }
 
   /**
-   * Record spend for an MPP session voucher. Called before each voucher
-   * fetch in stream(). Enforces the same local daily and per-endpoint caps
-   * as discrete pay() calls. Returns a commit function to clean up the
-   * reservation after the voucher fetch succeeds.
+   * Record spend for an MPP session voucher. MppSessionClient calls this once
+   * per voucher, after the challenge passes the guard and the next cumulative
+   * is reserved, and before the commitment key signs it. Enforces the same
+   * local daily and per-endpoint caps as discrete pay() calls; a cap
+   * rejection throws, and the session releases the reservation without
+   * signing.
    */
   private async _recordSessionSpend(amount: string, endpointKey: string, asset: string): Promise<void> {
     const reserveId = await this._checkAndReserveSpend(amount, endpointKey, asset)
     if (reserveId) {
-      // For sessions, commit immediately — the spend is final once the
-      // voucher is issued. No rollback path on voucher fetch failure since
-      // the cap is checked before the fetch (if it fails, no reserve was made).
+      // Committed immediately: the voucher is signed right after this
+      // returns, and a retry replays that same voucher rather than signing
+      // another. If signing itself fails, this one rate stays counted, so
+      // the cap can over-count by a voucher but never under-count.
       await this._commitSpend(reserveId)
     }
   }
@@ -645,6 +719,50 @@ export class RouteDockClient {
    */
   invalidateManifest(url: string): void {
     evictManifest(new URL(url).origin)
+  }
+
+  /**
+   * Report how much of the local daily spend cap has been used, without paying
+   * anything. The read goes through the same mutex as reserve/rollback, so it
+   * never observes a half-applied update from a payment in this client.
+   *
+   * Spend is recorded when a payment is reserved, so a payment in flight
+   * counts and a rolled-back (failed) payment does not. A stored accumulator
+   * from an earlier UTC day reads as zero. With no `spendCap` configured,
+   * `daily` and `remainingToday` are `null`.
+   */
+  async getSpendStatus(): Promise<SpendStatus> {
+    const stored = await this._withSpendMutex(() => this.spendStore.read())
+    const day = new Date().toISOString().slice(0, 10)
+    const current = stored && stored.date === day ? stored : null
+
+    const spent = BigInt(current?.totalMicros ?? '0')
+    const spendCap = this.spendCap
+
+    let remainingToday: string | null = null
+    if (spendCap) {
+      const cap = usdcToStroops(spendCap.daily)
+      remainingToday = stroopsToUsdc(spent >= cap ? 0n : cap - spent)
+    }
+
+    const status: SpendStatus = {
+      asset: 'USDC',
+      daily: spendCap ? spendCap.daily : null,
+      spentToday: stroopsToUsdc(spent),
+      remainingToday,
+      day,
+    }
+
+    if (spendCap?.endpointCaps) {
+      status.endpoints = Object.fromEntries(
+        Object.entries(spendCap.endpointCaps).map(([origin, cap]) => [
+          origin,
+          { cap, spent: stroopsToUsdc(BigInt(current?.endpoints[origin] ?? '0')) },
+        ]),
+      )
+    }
+
+    return status
   }
 
   /**
@@ -672,7 +790,10 @@ export class RouteDockClient {
 
     // Pure function of the previous state: a store that retries (optimistic
     // concurrency) may call it more than once, so it must have no side effects.
-    const reserve = (prev: DailySpend | null): DailySpend => {
+    const reserve = (stored: DailySpend | null): DailySpend => {
+      // Never trust what a store returns: a malformed record rejects the payment
+      // (typed) instead of resetting the cap or growing its headroom.
+      const prev = parseDailySpend(stored)
       const today = new Date().toISOString().slice(0, 10)
       const current: DailySpend =
         prev && prev.date === today
@@ -746,15 +867,23 @@ export class RouteDockClient {
 
     // Pure function of the previous state (see _checkAndReserveSpend).
     // Returns undefined when there is nothing to roll back (e.g. day rollover).
-    const release = (prev: DailySpend | null): DailySpend | undefined => {
+    let clamped = false
+    const release = (stored: DailySpend | null): DailySpend | undefined => {
+      const prev = parseDailySpend(stored)
       const today = new Date().toISOString().slice(0, 10)
       if (!prev || prev.date !== today) return undefined
 
+      clamped = false
       const persisted: DailySpend = { ...prev, endpoints: { ...prev.endpoints } }
-      persisted.totalMicros = (BigInt(persisted.totalMicros) - amountMicros).toString()
+      // Floor at zero: a rollback must never leave a negative total, which
+      // would raise the effective cap.
+      const newTotal = BigInt(persisted.totalMicros) - amountMicros
+      if (newTotal < 0n) clamped = true
+      persisted.totalMicros = (newTotal < 0n ? 0n : newTotal).toString()
 
       if (persisted.endpoints[endpointKey]) {
         const newEndpointTotal = BigInt(persisted.endpoints[endpointKey]) - amountMicros
+        if (newEndpointTotal < 0n) clamped = true
         if (newEndpointTotal <= 0n) {
           delete persisted.endpoints[endpointKey]
         } else {
@@ -773,6 +902,14 @@ export class RouteDockClient {
         if (next) await store.write(next)
       }
     })
+
+    if (clamped) {
+      resolveLogger(this.logger)(
+        'warn',
+        `[RouteDock] Spend rollback for ${endpointKey} would have gone negative; clamped to zero. ` +
+          'The persisted spend accumulator was lower than the reservation being released.',
+      )
+    }
   }
 }
 

@@ -47,7 +47,12 @@ export function createNulthSigner(config: NulthSignerConfig): NulthStellarSigner
         )
       }
 
-      assertAuthEntryMatchesContext(authEntry, nulthAccount, ctx)
+      assertAuthEntryMatchesContext(authEntry, nulthAccount, ctx, {
+        ...(config.policy.expiryLedger !== undefined ? { expiryLedger: config.policy.expiryLedger } : {}),
+        ...(config.authExpiryWindowLedgers !== undefined
+          ? { authExpiryWindowLedgers: config.authExpiryWindowLedgers }
+          : {}),
+      })
 
       const proof = client.buildPaymentAuthProof({
         authEntry,

@@ -210,8 +210,10 @@ export interface RouteDockManifest {
 
 /** Result returned by client.pay() for any payment mode */
 export interface PaymentResult {
-  /** Parsed response body from the provider */
+  /** Parsed JSON body from the provider, or its original text when it is not JSON. */
   data: unknown
+  /** Provider response Content-Type, when present. */
+  contentType?: string
   /** On-chain Stellar transaction hash, or null for session voucher calls */
   txHash: string | null
   /** Payment mode that was used for this call */
@@ -362,17 +364,21 @@ export interface SessionOptions {
  * Lifecycle events emitted by a SessionHandle.
  *
  * - 'session:timeout' — the maxDurationMs budget elapsed; auto-close started.
+ * - 'session:closed' — auto-close settled and closed the channel.
  * - 'session:close-failed' — that auto-close rejected. The channel may still
  *   hold collateral, so the caller should retry close() or fall back to
  *   requestRefund().
  */
-export type SessionEvent = 'session:timeout' | 'session:close-failed'
+export type SessionEvent = 'session:timeout' | 'session:closed' | 'session:close-failed'
 
 /** Payload delivered with the 'session:timeout' event. */
 export interface SessionTimeoutPayload {
   /** The wall-clock budget (ms) that elapsed before auto-close was triggered. */
   maxDurationMs: number
 }
+
+/** Payload delivered with the 'session:closed' event. */
+export type SessionClosedPayload = SessionCloseResult
 
 /** Payload delivered with the 'session:close-failed' event. */
 export interface SessionCloseFailedPayload {
@@ -392,6 +398,7 @@ export interface SessionCloseFailedPayload {
  */
 export interface SessionEventPayloadMap {
   'session:timeout': SessionTimeoutPayload
+  'session:closed': SessionClosedPayload
   'session:close-failed': SessionCloseFailedPayload
 }
 

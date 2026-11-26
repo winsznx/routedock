@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient } from '../RouteDockClient.js'
-import { RouteDockManifestSunsetError } from '../../errors.js'
+import { RouteDockManifestError, RouteDockManifestSunsetError } from '../../errors.js'
 import type { EndpointDescriptor, PaymentResult, RouteDockManifest } from '../../types.js'
 import { signManifest } from '../../manifest/sign.js'
 
@@ -396,7 +396,7 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
   }
 }
 
-// ── Test 9c: a method the manifest does not declare keeps path-level behavior ─
+// ── Test 9c: a method the manifest does not declare is refused (#761) ────────
 
 {
   const past = new Date(Date.now() - 60_000).toISOString()
@@ -406,16 +406,21 @@ function stubSubClients(client: RouteDockClient): { x402Called: boolean; chargeC
 
   try {
     const client = new RouteDockClient({ wallet: Keypair.random(), network: 'testnet' })
-    stubSubClients(client)
+    const calls = stubSubClients(client)
 
-    // No POST /price descriptor exists, so the path is unlisted for POST and
-    // the sunset GET descriptor cannot speak for it.
-    const result = await client.pay(`${server.url}/price`, {
-      request: { method: 'POST', body: '{}' },
-    })
-    assert.equal(result.txHash, 'deadbeef')
+    // The manifest declares /price only for GET, so a POST to it is refused
+    // with a manifest error (not a sunset error) before any payment is signed.
+    await assert.rejects(
+      () => client.pay(`${server.url}/price`, { request: { method: 'POST', body: '{}' } }),
+      (error: unknown) =>
+        error instanceof RouteDockManifestError &&
+        !(error instanceof RouteDockManifestSunsetError) &&
+        /only for GET.*request uses POST/s.test(error.message),
+    )
+    assert.equal(calls.x402Called, false)
+    assert.equal(calls.chargeCalled, false)
 
-    console.log('✓ Test 9c: an undeclared method for a path keeps unlisted-path behavior')
+    console.log('✓ Test 9c: an undeclared method for a declared path is refused before paying')
   } finally {
     await server.close()
   }
