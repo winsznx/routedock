@@ -22,6 +22,24 @@ export const MAX_STREAM_MESSAGES = 50
  */
 export const MAX_PROVIDER_ROWS = 50
 
+/**
+ * Upper bound, in bytes, on the request body pay_for_data will forward. The
+ * body comes from the model, so it is bounded rather than relayed unchecked.
+ */
+export const MAX_REQUEST_BODY_BYTES = 64 * 1024
+
+/** HTTP methods pay_for_data may use for the paid request. */
+export const REQUEST_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
+
+/**
+ * Tool annotations. MCP clients use these to decide what can run without a
+ * confirmation prompt. The read-only tools never move funds or change state;
+ * the spending tools are not idempotent (repeating a call pays again) and
+ * talk to an open world of third-party providers.
+ */
+const READ_ONLY = { readOnlyHint: true } as const
+const SPENDS = { destructiveHint: true, idempotentHint: false, openWorldHint: true } as const
+
 export const TOOLS: Tool[] = [
   {
     name: 'pay_for_data',
@@ -45,9 +63,27 @@ export const TOOLS: Tool[] = [
           description:
             'Optional preferred payment mode. If not specified, the best mode is selected automatically. mpp-session-ws opens a WebSocket-transport MPP session instead of the default HTTP/SSE variant.',
         },
+        method: {
+          type: 'string',
+          enum: [...REQUEST_METHODS],
+          description:
+            'Optional HTTP method for the paid request (default GET). Use POST (or PUT/PATCH/DELETE) for providers whose endpoint takes a request body.',
+        },
+        headers: {
+          type: 'object',
+          additionalProperties: { type: 'string' },
+          description:
+            'Optional extra request headers as a name-to-value map (e.g. {"content-type": "application/json"}). Authorization and x-payment* headers are rejected: payment headers are set by RouteDock.',
+        },
+        body: {
+          type: 'string',
+          maxLength: MAX_REQUEST_BODY_BYTES,
+          description: `Optional request body, sent as-is (e.g. a JSON string), at most ${MAX_REQUEST_BODY_BYTES} bytes (64 KiB). Not allowed with GET.`,
+        },
       },
       required: ['url', 'max_amount'],
     },
+    annotations: SPENDS,
   },
   {
     name: 'open_session',
@@ -69,6 +105,7 @@ export const TOOLS: Tool[] = [
       },
       required: ['url'],
     },
+    annotations: SPENDS,
   },
   {
     name: 'stream_session',
@@ -90,6 +127,7 @@ export const TOOLS: Tool[] = [
       },
       required: ['channel_id'],
     },
+    annotations: SPENDS,
   },
   {
     name: 'close_session',
@@ -105,6 +143,7 @@ export const TOOLS: Tool[] = [
       },
       required: ['channel_id'],
     },
+    annotations: SPENDS,
   },
   {
     name: 'check_balance',
@@ -125,6 +164,7 @@ export const TOOLS: Tool[] = [
       },
       required: [],
     },
+    annotations: READ_ONLY,
   },
   {
     name: 'list_providers',
@@ -152,5 +192,34 @@ export const TOOLS: Tool[] = [
       },
       required: [],
     },
+    annotations: READ_ONLY,
+  },
+  {
+    name: 'quote_provider',
+    description:
+      "Get a provider's price without paying. Returns every payment mode the provider supports with its cost (per request, or per voucher with min_deposit for session modes) and deprecation/sunset flags. Call this before pay_for_data or open_session to choose a max_amount instead of guessing.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description:
+            'The full URL of the provider endpoint to quote (e.g., https://api-a.routedock.xyz/price)',
+        },
+      },
+      required: ['url'],
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: 'get_spend_status',
+    description:
+      'Show how much of this server\'s daily spend cap (ROUTEDOCK_DAILY_CAP) has been used today and how much remains, plus any per-endpoint caps. Call this before planning several paid calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+    annotations: READ_ONLY,
   },
 ]

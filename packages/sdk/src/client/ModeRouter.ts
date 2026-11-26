@@ -13,6 +13,7 @@ import {
 } from '../errors.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { usdcToStroops } from '../internal/usdc.js'
+import { getEligibleAssets } from '../internal/assetUtils.js'
 import { noopLogger, type RouteDockLogger } from '../internal/logger.js'
 import pkg from '../../package.json' assert { type: 'json' }
 import { verifyManifestSignature } from '../manifest/sign.js'
@@ -90,9 +91,14 @@ function assertManifestActive(manifest: RouteDockManifest, baseUrl: string): voi
  * an active POST `/infer` (and vice versa). Without a method — `estimateCost()`
  * before a request is chosen, or `openSession()` — a shared path is refused
  * only when every matching descriptor has sunset. Paths the manifest does not
- * list, and (method-known) method/path pairs it does not declare, keep today's
- * behavior. Query strings and hashes are ignored because only `URL.pathname`
- * is compared.
+ * list keep today's behavior. Query strings and hashes are ignored because only
+ * `URL.pathname` is compared.
+ *
+ * When the manifest declares the path but none of its descriptors use the
+ * request's method, a `RouteDockManifestError` is thrown: the signed manifest
+ * never advertised that method on that path, so a payment signed for it would
+ * be settled by a middleware that hands off to a route that does not exist (a
+ * paid 404). It is thrown here, before mode selection and signing.
  */
 export function assertEndpointActive(
   manifest: RouteDockManifest,
@@ -112,7 +118,14 @@ export function assertEndpointActive(
         ([, descriptor]) => descriptor.method.toUpperCase() === requestedMethod,
       )
     : pathMatches
-  if (matches.length === 0) return
+  if (matches.length === 0) {
+    const declared = [...new Set(pathMatches.map(([, d]) => d.method.toUpperCase()))].join(', ')
+    throw new RouteDockManifestError(
+      `Manifest declares ${pathname} only for ${declared}, but the request uses ${requestedMethod}. ` +
+        'Refusing to pay for a method the provider did not advertise: the paid request would reach a route that does not exist. ' +
+        `Use a declared method, or have the provider declare ${requestedMethod} ${pathname} in its manifest endpoints.`,
+    )
+  }
 
   const now = Date.now()
   const allSunset = matches.every(([, descriptor]) => {
@@ -263,6 +276,8 @@ function ttlFromHeaders(headers: Headers, now: number): number {
 export type { RouteDockLogger, RouteDockLogLevel, RouteDockLogFields } from '../internal/logger.js'
 
 export interface ModeSelectOptions {
+  /** Request URL or endpoint path used to filter modes by eligible assets. */
+  endpoint?: string
   /** Force mpp-session if the provider supports it */
   sustained?: boolean
   session?: boolean
@@ -531,6 +546,7 @@ function logSelection(
 /**
  * Deterministic mode selection per Section 6.3 of ROUTEDOCK_MASTER.md.
  *
+ * Modes without an eligible asset for `options.endpoint` are excluded first.
  * Active modes are always considered before modes listed in `deprecated_modes`.
  * Deprecated modes remain usable as a compatibility fallback and produce a
  * logger warning when selected. An explicit forceMode remains authoritative,
@@ -540,14 +556,21 @@ export function selectMode(
   manifest: RouteDockManifest,
   options: ModeSelectOptions = {},
 ): PaymentMode {
-  const modes = manifest.modes
+  const modes = manifest.modes.filter((mode) =>
+    getEligibleAssets(manifest, mode, options.endpoint).length > 0,
+  )
   const log = options.logger ?? noopLogger
   const deprecatedSet = new Set(manifest.deprecated_modes ?? [])
 
   if (options.forceMode) {
+    if (!manifest.modes.includes(options.forceMode)) {
+      throw new RouteDockNoSupportedModeError(
+        `Provider does not support forced mode: ${options.forceMode} (available: ${manifest.modes.join(', ')})`,
+      )
+    }
     if (!modes.includes(options.forceMode)) {
       throw new RouteDockNoSupportedModeError(
-        `Provider does not support forced mode: ${options.forceMode} (available: ${modes.join(', ')})`,
+        `Forced mode ${options.forceMode} has no eligible asset${options.endpoint ? ` for endpoint '${options.endpoint}'` : ''}`,
       )
     }
     if (deprecatedSet.has(options.forceMode)) {

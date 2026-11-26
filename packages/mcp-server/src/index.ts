@@ -17,6 +17,8 @@ import {
   handleCloseSession,
   handleCheckBalance,
   handleListProviders,
+  handleQuoteProvider,
+  handleGetSpendStatus,
   type HandlerDeps,
   type PayForDataArgs,
   type OpenSessionArgs,
@@ -24,6 +26,7 @@ import {
   type CloseSessionArgs,
   type CheckBalanceArgs,
   type ListProvidersArgs,
+  type QuoteProviderArgs,
 } from './handlers.js'
 import { parseEnv, SERVER_NAME, SERVER_VERSION } from './env.js'
 import { setupShutdownHandlers } from './shutdown.js'
@@ -131,6 +134,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'list_providers':
         return await handleListProviders(args as unknown as ListProvidersArgs, deps)
+
+      case 'quote_provider':
+        return await handleQuoteProvider(args as unknown as QuoteProviderArgs, deps)
+
+      case 'get_spend_status':
+        return await handleGetSpendStatus(deps)
 
       default:
         throw new Error(`Unknown tool: ${name}`)

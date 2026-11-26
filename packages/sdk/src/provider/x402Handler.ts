@@ -87,7 +87,8 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const endpoint = req.path || req.originalUrl
+      const endpoint =
+        (req.originalUrl ?? `${req.baseUrl ?? ''}${req.path ?? ''}`).split('?')[0] || '/'
       const assetContract = resolveAssetContract(
         opts.manifest,
         'x402',
@@ -163,7 +164,7 @@ export function createX402Handler(opts: X402HandlerOptions): RequestHandler {
         },
         {
           method: req.method,
-          path: req.originalUrl.split('?')[0]!,
+          path: endpoint,
           amount: requirements.amount,
           payTo: requirements.payTo,
         },

@@ -12,12 +12,13 @@
  *      produces zero unhandledRejection events.
  *   3. When head slot rejects while other slots are still in flight, error propagates
  *      to consumer and zero unhandledRejection events fire.
- *   4. When onSpend throws during replenish, spend error propagates and queued slots
- *      do not cause unhandledRejection.
+ *   4. When onSpend throws while a pipelined slot is being signed, the spend error
+ *      propagates and queued slots do not cause unhandledRejection.
  */
 
 import assert from 'node:assert/strict'
 import { Keypair } from '@stellar/stellar-sdk'
+import { Challenge } from 'mppx'
 import { MppSessionClient } from '../MppSessionClient.js'
 import { signManifest } from '../../manifest/sign.js'
 
@@ -264,23 +265,21 @@ async function runTests() {
     }
 
     // ── Test 4 ─────────────────────────────────────────────────────────────────
-    // onSpend throws during replenishment; remaining in-flight slots must not leak.
+    // onSpend throws when slot 2 answers its 402 (the cap is checked at signing);
+    // the replenished slot still in flight must not leak.
     {
       const unhandled: unknown[] = []
       const onUnhandled = (reason: unknown) => unhandled.push(reason)
       process.on('unhandledRejection', onUnhandled)
 
-      let spendCount = 0
       const onSpend = async (_rate: string) => {
-        spendCount++
-        if (spendCount === 3) {
-          throw new Error('Daily spend cap exceeded on replenish')
-        }
+        throw new Error('Daily spend cap exceeded at signing')
       }
 
       const d1 = deferred<Response>()
       const d2 = deferred<Response>()
-      const defs = [d1, d2]
+      const d3 = deferred<Response>()
+      const defs = [d1, d2, d3]
       globalThis.fetch = createMockFetch(defs)
 
       const handle = await client.openSession(
@@ -291,14 +290,34 @@ async function runTests() {
         onSpend,
       )
 
-      // Concurrency 2: calls 1 and 2 checkSpend pass.
-      // Draining slot 1 will call replenish -> checkSpend 3 -> throws.
+      // Concurrency 2: slot 1 is served without a challenge, slot 2 gets a 402
+      // whose onSpend throws before anything is signed, and slot 3 (the
+      // replenish after slot 1) stays in flight.
       d1.resolve(makeOkResponse({ item: 'one' }))
+      d2.resolve(
+        new Response('', {
+          status: 402,
+          headers: {
+            'WWW-Authenticate': Challenge.serialize(
+              Challenge.from({
+                id: 'pipelined-spend-cap',
+                realm: '127.0.0.1',
+                method: 'stellar',
+                intent: 'channel',
+                request: {
+                  amount: '1000',
+                  channel: 'CCK4XOW3YKQUEZFONUTINKMSNW7SNMRQZURME5U3UP7E6WNGK7UHUCAH',
+                },
+              }),
+            ),
+          },
+        }),
+      )
 
       let threw = false
       try {
         for await (const _ of handle.stream({ concurrency: 2 })) {
-          // First item consumed, next replenishment triggers spend error
+          // First item consumed, then slot 2's spend error surfaces
         }
       } catch (err: any) {
         threw = true
@@ -309,8 +328,8 @@ async function runTests() {
       }
       assert.ok(threw, 'Expected spend cap error to propagate')
 
-      // Pending slot 2 now rejects
-      d2.reject(new Error('Slot 2 orphan rejection'))
+      // Pending slot 3 now rejects
+      d3.reject(new Error('Slot 3 orphan rejection'))
       await new Promise((r) => setTimeout(r, 50))
 
       process.removeListener('unhandledRejection', onUnhandled)
@@ -319,7 +338,7 @@ async function runTests() {
         0,
         `Expected 0 unhandledRejections, got: ${unhandled.map((e: any) => e?.message ?? e).join(', ')}`,
       )
-      console.log('✓ Test 4: real client spend error during replenish -> 0 unhandledRejections')
+      console.log('✓ Test 4: real client spend error at signing -> 0 unhandledRejections')
     }
 
     console.log('\nAll stream pipelined rejection tests passed on real MppSessionClient.')
