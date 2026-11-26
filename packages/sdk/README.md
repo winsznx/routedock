@@ -314,6 +314,16 @@ tracking). The in-memory default doesn't survive isolate eviction, and
 `MppSessionClient` issues one HTTP request per voucher — so voucher N and
 voucher N+1 can land in different isolates entirely.
 
+`@stellar/mpp` writes a `stellar:channel:challenge:<id>` replay-protection key
+for every verified voucher and never deletes it. RouteDock prunes those keys
+from `sessionStore` once they are older than `challengeRetentionMs` (default
+10 minutes: the 5 minute mppx challenge expiry plus a margin). A challenge
+presented inside the window is still rejected as a replay. Only challenge keys
+are pruned; cumulative and voucher-record keys are never deleted. On a durable
+store the prune only runs when a new voucher arrives, so also sweep stale
+`stellar:channel:challenge:` keys on a timer (provider-b does this with a
+Durable Object alarm).
+
 > **Note:** this `sessionStore` option takes a `@stellar/mpp` `Store.Store`.
 > That's a different thing from this SDK's own `SessionStore` /
 > `SupabaseSessionStore` (in `packages/sdk/src/store/SessionStore.ts`), which

@@ -27,6 +27,7 @@ import {
   type ChannelVerifyCredential,
 } from './mppCompatibility.js'
 import type { Method } from 'mppx'
+import { createChallengeRetention } from '../internal/challengeRetention.js'
 import { type ChannelStore, type OrphanedSessionInfo } from './MppSessionHandler.js'
 import { base64ToUtf8, hexToBytes } from './encoding.js'
 import {
@@ -93,6 +94,12 @@ export interface RouteDockHonoOptions {
    * Durable Object storage) so voucher tracking survives isolate eviction.
    */
   sessionStore?: Store.Store | undefined
+  /**
+   * How long `stellar:channel:challenge:*` replay-protection keys are kept in
+   * `sessionStore` before being deleted. Default 10 minutes (mppx challenge
+   * expiry of 5 minutes plus a margin). Never prune below the challenge expiry.
+   */
+  challengeRetentionMs?: number | undefined
   /** Log sink for internal error paths. Defaults to a console-backed logger. */
   logger?: RouteDockLogger
   /**
@@ -642,9 +649,17 @@ function createMppSessionHandlerState(
     }
   }
 
+  const challengeRetention = createChallengeRetention({
+    challengeRetentionMs: opts.challengeRetentionMs,
+    onError: (err, key) => logger('warn', '[mpp-session] challenge prune failed', { error: err, key }),
+  })
+
   const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
-    async put(key: string, value: unknown) { return innerStore.put(key, value) },
+    async put(key: string, value: unknown) {
+      await innerStore.put(key, value)
+      await challengeRetention.afterPut(key, (k) => innerStore.delete(k))
+    },
     async delete(key: string) { return innerStore.delete(key) },
     async update(key: string, fn: (prev: unknown) => unknown) {
       const storeWithUpdate = innerStore as Partial<ChannelStore>

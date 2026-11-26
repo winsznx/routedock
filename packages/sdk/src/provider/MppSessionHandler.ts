@@ -70,6 +70,8 @@ export interface OrphanedSessionInfo {
 }
 
 export interface MppSessionHandlerOptions {
+  /** Retention for challenge replay keys in the handler's store. Default 10 minutes. */
+  challengeRetentionMs?: number | undefined
   payeeSecretKey: string
   network: Network
   channelFactory: string
@@ -102,6 +104,8 @@ export interface MppSessionHandlerOptions {
    */
   vaultSettlement?: VaultSettlementConfig
 }
+
+import { createChallengeRetention } from '../internal/challengeRetention.js'
 
 export function createMppSessionHandler(opts: MppSessionHandlerOptions): RequestHandler {
   const networkId = MPP_NETWORK[opts.network]
@@ -205,9 +209,17 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     }
   }
 
+  const challengeRetention = createChallengeRetention({
+    challengeRetentionMs: opts.challengeRetentionMs,
+    onError: (err, key) => logger('warn', '[mpp-session] challenge prune failed', { error: err, key }),
+  })
+
   const wrappedStore: ChannelStore = {
     async get(key: string) { return innerStore.get(key) },
-    async put(key: string, value: unknown) { return innerStore.put(key, value) },
+    async put(key: string, value: unknown) {
+      await innerStore.put(key, value)
+      await challengeRetention.afterPut(key, (k) => innerStore.delete(k))
+    },
     async delete(key: string) { return innerStore.delete(key) },
     async update(key: string, fn: (prev: unknown) => unknown) {
       const storeWithUpdate = innerStore as Partial<ChannelStore>

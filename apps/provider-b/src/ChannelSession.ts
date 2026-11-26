@@ -16,6 +16,7 @@ import { fetchXlmUsdcOrderBook } from '@routedock/routedock/network'
 import type { Env } from './env.js'
 import { createSessionWriters } from './sessionWrites.js'
 import { resolveAssetContract } from './config.js'
+import { CHALLENGE_SWEEP_INTERVAL_MS, pruneStaleChallenges } from './challengePrune.js'
 
 /**
  * The mpp-session provider, hosted inside a single Durable Object.
@@ -258,7 +259,29 @@ export class ChannelSession extends DurableObject<Env> {
         return Response.json({ error: 'Provider misconfigured' }, { status: 500 })
       }
     }
+    await this.scheduleChallengeSweep()
     return this.app.fetch(request)
+  }
+
+  private async scheduleChallengeSweep(): Promise<void> {
+    const storage = this.ctx?.storage
+    if (!storage?.setAlarm) return
+    if ((await storage.getAlarm()) === null) {
+      await storage.setAlarm(Date.now() + CHALLENGE_SWEEP_INTERVAL_MS)
+    }
+  }
+
+  /**
+   * Prunes stale `stellar:channel:challenge:*` keys so storage stays bounded
+   * even when traffic stops. Re-arms itself only while challenge keys remain.
+   */
+  override async alarm(): Promise<void> {
+    const storage = this.ctx.storage
+    await pruneStaleChallenges(storage)
+    const remaining = await storage.list({ prefix: 'stellar:channel:challenge:', limit: 1 })
+    if (remaining.size > 0) {
+      await storage.setAlarm(Date.now() + CHALLENGE_SWEEP_INTERVAL_MS)
+    }
   }
 }
 
