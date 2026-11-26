@@ -35,6 +35,16 @@ Non-secret environment variables (such as `STELLAR_NETWORK` and `PUBLIC_BASE_URL
 
 When `SUPABASE_URL` is configured, apply the database migrations in [supabase/migrations/](../supabase/migrations/) to your Supabase project.
 
+Migration [010_lock_public_sessions.sql](../supabase/migrations/010_lock_public_sessions.sql) removes Supabase's default write grants from `public_sessions`. The view keeps its owner-rights metadata reads for the dashboard and rejects INSERT, UPDATE and DELETE even if a future grant restores those privileges. Session writes still go through the provider's `sessions` store and its RLS policy. Settlement cleanup is restricted to the function owner and `service_role`.
+
+To check the permissions on a disposable database with all migrations applied, configure the usual PostgreSQL connection variables (`PGHOST`, `PGDATABASE`, `PGUSER` and password authentication) and run:
+
+```bash
+psql -X -v ON_ERROR_STOP=1 -f supabase/tests/rls_public_sessions.sql
+```
+
+Use a database administrator able to switch to `anon` and `authenticated`. The test switches roles, reads a fixture without private columns, checks SELECT-only privileges and denied writes, and tests the view guard after temporarily granting ALL. Its transaction rolls back the fixture and grants. CI applies all migrations as a non-superuser owner with Supabase-like default privileges on an isolated PostgreSQL 16 database before running the same script. The [CI bootstrap fixture](../supabase/tests/fixtures/supabase_roles.sql) is only for an empty test database; do not apply it to an existing Supabase project.
+
 ### Scheduled triggers
 
 Provider B registers a `*/15 * * * *` cron trigger in its `wrangler.jsonc`. When deployed, Cloudflare Workers triggers this schedule every 15 minutes to forward periodic settlement reconciliation to the `ChannelSession` Durable Object.
