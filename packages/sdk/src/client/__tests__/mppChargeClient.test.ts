@@ -574,3 +574,27 @@ describe('MppChargeClient — challenge validation', () => {
     assert.equal(createCredentialCalls, 0)
   })
 })
+
+describe('MppChargeClient — caller ceiling', () => {
+  it('refuses a within-manifest challenge above maxAmount before creating a credential', async () => {
+    // #given: 0.0006 is within the manifest price but exceeds the caller's 0.0005.
+    mppxScript = { challenge: matchingChallenge({ amount: '6000' }) }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+
+    // #when / #then: the callback fails before the signing helper runs.
+    await assert.rejects(
+      client.pay('https://provider.test/price', buildManifest(), undefined, '0.0005'),
+      (error: unknown) => error instanceof RouteDockPolicyRejectError && error.reason === 'max_amount_exceeded',
+    )
+    assert.equal(createCredentialCalls, 0)
+    assert.equal(rawFetchAuthHeaders.length, 0)
+  })
+
+  it('creates a credential when the challenge equals maxAmount exactly', async () => {
+    mppxScript = { challenge: matchingChallenge() }
+    const client = new MppChargeClient(Keypair.random(), 'testnet')
+    const result = await client.pay('https://provider.test/price', buildManifest(), undefined, '0.0008000')
+    assert.equal(createCredentialCalls, 1)
+    assert.equal(result.amount, '0.0008')
+  })
+})

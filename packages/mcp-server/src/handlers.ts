@@ -19,7 +19,7 @@ import type {
   AssetConfig,
   PaymentRequest,
 } from '@routedock/routedock'
-import { RouteDockPaidResponseError, usdcToStroops } from '@routedock/routedock'
+import { RouteDockPaidResponseError, RouteDockPolicyRejectError, usdcToStroops } from '@routedock/routedock'
 // Canonical network constants (issue #578): the server keeps one copy of the
 // Horizon URL and USDC issuer tables instead of its own next to the providers
 // and the SDK.
@@ -213,15 +213,14 @@ function parseUsdc(amount: unknown): bigint | null {
 }
 
 /**
- * Validate price against max_amount then execute the payment.
+ * Validate max_amount and bind it to the actual SDK payment.
  *
  * MCP does not validate arguments against inputSchema, so max_amount is
  * checked here. A missing or non-numeric ceiling used to make the comparison
- * NaN-false and pay with no limit (issue #316). Both amounts are compared
- * exactly in stroops.
+ * NaN-false and pay with no limit (issue #316). The SDK compares exact stroops
+ * against the manifest and challenge used by this payment (issue #725).
  *
- * preferred_mode maps to ModeSelectOptions.forceMode — the field is NOT called
- * preferredMode, so we must not pass it by that name (silent drop, issue #199).
+ * preferred_mode maps to ModeSelectOptions.forceMode.
  */
 export async function handlePayForData(
   args: PayForDataArgs,
@@ -241,46 +240,34 @@ export async function handlePayForData(
   const built = buildPaymentRequest({ method, headers, body })
   if ('error' in built) return err(built.error)
 
-  // The same options go to estimateCost and pay so the quoted request (method
-  // scopes the endpoint sunset check) is the one that is paid for.
-  const modeOptions =
-    preferred_mode || built.request
-      ? {
-          ...(preferred_mode && { forceMode: preferred_mode as PaymentMode }),
-          ...(built.request && { request: built.request }),
-        }
-      : undefined
-
-  const estimate = await client.estimateCost(url, modeOptions)
-
-  const priceStroops = parseUsdc(estimate.amount)
-  if (priceStroops === null) {
-    return err('Provider returned an undefined or invalid price')
-  }
-
-  if (priceStroops > maxStroops) {
-    return err(
-      `Provider cost ${estimate.amount} ${estimate.asset} exceeds max_amount ${max_amount} USDC`,
-    )
+  const modeOptions = {
+    maxAmount: max_amount,
+    ...(preferred_mode && { forceMode: preferred_mode }),
+    ...(built.request && { request: built.request }),
   }
 
   let result: PaymentResult
   try {
     result = await client.pay(url, modeOptions)
   } catch (error) {
-    if (!(error instanceof RouteDockPaidResponseError)) throw error
-    return {
-      content: [{ type: 'text', text: JSON.stringify({
-        success: false,
-        paid: true,
-        error: error.message + ' Do not retry the same URL: payment was already accepted.',
-        mode: error.mode,
-        amount: error.amount,
-        tx_hash: error.txHash,
-        ...(error.contentType !== undefined ? { content_type: error.contentType } : {}),
-      }, null, 2) }],
-      isError: true,
+    if (error instanceof RouteDockPolicyRejectError && error.reason === 'max_amount_exceeded') {
+      return err('Provider cost exceeds max_amount ' + max_amount + ' USDC')
     }
+    if (error instanceof RouteDockPaidResponseError) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          success: false,
+          paid: true,
+          error: error.message + ' Do not retry the same URL: payment was already accepted.',
+          mode: error.mode,
+          amount: error.amount,
+          tx_hash: error.txHash,
+          ...(error.contentType !== undefined ? { content_type: error.contentType } : {}),
+        }, null, 2) }],
+        isError: true,
+      }
+    }
+    throw error
   }
 
   return ok({
