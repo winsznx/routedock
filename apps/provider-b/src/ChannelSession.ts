@@ -81,7 +81,7 @@ export class ChannelSession extends DurableObject<Env> {
       const baseUrl = env.PUBLIC_BASE_URL ?? 'https://api-b.routedock.xyz'
       const signed = signManifest(manifest, env.STELLAR_PAYEE_SECRET)
       this.ctx.waitUntil(
-        registerProvider({ supabase, manifest: signed, baseUrl, verified: true }).catch((err) => {
+        registerProvider({ supabase, manifest: signed, baseUrl }).catch((err) => {
           console.error('[registry] Failed to register provider-b:', err)
         }),
       )

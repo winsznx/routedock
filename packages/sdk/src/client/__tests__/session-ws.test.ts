@@ -105,6 +105,11 @@ const fakeMppx = {
   ): Promise<string> => {
     createCredentialCalls++
     wsCredentialContexts.push(context)
+    // The real channel client reports every signature as 'signed', which is
+    // what the session's stats() counts.
+    if (context?.cumulativeAmount !== undefined) {
+      capturedOnProgress?.({ type: 'signed', cumulativeAmount: context.cumulativeAmount })
+    }
     return 'Payment fake-voucher-credential'
   },
 }
@@ -117,10 +122,18 @@ mock.module('mppx/client', {
   },
 })
 
+let capturedOnProgress: ((event: { type: 'signed'; cumulativeAmount: string }) => void) | null =
+  null
+
 mock.module('@stellar/mpp/channel/client', {
   namedExports: {
     stellar: {
-      channel: () => ({}),
+      channel: (opts: {
+        onProgress?: (event: { type: 'signed'; cumulativeAmount: string }) => void
+      }) => {
+        capturedOnProgress = opts.onProgress ?? null
+        return {}
+      },
     },
   },
 })
@@ -304,7 +317,7 @@ describe('mpp-session-ws — success path', () => {
 })
 
 describe('mpp-session-ws — failure paths', () => {
-  it('rejects before any network call when onSpend denies the local cap', async () => {
+  it('rejects before signing when onSpend denies the local cap', async () => {
     mppxScript = {}
     wsScript = { frames: ['{"a":1}'], closeCode: 1000 }
     const { factory, calls } = makeFakeWsFactory()
@@ -321,7 +334,8 @@ describe('mpp-session-ws — failure paths', () => {
       },
       (err: unknown) => err instanceof RouteDockPolicyRejectError && err.reason === 'local_daily_cap_exceeded',
     )
-    assert.equal(rawFetchCalls, 0)
+    // The cap is checked at the point of signing, after the unpaid probe.
+    assert.equal(rawFetchCalls, 1)
     assert.equal(createCredentialCalls, 0)
     assert.equal(calls.length, 0)
   })

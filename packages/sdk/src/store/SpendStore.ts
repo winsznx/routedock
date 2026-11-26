@@ -1,3 +1,4 @@
+import { RouteDockPolicyRejectError } from '../errors.js'
 import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -16,6 +17,63 @@ export interface DailySpend {
   endpoints: Record<string, string>
 }
 
+// ── Validation ─────────────────────────────────────────────────────────────────
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const MICROS_RE = /^\d+$/
+
+/** Policy-reject reason used when a store hands back a malformed accumulator. */
+export const SPEND_STATE_INVALID = 'local_spend_state_invalid'
+
+/**
+ * Describe what is wrong with a persisted accumulator, or return `null` when it
+ * is a well-formed {@link DailySpend}: an object with a `YYYY-MM-DD` date, a
+ * non-negative integer string `totalMicros`, and an `endpoints` object of
+ * non-negative integer strings. A missing record (`null`/`undefined`) is not
+ * handled here — it is "nothing spent yet" and is the caller's call.
+ */
+export function describeSpendStateProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return `expected an object, got ${value === null ? 'null' : Array.isArray(value) ? 'an array' : typeof value}`
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record['date'] !== 'string' || !DATE_RE.test(record['date']) || Number.isNaN(Date.parse(record['date']))) {
+    return `date must be a YYYY-MM-DD string (got ${JSON.stringify(record['date'])})`
+  }
+  if (typeof record['totalMicros'] !== 'string' || !MICROS_RE.test(record['totalMicros'])) {
+    return `totalMicros must be a non-negative integer string (got ${JSON.stringify(record['totalMicros'])})`
+  }
+  const endpoints = record['endpoints']
+  if (typeof endpoints !== 'object' || endpoints === null || Array.isArray(endpoints)) {
+    return `endpoints must be an object (got ${JSON.stringify(endpoints)})`
+  }
+  for (const [origin, total] of Object.entries(endpoints)) {
+    if (typeof total !== 'string' || !MICROS_RE.test(total)) {
+      return `endpoints["${origin}"] must be a non-negative integer string (got ${JSON.stringify(total)})`
+    }
+  }
+  return null
+}
+
+/**
+ * Validate a record read from a {@link SpendStore} and return a clean copy.
+ * `null`/`undefined` mean no record exists yet (zero spend) and return `null`.
+ * Anything else that is not a well-formed {@link DailySpend} throws
+ * `RouteDockPolicyRejectError('local_spend_state_invalid')`: a spend cap must
+ * fail closed on state it cannot trust, not reset to zero or grow its headroom.
+ */
+export function parseDailySpend(value: unknown): DailySpend | null {
+  if (value === null || value === undefined) return null
+  const problem = describeSpendStateProblem(value)
+  if (problem !== null) {
+    throw new RouteDockPolicyRejectError(SPEND_STATE_INVALID, {
+      cause: new Error(`The persisted spend accumulator is malformed: ${problem}`),
+    })
+  }
+  const record = value as DailySpend
+  return { date: record.date, totalMicros: record.totalMicros, endpoints: { ...record.endpoints } }
+}
+
 // ── Interface ──────────────────────────────────────────────────────────────────
 
 /**
@@ -25,6 +83,14 @@ export interface DailySpend {
  * heap memory, any crash, OOM kill, or container restart silently resets it to
  * zero and the cap can be bypassed. Inject a persistent implementation
  * (Redis, SQL, Supabase, a file, …) so the counter survives restarts.
+ *
+ * ### Malformed state
+ * The client validates every record a store returns ({@link parseDailySpend}).
+ * A store that returns anything other than `null` (nothing spent yet) or a
+ * well-formed {@link DailySpend} makes the payment fail with
+ * `RouteDockPolicyRejectError('local_spend_state_invalid')` before anything is
+ * signed, and the stored state is left untouched. A custom store should
+ * likewise treat a missing record as `null` and a damaged one as an error.
  *
  * ### Sharing a store between processes
  * The client serializes its own read → check → write with an in-memory mutex,

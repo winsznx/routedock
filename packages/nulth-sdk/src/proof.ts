@@ -36,6 +36,9 @@ export function dayBucket(ledgerSequence: number): number {
   return Math.floor(ledgerSequence / 17280)
 }
 
+/** Default max ledgers a signed auth entry may stay valid past the payment ledger (~10 min). */
+export const DEFAULT_AUTH_EXPIRY_WINDOW_LEDGERS = 120
+
 /** Auth digest bound into the ZK proof (mirrors OZ smart account binding) */
 export function authDigestFromEntry(authEntryBase64: string): string {
   const entryHash = hash(base64ToBytes(authEntryBase64) as Parameters<typeof hash>[0])
@@ -58,6 +61,7 @@ export function assertAuthEntryMatchesContext(
   authEntry: string,
   from: string,
   ctx: Omit<PaymentAuthContext, 'authEntry'>,
+  opts: { expiryLedger?: number; authExpiryWindowLedgers?: number } = {},
 ): void {
   let preimage: xdr.HashIdPreimage
   try {
@@ -70,6 +74,36 @@ export function assertAuthEntryMatchesContext(
     throw new NulthPolicyError(
       'auth_entry_mismatch',
       'authEntry is not a Soroban authorization preimage',
+    )
+  }
+
+  if (!Number.isSafeInteger(ctx.ledgerSequence) || ctx.ledgerSequence < 0) {
+    throw new RangeError(`Invalid ledgerSequence: ${ctx.ledgerSequence}`)
+  }
+  const authExpiry = preimage.sorobanAuthorization().signatureExpirationLedger()
+  const window = opts.authExpiryWindowLedgers ?? DEFAULT_AUTH_EXPIRY_WINDOW_LEDGERS
+  if (authExpiry < ctx.ledgerSequence) {
+    throw new NulthPolicyError(
+      'auth_expiry_out_of_policy',
+      `authEntry expiration ledger ${authExpiry} is below ledgerSequence ${ctx.ledgerSequence}`,
+    )
+  }
+  if (opts.expiryLedger !== undefined && authExpiry > opts.expiryLedger) {
+    throw new NulthPolicyError(
+      'auth_expiry_out_of_policy',
+      `authEntry expiration ledger ${authExpiry} is past the session expiry ledger ${opts.expiryLedger}`,
+    )
+  }
+  if (authExpiry > ctx.ledgerSequence + window) {
+    throw new NulthPolicyError(
+      'auth_expiry_out_of_policy',
+      `authEntry expiration ledger ${authExpiry} is more than ${window} ledgers past ledgerSequence ${ctx.ledgerSequence}`,
+    )
+  }
+  if (dayBucket(authExpiry) !== dayBucket(ctx.ledgerSequence)) {
+    throw new NulthPolicyError(
+      'auth_expiry_out_of_policy',
+      'authEntry expiration ledger falls in a different day bucket than ledgerSequence',
     )
   }
 

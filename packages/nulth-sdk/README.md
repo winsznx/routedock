@@ -134,3 +134,11 @@ in this repository that implements `__check_auth` against these public inputs, a
 no Groth16 verifier is deployed, so a proof produced by the mock prover is not
 settled on-chain. Testnet builds are for developing the client path only.
 
+## Auth entry expiry window
+
+`signAuthEntry` reads `signatureExpirationLedger` from the preimage it is asked to
+sign and refuses (`NulthPolicyError` code `auth_expiry_out_of_policy`) when it is
+below `paymentContext.ledgerSequence`, above `policy.expiryLedger`, more than
+`authExpiryWindowLedgers` (default 120, about 10 minutes) past `ledgerSequence`, or
+in a different day bucket than `ledgerSequence`. `NulthStellarScheme` in
+`@routedock/routedock` also clamps the provider's `maxTimeoutSeconds` to 300.

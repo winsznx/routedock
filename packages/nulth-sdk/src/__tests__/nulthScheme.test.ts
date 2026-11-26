@@ -40,7 +40,7 @@ const WITNESS = 'test-witness-secret'
 const DAILY_CAP_STROOPS = 10_000_000n
 const AMOUNT = 10_000n
 const LEDGER = 50_000
-const EXPIRATION = 51_000
+const EXPIRATION = LEDGER + 12
 
 function transferInvocation(
   from: string,

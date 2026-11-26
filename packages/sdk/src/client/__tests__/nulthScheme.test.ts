@@ -26,6 +26,7 @@ import {
   type NulthStellarSigner,
 } from '@routedock/nulth-sdk'
 import {
+  NULTH_MAX_TIMEOUT_SECONDS,
   NulthStellarScheme,
   selectStellarScheme,
   type NulthPaymentTransaction,
@@ -242,6 +243,25 @@ test('NulthStellarScheme puts the proof in the payment transaction credential', 
   assert.equal(proof.nulth, 'zk-v1')
   assert.equal(proof.proof.publicInputs.amountStroops, AMOUNT)
   assert.equal(proof.proof.publicInputs.payeeHash.length, 64, 'the payee stays hashed')
+})
+
+test('NulthStellarScheme clamps a provider-supplied maxTimeoutSeconds', async () => {
+  const seen: number[] = []
+  const io: NulthSchemeIo = {
+    async expirationLedger(_network, maxTimeoutSeconds) {
+      seen.push(maxTimeoutSeconds)
+      return EXPIRATION
+    },
+    async assemble() {
+      return new StubTransaction()
+    },
+  }
+  const scheme = new NulthStellarScheme(nulthSigner(), io)
+  await scheme.createPaymentPayload(2, { ...requirements, maxTimeoutSeconds: 1e9 })
+  assert.deepEqual(seen, [NULTH_MAX_TIMEOUT_SECONDS], 'clamped before computing the ledger')
+  assert.equal(NULTH_MAX_TIMEOUT_SECONDS, 300)
+  await scheme.createPaymentPayload(2, { ...requirements, maxTimeoutSeconds: 60 })
+  assert.equal(seen[1], 60, 'a short timeout is left alone')
 })
 
 // ── Scheme selection: only Nulth payers change behaviour ─────────────────────
