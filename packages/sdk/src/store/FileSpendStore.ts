@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { DailySpend, SpendStore } from './SpendStore.js'
+import { RouteDockPolicyRejectError } from '../errors.js'
+import { SPEND_STATE_INVALID, describeSpendStateProblem, type DailySpend, type SpendStore } from './SpendStore.js'
 
 /** Tuning for the cross-process lock that guards read-modify-write. */
 export interface FileSpendStoreOptions {
@@ -32,8 +33,11 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  *
  * ### Error semantics
  * - File absent (ENOENT): returns null — legitimately no spend recorded yet.
- * - File present but unreadable or malformed: throws — a safety control must
- *   fail closed, not assume nothing was spent.
+ * - File present but unreadable or malformed (invalid JSON, or JSON that is not
+ *   a valid spend record: `null`, `{}`, an array, a missing or negative
+ *   `totalMicros`, …): throws — a safety control must fail closed, not assume
+ *   nothing was spent. A wrong-shape file throws
+ *   `RouteDockPolicyRejectError('local_spend_state_invalid')` and is left untouched.
  *
  * ### Write atomicity
  * Writes go to a tmp file that is unique per write (`<filePath>.<pid>.<random>.tmp`),
@@ -87,14 +91,29 @@ export class FileSpendStore implements SpendStore {
       )
     }
 
+    let parsed: unknown
     try {
-      return JSON.parse(data) as DailySpend
+      parsed = JSON.parse(data)
     } catch {
       throw new Error(
         `[FileSpendStore] Spend file at ${this.filePath} contains invalid JSON. ` +
           `Delete or repair it before resuming. Raw content: ${data.slice(0, 120)}`,
       )
     }
+
+    // Valid JSON of the wrong shape (null, {}, [], a missing or negative total)
+    // must fail closed too: casting it would reset the cap or grow its headroom.
+    // Only an absent file (ENOENT above) means zero spend.
+    const problem = describeSpendStateProblem(parsed)
+    if (problem !== null) {
+      throw new RouteDockPolicyRejectError(SPEND_STATE_INVALID, {
+        cause: new Error(
+          `[FileSpendStore] Spend file at ${this.filePath} does not hold a valid spend record (${problem}). ` +
+            `Delete or repair it before resuming. Raw content: ${data.slice(0, 120)}`,
+        ),
+      })
+    }
+    return parsed as DailySpend
   }
 
   async write(state: DailySpend): Promise<void> {

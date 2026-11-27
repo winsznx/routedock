@@ -275,3 +275,20 @@ test('an async listener that rejects does not cause an unhandled rejection', asy
   assert.equal(rejections.length, 0, `unhandled rejection: ${String(rejections[0])}`)
   assert.equal(sawFailure, true)
 })
+
+test('successful auto-close emits session:closed with the settled result (#728)', async () => {
+  // #given a session whose auto-close resolves cleanly
+  const session = await newSession(20)
+  const closeCalls = succeedClose(session)
+
+  // #when the lifetime guard fires and settles
+  const closedPayload = await waitForEvent(session, 'session:closed')
+
+  // #then session:closed delivers the SessionCloseResult from handle.close()
+  assert.equal(closeCalls(), 1)
+  assert.deepEqual(closedPayload, {
+    closeTxHash: 'STUB_CLOSE_HASH',
+    totalPaid: '0.0000000',
+    vouchersIssued: 0,
+  })
+})
