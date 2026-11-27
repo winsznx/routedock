@@ -40,7 +40,9 @@ tags_before="$(git tag --list)"
 cleanup() {
   status=$?
   if [ -n "$verdaccio_pid" ]; then
-    kill "$verdaccio_pid" 2>/dev/null || true
+    # Negative PID: the whole process group, since `npx` does not pass the
+    # signal on to the Verdaccio process it starts.
+    kill -- "-$verdaccio_pid" 2>/dev/null || true
   fi
   # Drop the tags `changeset publish` created, and in a local run restore the tree.
   comm -13 <(printf '%s\n' "$tags_before" | sort) <(git tag --list | sort) \
@@ -56,10 +58,13 @@ trap cleanup EXIT
 
 # ── Throwaway registry ───────────────────────────────────────────────────────
 cp scripts/verdaccio.yaml "$work/verdaccio.yaml"
+# `set -m` gives the background job its own process group, so cleanup can kill it.
+set -m
 # shellcheck disable=SC2086
 $verdaccio_cmd --config "$work/verdaccio.yaml" --listen "127.0.0.1:${port}" \
   >"$work/verdaccio.log" 2>&1 &
 verdaccio_pid=$!
+set +m
 
 for _ in $(seq 1 90); do
   if curl -fsS "${registry}-/ping" >/dev/null 2>&1; then break; fi
