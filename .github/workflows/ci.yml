@@ -196,6 +196,8 @@ jobs:
           node-version: 22
       - name: Test E2E provider failure diagnostics
         run: node --test scripts/e2e-provider-logs.test.mjs
+      - name: Test the release rehearsal helpers
+        run: node --test scripts/release-rehearsal.test.mjs
       - name: Guard release.yml permissions
         # release.yml has twice regressed to missing the permissions that make
         # Changesets and the release watchdog work (#255, fixed in 8f3d82b).
@@ -252,3 +254,56 @@ jobs:
           fi
       - name: Lint
         run: pnpm -r lint
+
+  # Rehearses .github/workflows/release.yml (#718). Release only runs on push to
+  # main, so a change to @changesets/cli, the changeset config or the release
+  # script is otherwise first executed after merge. This runs the same
+  # `pnpm run release` against a throwaway Verdaccio and fails unless
+  # `changeset publish` prints one `New tag:` line per publishable package,
+  # which is what changesets/action scrapes to push tags and create GitHub
+  # Releases. No secrets; nothing reaches registry.npmjs.org for @routedock/*.
+  #
+  # The job always runs so it can be a required check (a skipped required check
+  # would block merges); on pull requests the expensive steps only run when the
+  # release path could have changed.
+  release-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect release-path changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: always rehearse."
+            exit 0
+          fi
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          echo "$changed"
+          if echo "$changed" | grep -Eq '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.changeset/|packages/[^/]+/package\.json|scripts/(check-pack|check-packed|release-rehearsal|verdaccio)|\.github/workflows/(release|ci)\.yml)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No release-path files changed; skipping the rehearsal."
+          fi
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.changes.outputs.relevant == 'true'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.relevant == 'true'
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.changes.outputs.relevant == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Rehearse the release against a throwaway registry
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash scripts/release-rehearsal.sh
