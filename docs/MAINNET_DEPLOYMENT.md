@@ -25,7 +25,7 @@ Do **not** deploy until every item below is explicitly marked done by the operat
     rg -n "(SECRET=|SEED|S[ABCDEFGHIJKLMNOPQRSTUVWXYZ234567]{55})" apps agent docs --glob "*.env*" --glob "*.dev.vars*" --glob "*.jsonc"
     ```
 - [ ] **Monitoring and alerting live**
-  - Stellar Expert webhook configured for vault contract events (`payment_authorized`, `vault_frozen`, `vault_unfrozen`, `agent_key_rotated`, `expiry_updated`, `cap_updated`, `allowlist_updated`, `session_settled`, `admin_transfer_requested`, `admin_changed`, `upgrade_proposed`, `upgrade_cancelled`, `upgraded`) + channel contracts.
+  - Stellar Expert webhook configured for vault contract events (`vault_initialized`, `payment_authorized`, `vault_frozen`, `vault_unfrozen`, `agent_key_rotated`, `expiry_updated`, `cap_updated`, `allowlist_updated`, `session_settled`, `admin_transfer_requested`, `admin_changed`, `upgrade_proposed`, `upgrade_cancelled`, `upgraded`) + channel contracts.
   - Command:
     ```bash
     curl -s https://stellar.expert/explorer/public | head -n 1
@@ -375,6 +375,7 @@ curl -s https://api-b.routedock.xyz/health
 
 Configure alerts for:
 - Agent vault contract invocations and events:
+  - `vault_initialized`
   - `payment_authorized`
   - `vault_frozen`
   - `vault_unfrozen`
