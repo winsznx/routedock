@@ -18,6 +18,9 @@ const LIST_KEY: Symbol = symbol_short!("allwlist");
 const EXPIRY_KEY: Symbol = symbol_short!("expiry");
 const INIT_KEY: Symbol = symbol_short!("init");
 const FROZEN_KEY: Symbol = symbol_short!("frozen");
+/// Prefix of the persistent per-channel marker `record_session_settlement` writes:
+/// `(SETTLED_KEY, channel_id) -> true`.
+const SETTLED_KEY: Symbol = symbol_short!("settled");
 
 // Global day-spend key: (SPEND_PREFIX, day_bucket) where day_bucket = seq / 17280
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
@@ -71,6 +74,9 @@ pub enum Error {
     NoPendingUpgrade = 14,
     UpgradeNotReady = 15,
     UpgradeTimelockOverflow = 16,
+    /// `record_session_settlement` was already called for this `channel_id`.
+    /// Appended last so codes 1..=16 keep their values.
+    SettlementAlreadyRecorded = 17,
 }
 
 fn validate_cap(env: &Env, cap: i128) {
@@ -206,6 +212,19 @@ impl AgentVault {
     /// third-party provider records its own settlements with its own payee key
     /// and never holds the admin secret, which also guards `upgrade` and
     /// `set_agent_pubkey`.
+    ///
+    /// Guards, in order:
+    /// - a frozen vault rejects with `ContractFrozen` (before any auth check), so
+    ///   freeze really is the emergency stop for everything that writes a record;
+    /// - each `channel_id` can be recorded once. A second call fails with
+    ///   `SettlementAlreadyRecorded` and emits nothing, so the event log can never
+    ///   show a channel's settlement twice.
+    ///
+    /// `payer`, `cumulative_amount` and `voucher_count` are **asserted by the
+    /// payee and not verified on-chain**. Unlike `payment_authorized` (emitted
+    /// from `__check_auth`, so it reflects enforced spend), `session_settled`
+    /// should be checked against the channel close transaction before it is
+    /// trusted for reconciliation.
     pub fn record_session_settlement(
         env: Env,
         channel_id: Address,
@@ -214,6 +233,14 @@ impl AgentVault {
         cumulative_amount: i128,
         voucher_count: u32,
     ) {
+        if env
+            .storage()
+            .instance()
+            .get::<Symbol, bool>(&FROZEN_KEY)
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, Error::ContractFrozen);
+        }
         if cumulative_amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
@@ -226,6 +253,19 @@ impl AgentVault {
             panic_with_error!(&env, Error::PayeeNotAllowed);
         }
         payee.require_auth();
+        bump_instance(&env);
+
+        // Persistent, not temporary: the marker has to outlive the channel for as
+        // long as the vault does, or a payee could replay an old channel once it
+        // expired. Its TTL tracks the instance TTL.
+        let settled_key = (SETTLED_KEY, channel_id.clone());
+        if env.storage().persistent().has(&settled_key) {
+            panic_with_error!(&env, Error::SettlementAlreadyRecorded);
+        }
+        env.storage().persistent().set(&settled_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&settled_key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 
         // topics: (Symbol("session_settled"), channel_id, payee)
         // data:   (payer, cumulative_amount, voucher_count)
@@ -786,6 +826,60 @@ mod tests {
                 .unwrap_or(0);
             (day, payee, lifetime)
         })
+    }
+
+    /// Decode a fixed-width hex fixture file (`testdata/ts_auth/*.hex`).
+    fn hex_fixture<const N: usize>(hex: &str) -> [u8; N] {
+        let hex = hex.trim();
+        assert_eq!(hex.len(), N * 2, "fixture must be {N} bytes of hex");
+        let mut out = [0u8; N];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("fixture is hex");
+        }
+        out
+    }
+
+    /// #721: the SDK's `agentVaultAuthorizeEntry` writes the credential signature
+    /// as raw `scvBytes` (64 bytes) over `sha256(HashIdPreimageSorobanAuthorization)`.
+    /// The three fixture files are produced by that TS helper (the SDK test
+    /// `agentVault.test.ts` fails if the helper's output ever differs from them;
+    /// regenerate with `UPDATE_AGENT_VAULT_FIXTURE=1`). This test decodes them as
+    /// `BytesN<64>` and runs the real `__check_auth`, so a drift between what the
+    /// SDK signs and what the vault verifies fails here.
+    #[test]
+    fn test_signature_from_ts_helper_passes_check_auth() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let agent_pk = BytesN::<32>::from_array(
+            &env,
+            &hex_fixture::<32>(include_str!("../testdata/ts_auth/agent_pk.hex")),
+        );
+        let payload = BytesN::<32>::from_array(
+            &env,
+            &hex_fixture::<32>(include_str!("../testdata/ts_auth/payload.hex")),
+        );
+        let sig = BytesN::<64>::from_array(
+            &env,
+            &hex_fixture::<64>(include_str!("../testdata/ts_auth/signature.hex")),
+        );
+
+        let payee = Address::generate(&env);
+        let allowlist = Map::from_array(&env, [(payee.clone(), 5_000_000_i128)]);
+        let vault_id = env.register(
+            AgentVault,
+            (admin, agent_pk, 5_000_000_i128, allowlist, 10_000_u32, 0_i128),
+        );
+
+        // The payload is opaque to the vault; the policy contexts only need to be a
+        // transfer to an allowlisted payee within the caps.
+        let contexts = Vec::from_array(&env, [transfer_context(&env, &payee, 100_000)]);
+        let result = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload,
+            sig.into_val(&env),
+            &contexts,
+        );
+        assert!(result.is_ok(), "TS-produced signature must pass __check_auth: {result:?}");
     }
 
     /// Test 1: valid payment within cap to allowlisted address passes
@@ -1552,6 +1646,158 @@ mod tests {
 
         env.mock_all_auths();
         client.record_session_settlement(&channel_id, &payer, &payee, &-1_i128, &10_u32);
+    }
+
+    /// Count `session_settled` events in the most recent invocation (the test
+    /// environment only retains the last call's events).
+    fn count_session_settled(env: &Env, vault_id: &Address) -> usize {
+        use soroban_sdk::testutils::Events;
+        let evt_name = Symbol::new(env, "session_settled");
+        env.events()
+            .all()
+            .iter()
+            .filter(|(addr, topics, _)| {
+                addr == vault_id
+                    && topics
+                        .get(0)
+                        .map_or(false, |t| Symbol::from_val(env, &t) == evt_name)
+            })
+            .count()
+    }
+
+    /// Test 18f: a frozen vault refuses to record a settlement (issue #605).
+    #[test]
+    fn test_session_settled_rejected_while_frozen() {
+        let env = Env::default();
+        let (client, vault_id, _admin, payee) = setup_settlement(&env);
+        env.mock_all_auths();
+        client.freeze();
+
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+        assert_eq!(
+            client.try_record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &1_u32),
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                Error::ContractFrozen as u32
+            ))),
+        );
+        assert_eq!(count_session_settled(&env, &vault_id), 0);
+
+        // Unfreezing restores the normal path, and the rejected attempt left no
+        // marker behind that would block the real record.
+        client.unfreeze();
+        client.record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &1_u32);
+        assert_eq!(count_session_settled(&env, &vault_id), 1);
+    }
+
+    /// Test 18g: the frozen check runs before the auth check, so a frozen vault
+    /// rejects with `ContractFrozen` even when the payee has not authorized.
+    #[test]
+    fn test_session_settled_frozen_check_precedes_auth() {
+        let env = Env::default();
+        let (client, _vault_id, _admin, payee) = setup_settlement(&env);
+        env.mock_all_auths();
+        client.freeze();
+
+        // No auths mocked for the settlement call itself.
+        env.mock_auths(&[]);
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+        assert_eq!(
+            client.try_record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &1_u32),
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                Error::ContractFrozen as u32
+            ))),
+        );
+    }
+
+    /// Test 18h: the same channel cannot be recorded twice, and the second
+    /// attempt emits nothing (issue #605).
+    #[test]
+    fn test_session_settled_rejects_same_channel_twice() {
+        let env = Env::default();
+        let (client, vault_id, _admin, payee) = setup_settlement(&env);
+        env.mock_all_auths();
+
+        let channel_id = Address::generate(&env);
+        let payer = Address::generate(&env);
+        client.record_session_settlement(&channel_id, &payer, &payee, &500_000_i128, &3_u32);
+        assert_eq!(count_session_settled(&env, &vault_id), 1);
+
+        // Even with different amounts the channel is already on record.
+        assert_eq!(
+            client.try_record_session_settlement(&channel_id, &payer, &payee, &900_000_i128, &9_u32),
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                Error::SettlementAlreadyRecorded as u32
+            ))),
+        );
+        // The rejected second attempt emitted nothing.
+        assert_eq!(count_session_settled(&env, &vault_id), 0);
+    }
+
+    /// Test 18i: a different channel still records after another was settled.
+    #[test]
+    fn test_session_settled_distinct_channels_both_record() {
+        let env = Env::default();
+        let (client, vault_id, _admin, payee) = setup_settlement(&env);
+        env.mock_all_auths();
+
+        let payer = Address::generate(&env);
+        client.record_session_settlement(
+            &Address::generate(&env),
+            &payer,
+            &payee,
+            &500_000_i128,
+            &1_u32,
+        );
+        assert_eq!(count_session_settled(&env, &vault_id), 1);
+        client.record_session_settlement(
+            &Address::generate(&env),
+            &payer,
+            &payee,
+            &700_000_i128,
+            &2_u32,
+        );
+        assert_eq!(count_session_settled(&env, &vault_id), 1);
+    }
+
+    /// Test 18j: the per-channel marker lives in persistent storage and its TTL
+    /// is extended to match the instance TTL, so it outlives the channel.
+    #[test]
+    fn test_session_settled_marker_ttl_matches_instance_ttl() {
+        use soroban_sdk::testutils::storage::Persistent as _;
+
+        let env = Env::default();
+        let (client, vault_id, _admin, payee) = setup_settlement(&env);
+        env.mock_all_auths();
+
+        let channel_id = Address::generate(&env);
+        client.record_session_settlement(
+            &channel_id,
+            &Address::generate(&env),
+            &payee,
+            &500_000_i128,
+            &1_u32,
+        );
+
+        let ttl = env.as_contract(&vault_id, || {
+            env.storage()
+                .persistent()
+                .get_ttl(&(SETTLED_KEY, channel_id.clone()))
+        });
+        assert_eq!(ttl, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    /// Test 18k: existing error codes 1..=16 keep their values; the new code is
+    /// appended after them.
+    #[test]
+    fn test_error_codes_are_stable() {
+        assert_eq!(Error::AlreadyInitialized as u32, 1);
+        assert_eq!(Error::PayeeNotAllowed as u32, 5);
+        assert_eq!(Error::ContractFrozen as u32, 9);
+        assert_eq!(Error::InvalidAmount as u32, 10);
+        assert_eq!(Error::UpgradeTimelockOverflow as u32, 16);
+        assert_eq!(Error::SettlementAlreadyRecorded as u32, 17);
     }
 
     /// Test 19: payment within global cap but exceeding per-payee sub-cap is rejected
@@ -3405,12 +3651,20 @@ mod tests {
         assert_refreshes_instance_ttl(&env, &vault_id, "add_to_allowlist", || {
             client.add_to_allowlist(&payee, &1_000_000_i128)
         });
+        // `record_session_settlement` is signed by the allowlisted payee rather
+        // than the admin, but it is an authenticated write path, so it bumps too.
+        assert_refreshes_instance_ttl(&env, &vault_id, "record_session_settlement", || {
+            client.record_session_settlement(
+                &Address::generate(&env),
+                &Address::generate(&env),
+                &payee,
+                &1_i128,
+                &1_u32,
+            )
+        });
         assert_refreshes_instance_ttl(&env, &vault_id, "remove_from_allowlist", || {
             client.remove_from_allowlist(&payee)
         });
-        // `record_session_settlement` is deliberately absent: since #530 the
-        // allowlisted payee signs it, it is not an admin entrypoint, and it only
-        // reads instance storage.
         assert_refreshes_instance_ttl(&env, &vault_id, "set_lifetime_cap", || {
             client.set_lifetime_cap(&9_000_000_i128)
         });

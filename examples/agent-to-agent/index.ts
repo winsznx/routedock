@@ -15,8 +15,11 @@
  *   5. Orchestrator aggregates results and prints the final answer.
  */
 
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { Keypair } from '@stellar/stellar-sdk'
 import { routedockHono } from '@routedock/routedock/provider/hono'
 import { RouteDockClient } from '@routedock/routedock'
@@ -40,19 +43,37 @@ const USDC_CONTRACT: string =
         ? 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
         : '')
 
-if (!USDC_CONTRACT) {
-    console.error('FATAL: USDC_ASSET_CONTRACT is required for mainnet')
-    process.exit(1)
+// ---------------------------------------------------------------------------
+// The paid route, shared by the manifest, the server and the client
+// ---------------------------------------------------------------------------
+
+/** Path the specialist serves. The manifest, the route and the client all use it. */
+export const SUMMARISE_PATH = '/summarise'
+/** HTTP method of the paid route. The manifest, the route and the client all use it. */
+export const SUMMARISE_METHOD = 'POST'
+
+/** The request the orchestrator sends for one chunk: a JSON body `{ text }`. */
+export function buildSummariseRequest(text: string): {
+    method: typeof SUMMARISE_METHOD
+    headers: Record<string, string>
+    body: string
+} {
+    return {
+        method: SUMMARISE_METHOD,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+    }
 }
+
+/** The payment middleware slot. Defaults to `routedockHono`; tests inject a stub that settles without a chain. */
+export type PaymentGate = MiddlewareHandler
 
 // ---------------------------------------------------------------------------
 // Specialist sub-agent server
 // ---------------------------------------------------------------------------
 
-function buildSpecialistServer(specialistSecret: string): Hono {
-    const specialistKp = Keypair.fromSecret(specialistSecret)
-
-    const manifest: RouteDockManifest = {
+export function buildSpecialistManifest(payee: string): RouteDockManifest {
+    return {
         routedock: '1.0',
         name: 'Summariser Specialist',
         description: 'Accepts a text snippet and returns a one-sentence summary — paid per request',
@@ -60,7 +81,7 @@ function buildSpecialistServer(specialistSecret: string): Hono {
         network: STELLAR_NETWORK as 'testnet' | 'mainnet',
         asset: 'USDC',
         asset_contract: USDC_CONTRACT,
-        payee: specialistKp.publicKey(),
+        payee,
         pricing: {
             x402: {
                 amount: '0.0003',
@@ -68,13 +89,21 @@ function buildSpecialistServer(specialistSecret: string): Hono {
                 facilitator: 'https://channels.openzeppelin.com/x402',
             },
         },
-        endpoints: { summarise: { method: 'GET', path: '/summarise' } },
+        endpoints: { summarise: { method: SUMMARISE_METHOD, path: SUMMARISE_PATH } },
         tags: ['summarise', 'nlp', 'text'],
     }
+}
+
+export function buildSpecialistServer(
+    specialistSecret: string,
+    options: { paymentGate?: PaymentGate } = {},
+): Hono {
+    const specialistKp = Keypair.fromSecret(specialistSecret)
+    const manifest = buildSpecialistManifest(specialistKp.publicKey())
 
     const app = new Hono()
 
-    app.use(routedockHono({
+    app.use(options.paymentGate ?? routedockHono({
             modes: ['x402'],
             pricing: { x402: manifest.pricing.x402!.amount },
             asset: manifest.asset,
@@ -89,8 +118,12 @@ function buildSpecialistServer(specialistSecret: string): Hono {
         }),
     )
 
-    app.get('/summarise', async (c) => {
-        const text = c.req.query('text') ?? ''
+    // Registered for the method the manifest declares and the client sends. The
+    // payment middleware settles before it reaches this handler, so a route
+    // that does not match would answer the paid request with a 404.
+    app.post(SUMMARISE_PATH, async (c) => {
+        const body = (await c.req.json().catch(() => null)) as { text?: unknown } | null
+        const text = typeof body?.text === 'string' ? body.text : ''
         // Canned summarisation — swap for a real LLM call in production.
         const words = text.trim().split(/\s+/).slice(0, 6).join(' ')
         const summary = words.length > 0 ? `Summary: "${words}…"` : 'Summary: (empty input)'
@@ -119,6 +152,9 @@ function requireSecret(name: string, value: string): void {
 }
 
 async function main(): Promise<void> {
+    if (!USDC_CONTRACT) {
+        throw new Error('USDC_ASSET_CONTRACT is required for mainnet')
+    }
     requireSecret('ORCHESTRATOR_SECRET', ORCHESTRATOR_SECRET)
     if (START_SPECIALIST) {
         requireSecret('SPECIALIST_SECRET', SPECIALIST_SECRET)
@@ -133,7 +169,7 @@ async function main(): Promise<void> {
         await new Promise((r) => setTimeout(r, 50))
     }
 
-    const specialistUrl = `${SPECIALIST_URL}/summarise`
+    const specialistUrl = `${SPECIALIST_URL}${SUMMARISE_PATH}`
 
     const orchestrator = new RouteDockClient({
         wallet: ORCHESTRATOR_SECRET,
@@ -157,11 +193,7 @@ async function main(): Promise<void> {
         // the unpaid probe and the paid request.
         const result = await orchestrator.pay(specialistUrl, {
             forceMode: 'x402',
-            request: {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ text: chunk }),
-            },
+            request: buildSummariseRequest(chunk),
         })
         const data = result.data as { summary?: string; chars?: number }
 
@@ -182,7 +214,10 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((err) => {
-    console.error('[fatal]', err)
-    process.exit(1)
-})
+// Run only when executed directly (node index.ts), not when imported by tests.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+    main().catch((err) => {
+        console.error('[fatal]', err)
+        process.exit(1)
+    })
+}

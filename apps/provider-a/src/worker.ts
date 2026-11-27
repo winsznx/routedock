@@ -58,7 +58,7 @@ function createApp(env: Env, ctx: ExecutionContext): Hono {
     const baseUrl = env.PUBLIC_BASE_URL ?? 'https://api-a.routedock.xyz'
     const signed = signManifest(manifest, env.STELLAR_PAYEE_SECRET)
     ctx.waitUntil(
-      registerProvider({ supabase, manifest: signed, baseUrl, verified: true }).catch((err) => {
+      registerProvider({ supabase, manifest: signed, baseUrl }).catch((err) => {
         console.error('[registry] Failed to register provider-a:', err)
       }),
     )

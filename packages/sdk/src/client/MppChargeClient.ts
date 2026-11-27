@@ -11,6 +11,8 @@ import {
   wrapMppError,
 } from '../errors.js'
 import { stroopsToUsdc } from '../internal/usdc.js'
+import { readPaymentResponse } from '../internal/paidResponse.js'
+import { selectAsset } from '../internal/assetUtils.js'
 import { withRetry, type RetryPolicy } from '../internal/retry.js'
 import { prepareRequest, toRequestInit } from '../internal/request.js'
 import { checkChargeChallenge, type Caip2Network } from './challenge.js'
@@ -32,6 +34,7 @@ export class MppChargeClient {
       throw new RouteDockManifestError('manifest.pricing.mpp-charge missing')
     }
 
+    const assetContract = selectAsset(manifest, 'mpp-charge', url).asset_contract
     const caip2: Caip2Network =
       this.network === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet'
 
@@ -56,7 +59,7 @@ export class MppChargeClient {
       onChallenge: async (challenge, { createCredential }) => {
         // Bind the unsigned challenge to the signed manifest before signing.
         const request = challenge.request
-        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount)
+        const rejection = checkChargeChallenge(request, manifest, caip2, pricing.amount, { assetContract })
         if (rejection) throw rejection
 
         const amount = request['amount']
@@ -95,20 +98,18 @@ export class MppChargeClient {
 
       const txHash = readSettlementHash(response)
 
-      let data: unknown
-      try {
-        data = await response.json()
-      } catch (cause) {
-        throw new RouteDockManifestError(
-          `Failed to parse JSON from response (HTTP ${response.status})`,
-          { cause },
-        )
-      }
+      const amount = signedAmount ?? pricing.amount
+      const body = await readPaymentResponse(
+        response,
+        signedAmount !== undefined || txHash !== null
+          ? { txHash, mode: 'mpp-charge', amount }
+          : undefined,
+      )
       return {
-        data,
+        ...body,
         txHash,
         mode: 'mpp-charge',
-        amount: signedAmount ?? pricing.amount,
+        amount,
         timestamp: Date.now(),
       }
     }, this.retryPolicy)
