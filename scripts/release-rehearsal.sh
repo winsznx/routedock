@@ -11,9 +11,9 @@
 #
 # Needs no secrets and never contacts registry.npmjs.org for @routedock/*.
 #
-# It MUTATES the working tree (strips publishConfig.provenance, adds a
-# throwaway changeset, bumps versions, creates git tags). In CI the checkout is
-# disposable. Locally it needs a clean tree and restores it on exit.
+# It MUTATES the working tree (strips publishConfig.provenance, renames pending
+# changesets, adds a throwaway one, bumps versions, creates git tags). In CI the
+# checkout is disposable. Locally it needs a clean tree and restores it on exit.
 #
 # Prerequisites: `pnpm install --frozen-lockfile` has been run.
 # Overrides: REHEARSAL_PORT (default 4873), VERDACCIO_CMD (default

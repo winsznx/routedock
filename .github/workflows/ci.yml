@@ -196,6 +196,8 @@ jobs:
           node-version: 22
       - name: Test E2E provider failure diagnostics
         run: node --test scripts/e2e-provider-logs.test.mjs
+      - name: Test the release rehearsal helpers
+        run: node --test scripts/release-rehearsal.test.mjs
       - name: Guard release.yml permissions
         # release.yml has twice regressed to missing the permissions that make
         # Changesets and the release watchdog work (#255, fixed in 8f3d82b).
@@ -267,6 +269,8 @@ jobs:
   release-rehearsal:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -290,7 +294,7 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "No release-path files changed; skipping the rehearsal."
           fi
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.changes.outputs.relevant == 'true'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.changes.outputs.relevant == 'true'
@@ -300,9 +304,6 @@ jobs:
       - name: Install dependencies
         if: steps.changes.outputs.relevant == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Test the rehearsal's tag parser
-        if: steps.changes.outputs.relevant == 'true'
-        run: node --test scripts/release-rehearsal.test.mjs
       - name: Rehearse the release against a throwaway registry
         if: steps.changes.outputs.relevant == 'true'
         run: bash scripts/release-rehearsal.sh

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Helpers for scripts/release-rehearsal.sh (issue #718).
 //
-//   node scripts/release-rehearsal.mjs prepare          strip provenance, write a throwaway changeset
+//   node scripts/release-rehearsal.mjs prepare          strip provenance, detach pending changesets,
+//                                                       write a throwaway changeset
 //   node scripts/release-rehearsal.mjs assert <stdout>  check the publish output and the registry
 //
 // The release workflow does not read `changeset publish`'s exit status to decide
@@ -11,7 +12,7 @@
 // "succeeds" and the metadata silently disappears. `assert` fails on exactly
 // that.
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -60,6 +61,25 @@ export function missingTags(stdout, expected) {
   return expected.filter((e) => !seen.has(`${e.name}@${e.version}`))
 }
 
+/**
+ * Make pending changesets look uncommitted. For a committed changeset, or one
+ * naming a `pr:` or `commit:`, @changesets/changelog-github queries the GitHub
+ * API and fails without GITHUB_TOKEN. Renaming (and dropping those lines) keeps
+ * every pending bump in the rehearsed `changeset version` without a token.
+ */
+export function detachPendingChangesets(dir) {
+  const pending = readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'README.md')
+  for (const file of pending) {
+    const text = readFileSync(join(dir, file), 'utf8')
+    writeFileSync(
+      join(dir, `rehearsal-pending-${file}`),
+      text.replace(/^[ \t]*(?:pr|pull|pull[ \t]+request|commit):.*$/gim, ''),
+    )
+    rmSync(join(dir, file))
+  }
+  return pending
+}
+
 function prepare() {
   const pkgs = publishablePackages()
   if (pkgs.length === 0) throw new Error('no publishable workspace packages found')
@@ -77,6 +97,7 @@ function prepare() {
   }
 
   mkdirSync(join(root, '.changeset'), { recursive: true })
+  detachPendingChangesets(join(root, '.changeset'))
   const frontmatter = pkgs.map((p) => `"${p.name}": patch`).join('\n')
   writeFileSync(
     join(root, '.changeset', 'release-rehearsal.md'),

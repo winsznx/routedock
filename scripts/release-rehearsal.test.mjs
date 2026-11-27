@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { missingTags, parseNewTags, NEW_TAG_REGEX } from './release-rehearsal.mjs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { detachPendingChangesets, missingTags, parseNewTags, NEW_TAG_REGEX } from './release-rehearsal.mjs'
+
+const readRepoFile = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
 const expected = [
   { name: '@routedock/mcp-server', version: '0.2.4' },
@@ -59,4 +64,40 @@ test('a single package without a New tag line is reported by name and version', 
 test('a New tag line for a different version does not satisfy the expectation', () => {
   const stale = v2Output.replace('New tag:  @routedock/routedock@0.4.2', 'New tag:  @routedock/routedock@0.4.1')
   assert.deepEqual(missingTags(stale, expected).map((e) => e.name), ['@routedock/routedock'])
+})
+
+test('release.yml and the rehearsal run the same version and publish commands', () => {
+  const workflow = readRepoFile('.github/workflows/release.yml')
+  const rehearsal = readRepoFile('scripts/release-rehearsal.sh')
+  for (const [input, command] of [
+    ['version', 'pnpm run version'],
+    ['publish', 'pnpm run release'],
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`^\\s+${input}:\\s*${command}\\s*$`, 'm'),
+      `release.yml must pass "${input}: ${command}" to changesets/action`,
+    )
+    assert.match(
+      rehearsal,
+      new RegExp(`^${command}(?=\\s|$)`, 'm'),
+      `release-rehearsal.sh must run "${command}"`,
+    )
+  }
+})
+
+test('pending changesets are renamed and lose the lines that need the GitHub API', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'rehearsal-changesets-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const frontmatter = '---\n"@routedock/routedock": patch\n---\n'
+  writeFileSync(join(dir, 'README.md'), 'docs\n')
+  writeFileSync(join(dir, 'config.json'), '{}\n')
+  writeFileSync(join(dir, 'some-fix.md'), `${frontmatter}\npr: #12\ncommit: abc1234\nFix a thing.\n`)
+
+  assert.deepEqual(detachPendingChangesets(dir), ['some-fix.md'])
+  assert.deepEqual(readdirSync(dir).sort(), ['README.md', 'config.json', 'rehearsal-pending-some-fix.md'])
+  const renamed = readFileSync(join(dir, 'rehearsal-pending-some-fix.md'), 'utf8')
+  assert.ok(renamed.startsWith(frontmatter))
+  assert.match(renamed, /Fix a thing\./)
+  assert.doesNotMatch(renamed, /^(pr|commit):/m)
 })
