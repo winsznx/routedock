@@ -127,15 +127,98 @@ const scenario = process.env.SCENARIO;
   return { ...result, directory, output: result.stdout + result.stderr };
 }
 
-function assertProvidersStopped(directory) {
+const pauseBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function assertProvidersStopped(directory, { readProcStat = readFileSync, timeoutMs = 500 } = {}) {
   for (const provider of ['provider-a', 'provider-b']) {
     for (const pid of readFileSync(join(directory, `${provider}.pids`), 'utf8').split('\n')) {
-      // An orphan may briefly remain a zombie until init reaps it; it must not be running.
-      const stat = `/proc/${pid}/stat`;
-      if (existsSync(stat)) assert.match(readFileSync(stat, 'utf8'), /^\d+ \(.+\) Z /);
+      if (!pid) continue;
+      // An orphan may briefly remain in kernel teardown (R/S/D after SIGKILL) or as a
+      // zombie (Z) until init reaps it. Read once per check and treat ENOENT (reaped
+      // before open) or ESRCH (reaped between open and read in Linux procfs) as gone (#724).
+      const deadline = Date.now() + timeoutMs;
+      while (true) {
+        let content;
+        try {
+          content = readProcStat(`/proc/${pid}/stat`, 'utf8');
+        } catch (error) {
+          if (error && (error.code === 'ENOENT' || error.code === 'ESRCH')) break;
+          throw error;
+        }
+        if (/^\d+ \(.+\) Z /.test(content)) break;
+        if (Date.now() >= deadline) {
+          assert.match(content, /^\d+ \(.+\) Z /);
+        }
+        Atomics.wait(pauseBuffer, 0, 0, 10);
+      }
     }
   }
 }
+
+test('assertProvidersStopped treats ENOENT and ESRCH as reaped, tolerates brief teardown, accepts zombies, rejects running processes, and rethrows other errors', (t) => {
+  // #given: synthetic provider PID files in a temporary directory.
+  const directory = temporaryDirectory(t);
+  writeFileSync(join(directory, 'provider-a.pids'), '1001\n1002');
+  writeFileSync(join(directory, 'provider-b.pids'), '2001\n2002');
+
+  // #when / #then: ENOENT (reaped before open) and ESRCH (reaped between open and read) succeed.
+  for (const code of ['ENOENT', 'ESRCH']) {
+    assert.doesNotThrow(() =>
+      assertProvidersStopped(directory, {
+        timeoutMs: 0,
+        readProcStat: (procPath) => {
+          const err = Object.assign(new Error(`${code}: process vanished for '${procPath}'`), { code });
+          throw err;
+        },
+      }),
+    );
+  }
+
+  // #when / #then: zombie state passes.
+  assert.doesNotThrow(() =>
+    assertProvidersStopped(directory, {
+      timeoutMs: 0,
+      readProcStat: (procPath) => `${procPath.split('/')[2]} (node) Z 1 1 1 0 -1 0\n`,
+    }),
+  );
+
+  // #when / #then: a process briefly finishing SIGKILL teardown transitions from R to ENOENT and passes.
+  const seen = new Set();
+  assert.doesNotThrow(() =>
+    assertProvidersStopped(directory, {
+      timeoutMs: 200,
+      readProcStat: (procPath) => {
+        if (!seen.has(procPath)) {
+          seen.add(procPath);
+          return `${procPath.split('/')[2]} (node) R 1 1 1 0 -1 0\n`;
+        }
+        throw Object.assign(new Error(`ENOENT: reaped '${procPath}'`), { code: 'ENOENT' });
+      },
+    }),
+  );
+
+  // #when / #then: a process that stays running fails the assertion.
+  assert.throws(
+    () =>
+      assertProvidersStopped(directory, {
+        timeoutMs: 0,
+        readProcStat: (procPath) => `${procPath.split('/')[2]} (node) S 1 1 1 0 -1 0\n`,
+      }),
+    assert.AssertionError,
+  );
+
+  // #when / #then: unexpected filesystem errors are not swallowed.
+  assert.throws(
+    () =>
+      assertProvidersStopped(directory, {
+        timeoutMs: 0,
+        readProcStat: () => {
+          throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        },
+      }),
+    { code: 'EACCES' },
+  );
+});
 
 test('secret absence assertions reject known raw log fixtures', () => {
   // #given / #when / #then: positive controls keep an absence check from silently passing.

@@ -31,6 +31,7 @@ export * from './client/MppChargeClient.js'
 // entry-export-parity.test.ts fails if the two lists drift again (issue #564).
 export * from './client/MppSessionClient.js'
 export * from './client/NulthVault.js'
+export * from './client/AgentVault.js'
 export * from './store/SessionStore.js'
 export * from './store/SpendStore.js'
 // Node-only (node:fs) — kept out of SpendStore.ts so runtime-neutral entries stay clean.

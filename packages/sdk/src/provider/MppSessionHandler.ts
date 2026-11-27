@@ -123,8 +123,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
   // Set once a session is settled via DELETE so teardown handlers don't
   // re-flag an already-closed session as orphaned.
   let settledCleanly = false
-  // Guards against registering more than one 'close' listener per session.
-  let closeListenerArmed = false
 
   function clearIdleTimer(): void {
     if (idleTimer) {
@@ -190,7 +188,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
     await loadPersistedRecord()
     if (!sessionOpened || settledCleanly || orphanFlagged) return
     orphanFlagged = true
-    closeListenerArmed = false
     clearIdleTimer()
 
     const cumulativeAmount = record ? (Number(record.amount) / 1e7).toFixed(7) : '0.0000000'
@@ -370,7 +367,6 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
         orphanFlagged = false
         record = null
         await innerStore.delete(voucherRecordKey)
-        closeListenerArmed = false
         clearIdleTimer()
         return
       }
@@ -401,12 +397,13 @@ export function createMppSessionHandler(opts: MppSessionHandlerOptions): Request
       // Payment verified. Detect connection teardown so a client crash mid-
       // session flags the channel for the reconciler instead of leaking
       // in-memory state and leaving the Supabase row stuck `open`.
-      if (!closeListenerArmed) {
-        closeListenerArmed = true
-        req.on('close', () => {
-          void flagOrphan('connection-closed')
-        })
-      }
+      // mpp-session over HTTP is one request per voucher, so the listener is
+      // armed per request. Listen on the response: `req` 'close' also fires on
+      // normal completion (Node >= 16). Only a response cut off before it
+      // finished counts as a disconnect.
+      res.on('close', () => {
+        if (!res.writableFinished) void flagOrphan('connection-closed')
+      })
 
       next()
     } catch (err) {

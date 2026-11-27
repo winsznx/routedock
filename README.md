@@ -92,6 +92,7 @@ The `agent-vault` contract emits structured events that indexers and Stellar Exp
 | `admin_changed` | `(Symbol, old_admin: Address, new_admin: Address)` | `()` | `accept_admin` |
 | `vault_frozen` | `(Symbol, admin: Address)` | `()` | `freeze`, only when the vault was not already frozen |
 | `vault_unfrozen` | `(Symbol, admin: Address)` | `()` | `unfreeze`, only when the vault was frozen |
+| `session_settled` | `(Symbol, channel_id: Address, payee: Address)` | `(payer: Address, cumulative_amount: i128, voucher_count: u32)` | After channel close, the provider calls `record_session_settlement`, authorized by its own allowlisted payee key. **`payer`, `cumulative_amount` and `voucher_count` are asserted by the payee and are not verified on-chain** (see below) |
 | `upgrade_proposed` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin schedules a Wasm change and starts the notice period |
 | `upgrade_cancelled` | `(Symbol)` | `(new_wasm_hash: BytesN<32>, ready_at_ledger: u32)` | Admin cancels a scheduled Wasm change |
 | `upgraded` | `(Symbol)` | `(new_wasm_hash: BytesN<32>)` | A ready Wasm proposal executes successfully |
@@ -112,6 +113,10 @@ Replay the vault's events in ledger order:
 ```bash
 stellar events --network testnet --start-ledger <LEDGER> --contract-id <VAULT_ID>
 ```
+
+**`payment_authorized` vs `session_settled`.** `payment_authorized` is emitted from `__check_auth`, so it reflects spend the vault actually enforced. `session_settled` does not carry that guarantee: the vault only checks that the caller is an allowlisted payee that signed the call, that the amount is positive, that the vault is not frozen, and that this `channel_id` has not been recorded before. The `payer`, `cumulative_amount` and `voucher_count` fields are whatever the payee passed; they are not bound to the vault or to the channel contract's close. Check them against the channel close transaction before using them to reconcile spend.
+
+`record_session_settlement` fails with `ContractFrozen` while the vault is frozen, and with `SettlementAlreadyRecorded` (error code 17) when the `channel_id` was already recorded; neither emits an event.
 
 ---
 
