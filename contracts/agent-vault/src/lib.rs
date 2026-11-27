@@ -5,7 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, Val, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -62,6 +62,10 @@ const SPEND_RING_SLOTS: u32 = SPEND_WINDOW_LEDGERS / SPEND_SUB_BUCKET_LEDGERS + 
 // outlive every payment it still counts: a payment is counted for at most
 // SPEND_RING_SLOTS * SPEND_SUB_BUCKET_LEDGERS ledgers.
 const SPEND_TTL_LEDGERS: u32 = SPEND_SUB_BUCKET_LEDGERS * SPEND_RING_SLOTS;
+// Bucket length of the fixed-bucket counters earlier releases wrote:
+// (SPEND_PREFIX, seq / 17_280) and (PAYEE_SPEND_PREFIX, seq / 17_280, payee).
+// Only read, to seed a window that does not exist yet.
+const LEGACY_DAY_BUCKET_LEDGERS: u32 = 17_280;
 
 /// Ring of spend sub-buckets. `newest` is the absolute index
 /// (`ledger / SPEND_SUB_BUCKET_LEDGERS`) of the most recent sub-bucket written;
@@ -113,6 +117,26 @@ impl SpendWindow {
         let current = self.buckets.get(slot).unwrap_or(0);
         self.buckets.set(slot, current.saturating_add(amount));
     }
+}
+
+/// The window stored under `key`, rolled forward to `ledger`.
+///
+/// A vault upgraded from the fixed-bucket counters has no window yet, so a
+/// missing one starts with the current legacy bucket's total (`legacy_key`) in
+/// the current sub-bucket, keeping spend from before the upgrade counted.
+fn load_window<K, L>(env: &Env, key: &K, legacy_key: &L, ledger: u32) -> SpendWindow
+where
+    K: IntoVal<Env, Val>,
+    L: IntoVal<Env, Val>,
+{
+    let temporary = env.storage().temporary();
+    let stored = temporary.get::<K, SpendWindow>(key);
+    let missing = stored.is_none();
+    let mut window = SpendWindow::rolled(env, stored, ledger);
+    if missing {
+        window.add(temporary.get::<L, i128>(legacy_key).unwrap_or(0));
+    }
+    window
 }
 
 // ── Event names ──────────────────────────────────────────────────────────────
@@ -648,9 +672,11 @@ impl CustomAccountInterface for AgentVault {
         // accepted spend (plus at most one sub-bucket of conservative over-count).
         let ledger = env.ledger().sequence();
         let spend_key = (SPEND_PREFIX,);
-        let mut day_window = SpendWindow::rolled(
+        let legacy_bucket = ledger / LEGACY_DAY_BUCKET_LEDGERS;
+        let mut day_window = load_window(
             &env,
-            env.storage().temporary().get::<(Symbol,), SpendWindow>(&spend_key),
+            &spend_key,
+            &(SPEND_PREFIX, legacy_bucket),
             ledger,
         );
         let mut day_spend: i128 = day_window.total();
@@ -715,11 +741,10 @@ impl CustomAccountInterface for AgentVault {
 
                     // Policy 4 — Per-payee DailyCapPolicy (same trailing window)
                     let payee_spend_key = (PAYEE_SPEND_PREFIX, to.clone());
-                    let mut payee_window = SpendWindow::rolled(
+                    let mut payee_window = load_window(
                         &env,
-                        env.storage()
-                            .temporary()
-                            .get::<(Symbol, Address), SpendWindow>(&payee_spend_key),
+                        &payee_spend_key,
+                        &(PAYEE_SPEND_PREFIX, legacy_bucket, to.clone()),
                         ledger,
                     );
                     let payee_projected =
@@ -790,7 +815,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         auth::{ContractContext, ContractExecutable, CreateContractHostFnContext},
-        testutils::{Address as _, BytesN as _, Ledger},
+        testutils::{Address as _, BytesN as _, EnvTestConfig, Ledger},
         IntoVal, FromVal,
     };
 
@@ -2265,6 +2290,39 @@ mod tests {
         assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
     }
 
+    /// A vault upgraded from the fixed-bucket counters seeds its missing windows
+    /// from the current legacy bucket, once, and the seeded spend ages out like
+    /// any other.
+    #[test]
+    fn test_missing_window_is_seeded_from_legacy_counters() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[3_000_000, 5_000_000]);
+        let (first, second) = (&payees[0], &payees[1]);
+
+        // Ledger 20_000 is in legacy bucket 1 and sub-bucket 27.
+        env.ledger().set_sequence_number(20_000);
+        env.as_contract(&vault_id, || {
+            let temporary = env.storage().temporary();
+            temporary.set(&(SPEND_PREFIX, 1_u32), &4_000_000_i128);
+            temporary.set(&(PAYEE_SPEND_PREFIX, 1_u32, first.clone()), &2_500_000_i128);
+        });
+
+        assert_eq!(pay(&env, &vault_id, &sk, first, 500_001), Err(Error::PayeeCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, second, 1_000_001), Err(Error::DailyCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, first, 500_000), Ok(()));
+        assert_eq!(pay(&env, &vault_id, &sk, second, 500_000), Ok(()));
+        // The legacy totals were added once, not again on the second payment.
+        assert_eq!(
+            read_spend_counters(&env, &vault_id, first),
+            (5_000_000, 3_000_000, 1_000_000)
+        );
+
+        env.ledger().set_sequence_number((27 + SPEND_RING_SLOTS) * SPEND_SUB_BUCKET_LEDGERS - 1);
+        assert_eq!(pay(&env, &vault_id, &sk, first, 1), Err(Error::DailyCapExceeded));
+        env.ledger().set_sequence_number((27 + SPEND_RING_SLOTS) * SPEND_SUB_BUCKET_LEDGERS);
+        assert_eq!(pay(&env, &vault_id, &sk, first, 3_000_000), Ok(()));
+    }
+
     /// Drive the real `__check_auth` with a few hundred seeded random payments and
     /// ledger jumps across several payees. Asserts, for every accepted payment:
     ///   * the spend accepted in any 17_280-ledger window never exceeds the daily
@@ -2287,9 +2345,12 @@ mod tests {
         let mut total_accepted = 0_usize;
         let mut total_rejected = 0_usize;
 
-        // One Env (and so one snapshot file) for every seed; each seed gets a
-        // fresh vault and restarts the ledger clock.
-        let env = Env::default();
+        // One Env for every seed; each seed gets a fresh vault and restarts the
+        // ledger clock. No snapshot: it would record thousands of lines of
+        // random state.
+        let env = Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        });
         for seed in 0..8_u64 {
             env.ledger().set_sequence_number(1);
             let (sk, vault_id, payees) = setup_caps(&env, DAILY, &SUB_CAPS);

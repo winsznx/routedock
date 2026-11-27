@@ -29,7 +29,7 @@ Each counter is a ring of 25 sub-buckets of 720 ledgers (about one hour), stored
 - **Conservative error:** a payment stays counted until its sub-bucket ages out, which is at most 720 ledgers (one sub-bucket) after the exact 17,280-ledger window ends. Spend made at ledger 17,279 is counted through ledger 34,559 and free again at 34,560. The ring has 25 slots rather than 24 so that error is never in the unsafe direction.
 - **`payment_authorized.daily_cumulative`** is the spend inside the trailing window, including that payment.
 - **TTL:** each counter's TTL is re-extended to 18,000 ledgers (25 sub-buckets) on every write, which covers every payment it still counts.
-- **Upgrading:** the counters use new storage keys, so a vault upgraded through the timelocked flow ignores its old `(SPEND_PREFIX, day_bucket)` counters and starts the window empty.
+- **Upgrading:** the counters use new storage keys. When a window does not exist yet, it is seeded from the old counter for the current `ledger / 17,280` bucket (`(SPEND_PREFIX, day_bucket)` or `(PAYEE_SPEND_PREFIX, day_bucket, payee)`), so that spend stays counted after a timelocked upgrade. It counts from the ledger it is read, so it can stay counted longer than the exact window. Old counters from earlier buckets are not read: if a counter's first payment after the upgrade falls in a later bucket than its last pre-upgrade spend, that spend is not counted.
 
 ### Timelocked Wasm upgrades
 
