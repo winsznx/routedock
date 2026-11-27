@@ -95,7 +95,7 @@ Three independent enforcement points. No single layer's failure compromises the 
 
 The agent vault contract (`contracts/agent-vault/`) uses the `Crossmint/stellar-smart-account` pattern. Policies run inside `__check_auth` — the Soroban runtime calls this before authorizing any transaction from the account.
 
-- **Daily cap:** `current_day_spend + amount > daily_cap` → contract rejects. Day bucket keyed by `ledger_sequence / 17280` in temporary storage (auto-expires).
+- **Daily cap:** `spend_in_trailing_17280_ledgers + amount > daily_cap` → contract rejects. The window is a ring of 720-ledger sub-buckets in temporary storage (auto-expires), so the cap cannot be spent twice across a day boundary.
 - **Endpoint allowlist:** payee address checked against stored `ALLOWLIST`. Unknown payees rejected.
 - **Session key expiry:** `env.ledger().sequence() > expiry_ledger` → rejected.
 

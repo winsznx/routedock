@@ -2,10 +2,10 @@
 
 use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
-    contract, contracterror, contractimpl,
+    contract, contracterror, contractimpl, contracttype,
     crypto::Hash,
     panic_with_error, symbol_short,
-    Address, Bytes, BytesN, Env, Map, Symbol, TryFromVal, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, Val, Vec,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -22,9 +22,9 @@ const FROZEN_KEY: Symbol = symbol_short!("frozen");
 /// `(SETTLED_KEY, channel_id) -> true`.
 const SETTLED_KEY: Symbol = symbol_short!("settled");
 
-// Global day-spend key: (SPEND_PREFIX, day_bucket) where day_bucket = seq / 17280
+// Global trailing-window spend key: (SPEND_PREFIX,) -> SpendWindow
 const SPEND_PREFIX: Symbol = symbol_short!("ds");
-// Per-payee day-spend key: (PAYEE_SPEND_PREFIX, day_bucket, payee)
+// Per-payee trailing-window spend key: (PAYEE_SPEND_PREFIX, payee) -> SpendWindow
 const PAYEE_SPEND_PREFIX: Symbol = symbol_short!("pds");
 // Lifetime spend cap and monotonic counter (instance storage — never resets)
 const LIFETIME_CAP_KEY: Symbol = symbol_short!("ltcap");
@@ -36,6 +36,108 @@ const PENDING_UPGRADE_KEY: Symbol = symbol_short!("p_upg");
 // cannot execute before this many ledgers have elapsed, giving governed payers
 // time to observe the proposal and exit before the enforcement code changes.
 const UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
+
+// ── Trailing spend window ────────────────────────────────────────────────────
+//
+// The daily and per-payee caps bound spend in ANY `SPEND_WINDOW_LEDGERS`-ledger
+// window, not within a calendar bucket. A fixed bucket (`seq / 17_280`) lets the
+// whole cap be spent on the last ledger of one bucket and again on the first
+// ledger of the next, so the real bound was 2x the configured cap.
+//
+// Each counter is a ring of `SPEND_RING_SLOTS` sub-buckets of
+// `SPEND_SUB_BUCKET_LEDGERS` ledgers. A payment is added to the sub-bucket of the
+// current ledger; a sub-bucket is dropped once it is `SPEND_RING_SLOTS` sub-buckets
+// old. The spend compared against the cap is the sum of every slot.
+//
+// Why 25 slots and not 24: a payment made on the LAST ledger of its sub-bucket
+// must still be counted `SPEND_WINDOW_LEDGERS - 1` ledgers later. A 24-slot ring
+// drops it up to one sub-bucket early and under-counts. 25 slots always cover
+// the window plus a partial sub-bucket, so the error is only ever conservative:
+// a payment stays counted for at most `SPEND_SUB_BUCKET_LEDGERS` ledgers longer
+// than the window (about an hour).
+const SPEND_WINDOW_LEDGERS: u32 = 17_280;
+const SPEND_SUB_BUCKET_LEDGERS: u32 = 720;
+const SPEND_RING_SLOTS: u32 = SPEND_WINDOW_LEDGERS / SPEND_SUB_BUCKET_LEDGERS + 1;
+// Temporary-storage TTL for a counter after every write. The last write must
+// outlive every payment it still counts: a payment is counted for at most
+// SPEND_RING_SLOTS * SPEND_SUB_BUCKET_LEDGERS ledgers.
+const SPEND_TTL_LEDGERS: u32 = SPEND_SUB_BUCKET_LEDGERS * SPEND_RING_SLOTS;
+// Bucket length of the fixed-bucket counters earlier releases wrote:
+// (SPEND_PREFIX, seq / 17_280) and (PAYEE_SPEND_PREFIX, seq / 17_280, payee).
+// Only read, to seed a window that does not exist yet.
+const LEGACY_DAY_BUCKET_LEDGERS: u32 = 17_280;
+
+/// Ring of spend sub-buckets. `newest` is the absolute index
+/// (`ledger / SPEND_SUB_BUCKET_LEDGERS`) of the most recent sub-bucket written;
+/// the sub-bucket for absolute index `i` lives in `buckets[i % SPEND_RING_SLOTS]`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpendWindow {
+    newest: u32,
+    buckets: Vec<i128>,
+}
+
+impl SpendWindow {
+    /// Load a stored window and age out every sub-bucket that has left the
+    /// trailing window as of `ledger`. `None` yields an empty window.
+    fn rolled(env: &Env, stored: Option<SpendWindow>, ledger: u32) -> SpendWindow {
+        let current = ledger / SPEND_SUB_BUCKET_LEDGERS;
+        let mut window = match stored {
+            Some(w) if w.buckets.len() == SPEND_RING_SLOTS => w,
+            _ => {
+                let mut buckets = Vec::new(env);
+                for _ in 0..SPEND_RING_SLOTS {
+                    buckets.push_back(0_i128);
+                }
+                return SpendWindow { newest: current, buckets };
+            }
+        };
+        if current > window.newest {
+            let steps = (current - window.newest).min(SPEND_RING_SLOTS);
+            for i in 1..=steps {
+                window.buckets.set((window.newest + i) % SPEND_RING_SLOTS, 0);
+            }
+            window.newest = current;
+        }
+        window
+    }
+
+    /// Total spend still inside the trailing window.
+    fn total(&self) -> i128 {
+        let mut sum: i128 = 0;
+        for value in self.buckets.iter() {
+            sum = sum.saturating_add(value);
+        }
+        sum
+    }
+
+    /// Record `amount` against the newest sub-bucket.
+    fn add(&mut self, amount: i128) {
+        let slot = self.newest % SPEND_RING_SLOTS;
+        let current = self.buckets.get(slot).unwrap_or(0);
+        self.buckets.set(slot, current.saturating_add(amount));
+    }
+}
+
+/// The window stored under `key`, rolled forward to `ledger`.
+///
+/// A vault upgraded from the fixed-bucket counters has no window yet, so a
+/// missing one starts with the current legacy bucket's total (`legacy_key`) in
+/// the current sub-bucket, keeping spend from before the upgrade counted.
+fn load_window<K, L>(env: &Env, key: &K, legacy_key: &L, ledger: u32) -> SpendWindow
+where
+    K: IntoVal<Env, Val>,
+    L: IntoVal<Env, Val>,
+{
+    let temporary = env.storage().temporary();
+    let stored = temporary.get::<K, SpendWindow>(key);
+    let missing = stored.is_none();
+    let mut window = SpendWindow::rolled(env, stored, ledger);
+    if missing {
+        window.add(temporary.get::<L, i128>(legacy_key).unwrap_or(0));
+    }
+    window
+}
 
 // ── Event names ──────────────────────────────────────────────────────────────
 // Longer than 9 chars — must use Symbol::new(&env, ...) at call sites.
@@ -510,16 +612,17 @@ impl AgentVault {
 //   • Default-deny: any other authorization context (SAC approve/burn, non-
 //     contract host fns) is rejected with Error::UnauthorizedFunction — a
 //     stolen agent key cannot bypass the caps via a non-transfer call
-//   • Policy 1 — DailyCapPolicy:  keyed by (SPEND_PREFIX, seq / 17280) in
-//     temporary storage; resets automatically when the bucket rolls over
+//   • Policy 1 — DailyCapPolicy:  a trailing 17,280-ledger window kept as a ring of
+//     720-ledger sub-buckets under (SPEND_PREFIX,) in temporary storage; spend
+//     ages out gradually instead of resetting at a fixed boundary
 //   • Policy 2 — EndpointAllowlistPolicy: recipient from args[1] checked
 //     against ALLOWLIST in instance storage; also reads the per-payee sub-cap
 //   • Policy 3 — SessionKeyExpiry: ledger sequence compared to stored EXPIRY
-//   • Policy 4 — PerPayeeCapPolicy: keyed by (PAYEE_SPEND_PREFIX, seq / 17280, payee)
-//     in temporary storage; prevents a single compromised provider from draining
-//     the global daily cap
+//   • Policy 4 — PerPayeeCapPolicy: the same trailing window per payee, keyed by
+//     (PAYEE_SPEND_PREFIX, payee) in temporary storage; prevents a single
+//     compromised provider from draining the global daily cap
 //   • Policy 5 — LifetimeCapPolicy: monotonic spend_counter in instance storage;
-//     enforced when lifetime_cap > 0; never resets across day boundaries
+//     enforced when lifetime_cap > 0; never ages out
 
 #[contractimpl]
 impl CustomAccountInterface for AgentVault {
@@ -565,14 +668,18 @@ impl CustomAccountInterface for AgentVault {
             .get(&LIST_KEY)
             .unwrap_or_else(|| Map::new(&env));
 
-        // Day bucket: one bucket per ~24 h (17 280 ledgers × ~5 s each)
-        let day_bucket: u32 = env.ledger().sequence() / 17_280;
-        let spend_key = (SPEND_PREFIX, day_bucket);
-        let mut day_spend: i128 = env
-            .storage()
-            .temporary()
-            .get::<(Symbol, u32), i128>(&spend_key)
-            .unwrap_or(0);
+        // Trailing spend window: sum of the last SPEND_WINDOW_LEDGERS ledgers of
+        // accepted spend (plus at most one sub-bucket of conservative over-count).
+        let ledger = env.ledger().sequence();
+        let spend_key = (SPEND_PREFIX,);
+        let legacy_bucket = ledger / LEGACY_DAY_BUCKET_LEDGERS;
+        let mut day_window = load_window(
+            &env,
+            &spend_key,
+            &(SPEND_PREFIX, legacy_bucket),
+            ledger,
+        );
+        let mut day_spend: i128 = day_window.total();
 
         // ── Per-context policy checks ─────────────────────────────────────────
         // Default-deny: the policies below only fire for SAC transfer calls, so
@@ -630,26 +737,33 @@ impl CustomAccountInterface for AgentVault {
                         return Err(Error::DailyCapExceeded);
                     }
                     day_spend = projected;
+                    day_window.add(amount);
 
-                    // Policy 4 — Per-payee DailyCapPolicy
-                    let payee_spend_key = (PAYEE_SPEND_PREFIX, day_bucket, to.clone());
-                    let payee_spend: i128 = env
-                        .storage()
-                        .temporary()
-                        .get::<(Symbol, u32, Address), i128>(&payee_spend_key)
-                        .unwrap_or(0);
-                    let payee_projected = payee_spend.checked_add(amount).unwrap_or(i128::MAX);
+                    // Policy 4 — Per-payee DailyCapPolicy (same trailing window)
+                    let payee_spend_key = (PAYEE_SPEND_PREFIX, to.clone());
+                    let mut payee_window = load_window(
+                        &env,
+                        &payee_spend_key,
+                        &(PAYEE_SPEND_PREFIX, legacy_bucket, to.clone()),
+                        ledger,
+                    );
+                    let payee_projected =
+                        payee_window.total().checked_add(amount).unwrap_or(i128::MAX);
                     if payee_projected > payee_sub_cap {
                         return Err(Error::PayeeCapExceeded);
                     }
+                    payee_window.add(amount);
 
-                    // Persist updated per-payee spend — TTL covers current bucket + one more day
+                    // Persist the per-payee window. The TTL covers every payment the
+                    // window still counts, and is re-extended on every write.
                     env.storage()
                         .temporary()
-                        .set::<(Symbol, u32, Address), i128>(&payee_spend_key, &payee_projected);
-                    env.storage()
-                        .temporary()
-                        .extend_ttl::<(Symbol, u32, Address)>(&payee_spend_key, 17_280, 34_560);
+                        .set::<(Symbol, Address), SpendWindow>(&payee_spend_key, &payee_window);
+                    env.storage().temporary().extend_ttl::<(Symbol, Address)>(
+                        &payee_spend_key,
+                        SPEND_TTL_LEDGERS,
+                        SPEND_TTL_LEDGERS,
+                    );
 
                     // Policy 5 — LifetimeCapPolicy (monotonic, never resets)
                     // Always accumulate; enforce only when a cap is set (lifetime_cap > 0).
@@ -661,7 +775,8 @@ impl CustomAccountInterface for AgentVault {
                     lifetime_spend = projected_lifetime;
 
                     // topics: (Symbol("payment_authorized"), payer, payee)
-                    // data:   (amount, asset, daily_cumulative)
+                    // data:   (amount, asset, daily_cumulative) where daily_cumulative is
+                    //         the spend inside the trailing window, including this payment
                     env.events().publish(
                         (Symbol::new(&env, EVT_PAYMENT_AUTHORIZED), from, to),
                         (amount, asset, day_spend),
@@ -675,13 +790,16 @@ impl CustomAccountInterface for AgentVault {
             }
         }
 
-        // Persist updated global day spend — TTL covers current bucket + one more day
+        // Persist the global window. The TTL covers every payment the window still
+        // counts, and is re-extended on every write.
         env.storage()
             .temporary()
-            .set::<(Symbol, u32), i128>(&spend_key, &day_spend);
-        env.storage()
-            .temporary()
-            .extend_ttl::<(Symbol, u32)>(&spend_key, 17_280, 34_560);
+            .set::<(Symbol,), SpendWindow>(&spend_key, &day_window);
+        env.storage().temporary().extend_ttl::<(Symbol,)>(
+            &spend_key,
+            SPEND_TTL_LEDGERS,
+            SPEND_TTL_LEDGERS,
+        );
 
         // Persist monotonic lifetime spend counter — must survive vault lifetime
         storage.set(&LIFETIME_SPEND_KEY, &lifetime_spend);
@@ -697,7 +815,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         auth::{ContractContext, ContractExecutable, CreateContractHostFnContext},
-        testutils::{Address as _, BytesN as _, Ledger},
+        testutils::{Address as _, BytesN as _, EnvTestConfig, Ledger},
         IntoVal, FromVal,
     };
 
@@ -805,20 +923,24 @@ mod tests {
 
     /// Read (day_spend, per_payee_spend, lifetime_spend) directly from storage.
     fn read_spend_counters(env: &Env, vault_id: &Address, to: &Address) -> (i128, i128, i128) {
-        let day_bucket: u32 = env.ledger().sequence() / 17_280;
-        let spend_key = (SPEND_PREFIX, day_bucket);
-        let payee_key = (PAYEE_SPEND_PREFIX, day_bucket, to.clone());
+        let ledger = env.ledger().sequence();
+        let spend_key = (SPEND_PREFIX,);
+        let payee_key = (PAYEE_SPEND_PREFIX, to.clone());
         env.as_contract(vault_id, || {
-            let day = env
-                .storage()
-                .temporary()
-                .get::<(Symbol, u32), i128>(&spend_key)
-                .unwrap_or(0);
-            let payee = env
-                .storage()
-                .temporary()
-                .get::<(Symbol, u32, Address), i128>(&payee_key)
-                .unwrap_or(0);
+            let day = SpendWindow::rolled(
+                env,
+                env.storage().temporary().get::<(Symbol,), SpendWindow>(&spend_key),
+                ledger,
+            )
+            .total();
+            let payee = SpendWindow::rolled(
+                env,
+                env.storage()
+                    .temporary()
+                    .get::<(Symbol, Address), SpendWindow>(&payee_key),
+                ledger,
+            )
+            .total();
             let lifetime = env
                 .storage()
                 .instance()
@@ -1253,9 +1375,10 @@ mod tests {
         );
     }
 
-    /// Test 13: daily reset logic — spending resets across day boundaries
+    /// Test 13: the daily cap is a trailing window — spend does NOT reset at the
+    /// old fixed 17_280 boundary, it ages out ledger-by-sub-bucket (#717).
     #[test]
-    fn test_daily_reset_across_boundaries() {
+    fn test_daily_spend_ages_out_of_trailing_window() {
         let env = Env::default();
         let admin = Address::generate(&env);
         let (agent_sk, agent_pk) = gen_keypair(&env);
@@ -1295,11 +1418,9 @@ mod tests {
             "second payment in same day should fail due to accumulated spend"
         );
 
-        // Move to Day 1: day_bucket = 17_280 / 17_280 = 1
+        // The old fixed boundary (ledger 17_280) is no longer a reset: the spend at
+        // ledger 0 is still inside the trailing window.
         env.ledger().set_sequence_number(17_280);
-
-        // Day 1: attempt to spend 4_000_000 again
-        // This should succeed because we're in a new day bucket (bucket 1)
         let payload3 = BytesN::<32>::random(&env);
         let sig3 = sign_payload(&env, &agent_sk, &payload3);
         let contexts3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
@@ -1309,9 +1430,27 @@ mod tests {
             sig3.into_val(&env),
             &contexts3,
         );
+        assert_eq!(
+            result3.unwrap_err().unwrap(),
+            Error::DailyCapExceeded,
+            "spend at ledger 0 must still count at ledger 17_280"
+        );
+
+        // One sub-bucket later (ledger 18_000) the sub-bucket holding ledger 0 has
+        // aged out, so the cap is available again.
+        env.ledger().set_sequence_number(18_000);
+        let payload4 = BytesN::<32>::random(&env);
+        let sig4 = sign_payload(&env, &agent_sk, &payload4);
+        let contexts4 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);
+        let result4 = env.try_invoke_contract_check_auth::<Error>(
+            &vault_id,
+            &payload4,
+            sig4.into_val(&env),
+            &contexts4,
+        );
         assert!(
-            result3.is_ok(),
-            "payment in new day bucket should succeed after reset"
+            result4.is_ok(),
+            "payment should succeed once the earlier spend has left the trailing window"
         );
     }
 
@@ -1886,9 +2025,9 @@ mod tests {
         );
     }
 
-    /// Test 21: per-payee spend resets with the day bucket (same as global)
+    /// Test 21: per-payee spend uses the same trailing window as the global cap
     #[test]
-    fn test_per_payee_spend_resets_on_new_day() {
+    fn test_per_payee_spend_ages_out_of_trailing_window() {
         let env = Env::default();
         let admin = Address::generate(&env);
         let (agent_sk, agent_pk) = gen_keypair(&env);
@@ -1922,15 +2061,361 @@ mod tests {
             "second payment same day should fail"
         );
 
-        // Advance to Day 1 — per-payee spend resets
+        // The old fixed boundary is not a reset any more
         env.ledger().set_sequence_number(17_280);
         let p3 = BytesN::<32>::random(&env);
         let s3 = sign_payload(&env, &agent_sk, &p3);
         let c3 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
-        assert!(
-            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3).is_ok(),
-            "payment in new day bucket should succeed after per-payee reset"
+        assert_eq!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p3, s3.into_val(&env), &c3)
+                .unwrap_err()
+                .unwrap(),
+            Error::PayeeCapExceeded,
+            "per-payee spend at ledger 0 must still count at ledger 17_280"
         );
+
+        // One sub-bucket later the earlier spend has aged out
+        env.ledger().set_sequence_number(18_000);
+        let p4 = BytesN::<32>::random(&env);
+        let s4 = sign_payload(&env, &agent_sk, &p4);
+        let c4 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 1_000_000)]);
+        assert!(
+            env.try_invoke_contract_check_auth::<Error>(&vault_id, &p4, s4.into_val(&env), &c4).is_ok(),
+            "payment should succeed once the earlier per-payee spend has aged out"
+        );
+    }
+
+    // ── Trailing-window cap tests (#717) ─────────────────────────────────────
+
+    /// Authorize a single transfer through the real `__check_auth`.
+    fn pay(
+        env: &Env,
+        vault_id: &Address,
+        sk: &SigningKey,
+        to: &Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        let payload = fixed_hash(env, 7);
+        let sig = sign_payload(env, sk, &payload);
+        let contexts = Vec::from_array(env, [transfer_context(env, to, amount)]);
+        env.try_invoke_contract_check_auth::<Error>(vault_id, &payload, sig.into_val(env), &contexts)
+            .map_err(|e| e.unwrap())
+    }
+
+    /// Vault with a daily cap and one allowlisted payee per entry of `sub_caps`.
+    /// Expiry and lifetime cap are out of the way.
+    fn setup_caps(
+        env: &Env,
+        daily_cap: i128,
+        sub_caps: &[i128],
+    ) -> (SigningKey, Address, std::vec::Vec<Address>) {
+        let admin = Address::generate(env);
+        let (agent_sk, agent_pk) = gen_keypair(env);
+        let payees: std::vec::Vec<Address> =
+            sub_caps.iter().map(|_| Address::generate(env)).collect();
+        let mut allowlist = Map::new(env);
+        for (payee, cap) in payees.iter().zip(sub_caps) {
+            allowlist.set(payee.clone(), *cap);
+        }
+        let vault_id = env.register(
+            AgentVault,
+            (admin, agent_pk, daily_cap, allowlist, u32::MAX, 0_i128),
+        );
+        (agent_sk, vault_id, payees)
+    }
+
+    /// #717 reproduction: the whole daily cap on the last ledger before the old
+    /// fixed boundary, then anything at the first ledger after it.
+    #[test]
+    fn test_daily_cap_not_doubled_across_old_bucket_boundary() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        env.ledger().set_sequence_number(17_279);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 5_000_000), Ok(()));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+
+        env.ledger().set_sequence_number(17_280);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 5_000_000), Err(Error::DailyCapExceeded));
+    }
+
+    /// Same boundary for the per-payee sub-cap: the global cap has headroom, so
+    /// the sub-cap is the only thing that can stop the second spend.
+    #[test]
+    fn test_per_payee_cap_not_doubled_across_old_bucket_boundary() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 10_000_000, &[1_000_000]);
+        let to = &payees[0];
+
+        env.ledger().set_sequence_number(17_279);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1_000_000), Ok(()));
+
+        env.ledger().set_sequence_number(17_280);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::PayeeCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1_000_000), Err(Error::PayeeCapExceeded));
+    }
+
+    /// Spend made at ledger 17_279 (sub-bucket 23) stays counted for exactly
+    /// 25 sub-buckets, i.e. until ledger 34_560, and no longer.
+    #[test]
+    fn test_spend_allowed_again_once_it_ages_out() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        env.ledger().set_sequence_number(17_279);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 5_000_000), Ok(()));
+
+        // Still inside the window one ledger short of 17_280 later (and the
+        // conservative extra sub-bucket after that)
+        env.ledger().set_sequence_number(17_279 + 17_280);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+        env.ledger().set_sequence_number(34_559);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+
+        // Sub-bucket 23 ages out at ledger 34_560: at most one sub-bucket
+        // (720 ledgers) later than the exact 17_280-ledger window
+        env.ledger().set_sequence_number(34_560);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 5_000_000), Ok(()));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+    }
+
+    /// Spend ages out sub-bucket by sub-bucket, not all at once.
+    #[test]
+    fn test_spend_ages_out_gradually() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        env.ledger().set_sequence_number(0);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 3_000_000), Ok(()));
+        env.ledger().set_sequence_number(10_000); // sub-bucket 13
+        assert_eq!(pay(&env, &vault_id, &sk, to, 2_000_000), Ok(()));
+
+        // Sub-bucket 0 is dropped at ledger 18_000, sub-bucket 13 is still counted
+        env.ledger().set_sequence_number(17_999);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+        env.ledger().set_sequence_number(18_000);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 3_000_001), Err(Error::DailyCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 3_000_000), Ok(()));
+
+        // Sub-bucket 13 is dropped at ledger 27_360; the 3_000_000 from ledger
+        // 18_000 is still counted
+        env.ledger().set_sequence_number(27_359);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+        env.ledger().set_sequence_number(27_360);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 2_000_001), Err(Error::DailyCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, to, 2_000_000), Ok(()));
+    }
+
+    /// `payment_authorized.daily_cumulative` is the spend inside the trailing
+    /// window, so it drops as sub-buckets age out instead of resetting at a boundary.
+    #[test]
+    fn test_daily_cumulative_event_is_trailing_window_spend() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        let cumulative = |env: &Env| -> i128 {
+            let events = soroban_sdk::testutils::Events::all(&env.events());
+            let (_, _, data) = events.get(events.len() - 1).unwrap();
+            let (_amount, _asset, daily): (i128, Address, i128) = FromVal::from_val(env, &data);
+            daily
+        };
+
+        env.ledger().set_sequence_number(0);
+        pay(&env, &vault_id, &sk, to, 3_000_000).unwrap();
+        assert_eq!(cumulative(&env), 3_000_000);
+
+        env.ledger().set_sequence_number(10_000);
+        pay(&env, &vault_id, &sk, to, 1_000_000).unwrap();
+        assert_eq!(cumulative(&env), 4_000_000);
+
+        // The 3_000_000 from ledger 0 is gone at ledger 18_000
+        env.ledger().set_sequence_number(18_000);
+        pay(&env, &vault_id, &sk, to, 500_000).unwrap();
+        assert_eq!(cumulative(&env), 1_500_000);
+    }
+
+    /// Each counter's temporary entry must outlive every payment it still
+    /// counts, and must be re-extended on every write.
+    #[test]
+    fn test_spend_counters_ttl_covers_the_window_and_is_extended_on_write() {
+        use soroban_sdk::testutils::storage::Temporary as _;
+
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        let ttls = |env: &Env| -> (u32, u32) {
+            let global = (SPEND_PREFIX,);
+            let payee = (PAYEE_SPEND_PREFIX, to.clone());
+            env.as_contract(&vault_id, || {
+                (
+                    env.storage().temporary().get_ttl(&global),
+                    env.storage().temporary().get_ttl(&payee),
+                )
+            })
+        };
+
+        env.ledger().set_sequence_number(1_000);
+        pay(&env, &vault_id, &sk, to, 1_000_000).unwrap();
+        let (global, payee) = ttls(&env);
+        assert!(global >= SPEND_TTL_LEDGERS, "global counter TTL {global} too short");
+        assert!(payee >= SPEND_TTL_LEDGERS, "payee counter TTL {payee} too short");
+
+        // Half a window later, a second write lifts the TTL again
+        env.ledger().set_sequence_number(10_000);
+        pay(&env, &vault_id, &sk, to, 1_000_000).unwrap();
+        let (global, payee) = ttls(&env);
+        assert!(global >= SPEND_TTL_LEDGERS, "global TTL not re-extended: {global}");
+        assert!(payee >= SPEND_TTL_LEDGERS, "payee TTL not re-extended: {payee}");
+    }
+
+    /// The counter must still be there on the last ledger a payment is counted
+    /// (a counter that expired early would silently reset the cap).
+    #[test]
+    fn test_spend_counter_survives_until_the_payment_ages_out() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[5_000_000]);
+        let to = &payees[0];
+
+        env.ledger().set_sequence_number(0);
+        pay(&env, &vault_id, &sk, to, 5_000_000).unwrap();
+
+        // Last ledger the ring still counts a payment from sub-bucket 0
+        env.ledger().set_sequence_number(SPEND_TTL_LEDGERS - 1);
+        assert_eq!(pay(&env, &vault_id, &sk, to, 1), Err(Error::DailyCapExceeded));
+    }
+
+    /// A vault upgraded from the fixed-bucket counters seeds its missing windows
+    /// from the current legacy bucket, once, and the seeded spend ages out like
+    /// any other.
+    #[test]
+    fn test_missing_window_is_seeded_from_legacy_counters() {
+        let env = Env::default();
+        let (sk, vault_id, payees) = setup_caps(&env, 5_000_000, &[3_000_000, 5_000_000]);
+        let (first, second) = (&payees[0], &payees[1]);
+
+        // Ledger 20_000 is in legacy bucket 1 and sub-bucket 27.
+        env.ledger().set_sequence_number(20_000);
+        env.as_contract(&vault_id, || {
+            let temporary = env.storage().temporary();
+            temporary.set(&(SPEND_PREFIX, 1_u32), &4_000_000_i128);
+            temporary.set(&(PAYEE_SPEND_PREFIX, 1_u32, first.clone()), &2_500_000_i128);
+        });
+
+        assert_eq!(pay(&env, &vault_id, &sk, first, 500_001), Err(Error::PayeeCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, second, 1_000_001), Err(Error::DailyCapExceeded));
+        assert_eq!(pay(&env, &vault_id, &sk, first, 500_000), Ok(()));
+        assert_eq!(pay(&env, &vault_id, &sk, second, 500_000), Ok(()));
+        // The legacy totals were added once, not again on the second payment.
+        assert_eq!(
+            read_spend_counters(&env, &vault_id, first),
+            (5_000_000, 3_000_000, 1_000_000)
+        );
+
+        env.ledger().set_sequence_number((27 + SPEND_RING_SLOTS) * SPEND_SUB_BUCKET_LEDGERS - 1);
+        assert_eq!(pay(&env, &vault_id, &sk, first, 1), Err(Error::DailyCapExceeded));
+        env.ledger().set_sequence_number((27 + SPEND_RING_SLOTS) * SPEND_SUB_BUCKET_LEDGERS);
+        assert_eq!(pay(&env, &vault_id, &sk, first, 3_000_000), Ok(()));
+    }
+
+    /// Drive the real `__check_auth` with a few hundred seeded random payments and
+    /// ledger jumps across several payees. Asserts, for every accepted payment:
+    ///   * the spend accepted in any 17_280-ledger window never exceeds the daily
+    ///     cap, nor a payee's sub-cap (the property #717 is about), and
+    ///   * every rejection is justified by spend inside the window plus one
+    ///     sub-bucket, i.e. the window never rejects more than one sub-bucket late.
+    #[test]
+    fn test_trailing_window_bound_holds_under_random_payments() {
+        use rand::Rng;
+
+        const DAILY: i128 = 5_000_000;
+        const SUB_CAPS: [i128; 3] = [3_000_000, 4_000_000, 1_000_000];
+        const JUMPS: [u32; 11] =
+            [0, 0, 1, 5, 100, 719, 720, 721, 3_000, 17_279, 17_280];
+        const STEPS: usize = 400;
+        // The ring may count a payment for up to one extra sub-bucket
+        const CONSERVATIVE_WINDOW: i64 =
+            (SPEND_WINDOW_LEDGERS + SPEND_SUB_BUCKET_LEDGERS) as i64;
+
+        let mut total_accepted = 0_usize;
+        let mut total_rejected = 0_usize;
+
+        // One Env for every seed; each seed gets a fresh vault and restarts the
+        // ledger clock. No snapshot: it would record thousands of lines of
+        // random state.
+        let env = Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        });
+        for seed in 0..8_u64 {
+            env.ledger().set_sequence_number(1);
+            let (sk, vault_id, payees) = setup_caps(&env, DAILY, &SUB_CAPS);
+            let mut rng = StdRng::seed_from_u64(0x717 + seed);
+            // (ledger, payee index, amount) of every accepted payment
+            let mut accepted: std::vec::Vec<(u32, usize, i128)> = std::vec::Vec::new();
+            let mut ledger: u32 = 1;
+
+            let spent = |accepted: &[(u32, usize, i128)],
+                         now: u32,
+                         window: i64,
+                         payee: Option<usize>|
+             -> i128 {
+                accepted
+                    .iter()
+                    .filter(|(l, who, _)| {
+                        (*l as i64) > (now as i64) - window && payee.map_or(true, |p| p == *who)
+                    })
+                    .map(|(_, _, amount)| *amount)
+                    .sum()
+            };
+
+            for _ in 0..STEPS {
+                ledger += JUMPS[rng.gen_range(0..JUMPS.len())];
+                env.ledger().set_sequence_number(ledger);
+                let who = rng.gen_range(0..SUB_CAPS.len());
+                let amount: i128 = rng.gen_range(1..=DAILY / 2);
+
+                match pay(&env, &vault_id, &sk, &payees[who], amount) {
+                    Ok(()) => {
+                        accepted.push((ledger, who, amount));
+                        total_accepted += 1;
+                        let exact = SPEND_WINDOW_LEDGERS as i64;
+                        assert!(
+                            spent(&accepted, ledger, exact, None) <= DAILY,
+                            "seed {seed}: daily cap exceeded in a 17_280-ledger window ending at {ledger}"
+                        );
+                        assert!(
+                            spent(&accepted, ledger, exact, Some(who)) <= SUB_CAPS[who],
+                            "seed {seed}: payee {who} sub-cap exceeded in a window ending at {ledger}"
+                        );
+                    }
+                    Err(Error::DailyCapExceeded) => {
+                        total_rejected += 1;
+                        assert!(
+                            spent(&accepted, ledger, CONSERVATIVE_WINDOW, None) + amount > DAILY,
+                            "seed {seed}: daily rejection at {ledger} not justified by the window"
+                        );
+                    }
+                    Err(Error::PayeeCapExceeded) => {
+                        total_rejected += 1;
+                        assert!(
+                            spent(&accepted, ledger, CONSERVATIVE_WINDOW, Some(who)) + amount
+                                > SUB_CAPS[who],
+                            "seed {seed}: payee {who} rejection at {ledger} not justified by the window"
+                        );
+                    }
+                    Err(other) => panic!("seed {seed}: unexpected error {other:?} at {ledger}"),
+                }
+            }
+        }
+
+        // The run must actually exercise both outcomes
+        assert!(total_accepted > 200, "only {total_accepted} payments accepted");
+        assert!(total_rejected > 200, "only {total_rejected} payments rejected");
     }
 
     // ── Lifetime cap tests ────────────────────────────────────────────────────
@@ -1970,8 +2455,9 @@ mod tests {
             "day 0 spend should succeed"
         );
 
-        // Day 1: spend another 5_000_000 (total 10M — would fail if cap were 8M)
-        env.ledger().set_sequence_number(17_280);
+        // Once day-0 spend has left the trailing window: spend another 5_000_000
+        // (total 10M — would fail if cap were 8M)
+        env.ledger().set_sequence_number(18_000);
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
         let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 5_000_000)]);
@@ -2056,8 +2542,9 @@ mod tests {
             "day 0 spend should succeed"
         );
 
-        // Day 1: try 4_000_000 — total would be 9_000_000 > 8_000_000 lifetime cap
-        env.ledger().set_sequence_number(17_280);
+        // Once day-0 spend has left the trailing window: try 4_000_000 — total
+        // would be 9_000_000 > 8_000_000 lifetime cap
+        env.ledger().set_sequence_number(18_000);
         let p2 = BytesN::<32>::random(&env);
         let s2 = sign_payload(&env, &agent_sk, &p2);
         let c2 = Vec::from_array(&env, [transfer_context(&env, &provider_a, 4_000_000)]);

@@ -222,10 +222,16 @@ fn test_bootstrap_upgrade_keeps_state_and_enforces_current_policies() {
     assert_eq!(client.pending_upgrade(), None);
     assert_state(&env, &vault, 2_500_000, false);
 
-    // Day counters reset; lifetime spend does not. A failed auth must roll back.
+    // The window outlives the upgrade: spend from before it, including what the
+    // previous release recorded, still counts one timelock later.
+    assert_eq!(
+        payment(&env, &vault, &vault.other_payee, 2_500_001),
+        Err(Error::DailyCapExceeded)
+    );
+    // It ages out of the window; lifetime spend does not. A failed auth must roll back.
+    env.ledger().set_sequence_number(SPEND_TTL_LEDGERS);
     assert_eq!(payment(&env, &vault, &vault.other_payee, 4_000_000), Ok(()));
-    env.ledger()
-        .set_sequence_number(2 * UPGRADE_TIMELOCK_LEDGERS);
+    env.ledger().set_sequence_number(2 * SPEND_TTL_LEDGERS);
     assert_eq!(
         payment(&env, &vault, &vault.payee, 1_500_001),
         Err(Error::LifetimeCapExceeded)
