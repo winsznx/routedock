@@ -510,6 +510,69 @@ If the stored manifest digest already matches, `registerProvider` skips the
 write, and refreshes `last_seen_at` at most once per `touchIntervalMs`
 (default one hour).
 
+### On-chain registry
+
+Providers can also be listed on Stellar itself, so discovery keeps working when
+Supabase is down. A provider writes two data entries on its payee account:
+`routedock_endpoint` (the origin) and `routedock_tags` (a JSON array of
+strings). `registerOnChain` does it and refuses values a data entry cannot hold:
+
+```ts
+import { registerOnChain } from '@routedock/routedock'
+
+// Use the key that signs the manifest: the account becomes the registered payee.
+await registerOnChain({
+  secret: env.STELLAR_PAYEE_SECRET,
+  endpoint: 'https://api.example.com',
+  tags: ['price', 'dex'],
+  network: 'mainnet',
+})
+```
+
+> [!NOTE]
+> A Stellar data entry value is limited to **64 bytes**, so the endpoint URL
+> (and the encoded tags) must fit in 64 bytes. `registerOnChain` throws before
+> touching the network if they do not.
+
+### Discovering providers (`ProviderRegistry`)
+
+`ProviderRegistry` reads both sources and merges them by normalized origin:
+Supabase metadata wins for an origin both list, and on-chain accounts fill in
+the rest, so an on-chain provider is returned even when Supabase has rows.
+
+```ts
+import { ProviderRegistry } from '@routedock/routedock'
+
+const registry = new ProviderRegistry({
+  supabase, // optional
+  logger, // optional: receives Supabase errors instead of failing silently
+  limit: 100, // optional: Supabase rows read, ordered by registered_at
+  onChain: {
+    horizonUrl: 'https://horizon.stellar.org',
+    knownAccounts: ['G...'], // payee accounts that ran registerOnChain
+    // network: 'testnet' | 'mainnet' is required for any other Horizon URL
+    // (futurenet, standalone, localhost); only the two public hosts are inferred.
+  },
+})
+
+const providers = await registry.listProviders()
+// Optional: { includeUnverified: true } also returns self-registered rows
+// (flagged verified:false), { tags: ['price'] } filters inside the query.
+
+// Bind the payment itself to the registered payee, per call:
+const provider = providers[0]!
+await client.pay(`${provider.base_url}/price`, { expectedPayee: provider.payee })
+```
+
+By default only operator-verified Supabase rows are returned. Each record
+carries the registered `payee`. Pass it as the per-call `expectedPayee` of
+`estimateCost`, `pay` or `openSession` (it overrides the client-wide
+`expectedPayee`): the manifest that call fetches must be signed by that key, or
+`RouteDockSignatureError` is thrown before anything is paid or signed, even if
+the provider serves a different manifest to each request. The MCP server does
+this automatically (see its README). `fetchProviderManifest(record)` remains
+available for a standalone bound fetch.
+
 ### Serving `mpp-session-ws`
 
 `mpp-session-ws` upgrades the HTTP connection to a WebSocket after the

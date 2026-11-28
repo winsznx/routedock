@@ -46,13 +46,39 @@ function recordFor(baseUrl: string, payee: string): ProviderRecord {
 }
 
 describe('deriveNetwork', () => {
-  it('derives testnet from a horizon-testnet URL', () => {
+  it('maps the two public Horizon hosts', () => {
     assert.equal(deriveNetwork('https://horizon-testnet.stellar.org'), 'testnet')
+    assert.equal(deriveNetwork('https://horizon.stellar.org'), 'mainnet')
+    assert.equal(deriveNetwork('https://horizon.stellar.org/'), 'mainnet')
   })
 
-  it('defaults to mainnet for production horizon', () => {
-    assert.equal(deriveNetwork('https://horizon.stellar.org'), 'mainnet')
-    assert.equal(deriveNetwork('https://example.com/unknown'), 'mainnet')
+  it('throws for any other Horizon URL instead of defaulting to mainnet', () => {
+    for (const url of [
+      'https://example.com/unknown',
+      'http://localhost:8000',
+      'https://horizon-futurenet.stellar.org',
+      'https://my-testnet-proxy.example.com',
+    ]) {
+      assert.throws(() => deriveNetwork(url), /Pass onChain\.network/, url)
+    }
+  })
+})
+
+describe('ProviderRegistry — network configuration', () => {
+  it('throws without an explicit network on a non-public Horizon URL', () => {
+    assert.throws(
+      () => new ProviderRegistry({ onChain: { horizonUrl: 'http://localhost:8000', knownAccounts: [] } }),
+      /Cannot derive the Stellar network/,
+    )
+  })
+
+  it('accepts a local Horizon URL when the network is passed', () => {
+    assert.doesNotThrow(
+      () =>
+        new ProviderRegistry({
+          onChain: { horizonUrl: 'http://localhost:8000', knownAccounts: [], network: 'testnet' },
+        }),
+    )
   })
 })
 

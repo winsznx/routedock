@@ -48,7 +48,8 @@ ROUTEDOCK_DAILY_CAP="1.00" # Required: Maximum daily spend in USDC
 # Optional (for session mode)
 COMMITMENT_SECRET="S..."  # Ed25519 secret for channel commitments
 
-# Optional (for provider registry)
+# Optional (for provider registry). Configure Supabase, on-chain accounts, or both.
+ROUTEDOCK_REGISTRY_ACCOUNTS="G...,G..."  # Stellar accounts that registered providers on-chain
 SUPABASE_URL="https://..."
 # Note: Use the anon key (anon + public_read_providers RLS is sufficient). Do NOT use the service-role key.
 SUPABASE_KEY="..."
@@ -131,7 +132,9 @@ caller can pass `asset_issuer` instead of trusting whichever entry happened to c
 
 ### list_providers
 
-List available RouteDock providers from the registry. Requires Supabase credentials.
+List available RouteDock providers from the registry. Supabase (`SUPABASE_URL` / `SUPABASE_KEY`) and the
+on-chain registry (`ROUTEDOCK_REGISTRY_ACCOUNTS`, a comma-separated list of payee accounts) are merged by
+origin, so listing keeps working with only one of them configured. At least one is required.
 
 **Parameters:**
 - `tags` (optional): Comma-separated tags for filtering (e.g., "price,stellar,dex")
@@ -140,8 +143,13 @@ List available RouteDock providers from the registry. Requires Supabase credenti
 - `limit` (optional): Maximum number of providers to return (1 to 50, default 50)
 
 **Returns:** `count`, the `network` and `limit` that were applied, a `truncated` flag, and each provider's
-capabilities, `verified` state and accepted `assets` (with `asset` as its primary one). Operator-verified providers
-are listed first, then the most recently seen.
+capabilities, `verified` state, registered `payee`, `source` (`supabase` or `onchain`) and accepted `assets` (with
+`asset` as its primary one). Operator-verified providers are listed first, then the most recently seen. Unverified
+providers are listed too, flagged `verified: false`.
+
+**Payee binding.** When `pay_for_data` or `open_session` targets the origin of a listed provider, the payment
+itself is bound to that provider's registered `payee` (verified providers only): a manifest signed by a different key is rejected with
+`RouteDockSignatureError` before anything is estimated, paid or signed.
 
 ### quote_provider
 

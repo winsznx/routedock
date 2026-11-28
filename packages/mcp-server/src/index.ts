@@ -5,7 +5,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { RouteDockClient } from '@routedock/routedock'
+import { RouteDockClient, ProviderRegistry } from '@routedock/routedock'
+import { HORIZON_URLS } from '@routedock/routedock/network'
 import { FileSpendStore } from '@routedock/routedock/node'
 import type { SessionHandle } from '@routedock/routedock'
 import { createClient } from '@supabase/supabase-js'
@@ -57,6 +58,7 @@ const {
   supabaseKey: SUPABASE_KEY,
   routedockDailyCap: ROUTEDOCK_DAILY_CAP,
   spendStorePath,
+  registryAccounts,
 } = config
 
 // Initialize RouteDock client
@@ -74,6 +76,21 @@ if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 }
 
+// Provider registry: Supabase (when configured) merged with the on-chain
+// registry accounts in ROUTEDOCK_REGISTRY_ACCOUNTS. With neither configured
+// there is nothing to query and list_providers reports how to set one up.
+const registry =
+  supabase || registryAccounts.length > 0
+    ? new ProviderRegistry({
+        ...(supabase ? { supabase: supabase as never } : {}),
+        onChain: {
+          horizonUrl: HORIZON_URLS[STELLAR_NETWORK],
+          knownAccounts: registryAccounts,
+          network: STELLAR_NETWORK,
+        },
+      })
+    : null
+
 // Sessions opened via open_session, keyed by channelId, so a later
 // close_session/stream_session call in the same server process can find the
 // live handle again. On process shutdown (SIGINT, SIGTERM, or stdio close),
@@ -86,6 +103,7 @@ const deps: HandlerDeps = {
   client,
   openSessions,
   supabase: supabase as HandlerDeps['supabase'],
+  registry,
   stellarSecret: STELLAR_SECRET,
   stellarNetwork: STELLAR_NETWORK,
 }

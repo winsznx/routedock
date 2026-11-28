@@ -276,6 +276,13 @@ function ttlFromHeaders(headers: Headers, now: number): number {
 export type { RouteDockLogger, RouteDockLogLevel, RouteDockLogFields } from '../internal/logger.js'
 
 export interface ModeSelectOptions {
+  /**
+   * Per-call trust anchor: the payee (G...) this one call expects, overriding
+   * the client-wide `expectedPayee`. Lets one agent bind each provider to its
+   * own registered payee (issue #729) and makes the payment itself, not just a
+   * preliminary check, refuse a manifest signed by another key.
+   */
+  expectedPayee?: string
   /** Request URL or endpoint path used to filter modes by eligible assets. */
   endpoint?: string
   /** Force mpp-session if the provider supports it */

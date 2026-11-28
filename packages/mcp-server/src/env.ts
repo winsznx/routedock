@@ -1,5 +1,6 @@
 import path from 'node:path'
 import os from 'node:os'
+import { StrKey } from '@stellar/stellar-sdk'
 import pkg from '../package.json' with { type: 'json' }
 
 export const SERVER_NAME = '@routedock/mcp-server'
@@ -15,6 +16,8 @@ export interface McpEnvConfig {
   supabaseKey?: string | undefined
   routedockDailyCap: string
   spendStorePath: string
+  /** Stellar accounts whose `routedock_endpoint` data entry lists a provider on-chain. */
+  registryAccounts: string[]
 }
 
 export interface ParseEnvOptions {
@@ -84,6 +87,18 @@ export function parseEnv(
   const spendStorePath =
     env.ROUTEDOCK_SPEND_STORE_PATH || path.join(os.homedir(), '.routedock', 'spend.json')
 
+  const registryAccounts = (env.ROUTEDOCK_REGISTRY_ACCOUNTS ?? '')
+    .split(',')
+    .map((a) => a.trim())
+    .filter(Boolean)
+  for (const account of registryAccounts) {
+    if (!StrKey.isValidEd25519PublicKey(account)) {
+      throw new Error(
+        `Invalid ROUTEDOCK_REGISTRY_ACCOUNTS entry "${account}": expected a comma-separated list of Stellar public keys (G...)`,
+      )
+    }
+  }
+
   return {
     stellarSecret,
     stellarNetwork,
@@ -92,5 +107,6 @@ export function parseEnv(
     supabaseKey,
     routedockDailyCap,
     spendStorePath,
+    registryAccounts,
   }
 }

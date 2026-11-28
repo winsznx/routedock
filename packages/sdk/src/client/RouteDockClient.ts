@@ -287,7 +287,7 @@ export class RouteDockClient {
     options?: ModeSelectOptions,
   ): Promise<{ manifest: RouteDockManifest; mode: PaymentMode }> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     assertEndpointActive(manifest, url, this.logger, options?.request?.method)
     const mode = selectMode(manifest, { ...options, endpoint: url })
     return { manifest, mode }
@@ -452,7 +452,7 @@ export class RouteDockClient {
    */
   async pay(url: string, options?: ModeSelectOptions): Promise<PaymentResult> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     const request = options?.request
     assertEndpointActive(manifest, url, this.logger, request?.method)
     const mode = selectMode(manifest, { ...options, endpoint: url, ...(this.logger && { logger: this.logger }) })
@@ -630,7 +630,7 @@ export class RouteDockClient {
    */
   async openSession(url: string, options?: SessionOptions): Promise<SessionHandle> {
     const baseUrl = new URL(url).origin
-    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, this.expectedPayee)
+    const manifest = await fetchManifest(baseUrl, this.retryPolicy, this.manifestTimeoutMs, options?.expectedPayee ?? this.expectedPayee)
     assertEndpointActive(manifest, url, this.logger)
 
     const mode = options?.mode ?? 'mpp-session'

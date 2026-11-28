@@ -333,6 +333,13 @@ export const DEFAULT_MAX_SESSION_DURATION_MS = 3_600_000
 /** Options accepted by client.openSession() */
 export interface SessionOptions {
   /**
+   * Per-call trust anchor: the payee (G...) this one call expects, overriding
+   * the client-wide `expectedPayee`. Lets one agent bind each provider to its
+   * own registered payee (issue #729) and makes the payment itself, not just a
+   * preliminary check, refuse a manifest signed by another key.
+   */
+  expectedPayee?: string
+  /**
    * Session payment mode. Defaults to 'mpp-session' (SSE-style one HTTP
    * request per voucher). Set to 'mpp-session-ws' to negotiate the channel
    * and first voucher over HTTP and then upgrade the connection to WebSocket

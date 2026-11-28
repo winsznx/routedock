@@ -18,6 +18,7 @@ import type {
   PaymentResult,
   AssetConfig,
   PaymentRequest,
+  ProviderRegistry,
 } from '@routedock/routedock'
 import { RouteDockPaidResponseError, usdcToStroops } from '@routedock/routedock'
 // Canonical network constants (issue #578): the server keeps one copy of the
@@ -55,6 +56,7 @@ export interface ProviderRow {
   base_url: string
   modes: string[]
   tags: string[]
+  payee?: string
   verified?: boolean | null
   last_seen_at?: string
   asset?: string
@@ -78,6 +80,12 @@ export interface SupabaseQueryBuilder {
   [key: string]: unknown
 }
 
+/**
+ * The slice of `ProviderRegistry` the handlers use. `listProviders` merges the
+ * Supabase and on-chain sources.
+ */
+export type RegistryDep = Pick<ProviderRegistry, 'listProviders'>
+
 /** All external dependencies required by the handlers.  Inject fakes in tests. */
 export interface HandlerDeps {
   /** Initialised RouteDockClient for paying / opening sessions. */
@@ -90,6 +98,13 @@ export interface HandlerDeps {
       select: (cols: string) => SupabaseQueryBuilder
     }
   } | null
+  /**
+   * Provider registry (Supabase and/or on-chain accounts). When present,
+   * list_providers reads from it (so the on-chain fallback works without
+   * Supabase) and pay_for_data / open_session bind the registered payee for any
+   * URL whose origin is listed. Null/omitted keeps the Supabase-only listing.
+   */
+  registry?: RegistryDep | null
   /** Raw Stellar secret key — used by check_balance to derive the public key. */
   stellarSecret: string
   /** 'testnet' | 'mainnet' — controls which Horizon endpoint is queried. */
@@ -201,6 +216,58 @@ function buildPaymentRequest(args: {
   return { request }
 }
 
+/** How long a registry lookup is reused by payment calls (and shared by concurrent ones). */
+const REGISTRY_CACHE_TTL_MS = 30_000
+const registryCache = new WeakMap<
+  object,
+  { at: number; records: Promise<Awaited<ReturnType<RegistryDep['listProviders']>>> }
+>()
+
+function cachedRegistryRecords(registry: RegistryDep) {
+  const hit = registryCache.get(registry)
+  if (hit && Date.now() - hit.at < REGISTRY_CACHE_TTL_MS) return hit.records
+  const records = registry.listProviders()
+  registryCache.set(registry, { at: Date.now(), records })
+  // A failed lookup must not be cached.
+  records.catch(() => {
+    if (registryCache.get(registry)?.records === records) registryCache.delete(registry)
+  })
+  return records
+}
+
+/**
+ * The registered payee for `url`, when its origin belongs to a verified
+ * registry-listed provider. It is passed to the client as a per-call
+ * `expectedPayee`, so the manifest the payment itself fetches must be signed by
+ * that key: a manifest signed by a different key is rejected with
+ * `RouteDockSignatureError` before any estimate, payment or signature, even if
+ * the provider serves different manifests to different requests. Unverified
+ * (self-asserted) payees are not trust anchors, and URLs the registry does not
+ * list are left to the client's normal checks.
+ */
+async function registeredPayeeFor(url: string, deps: HandlerDeps): Promise<string | undefined> {
+  const { registry } = deps
+  if (!registry) return undefined
+
+  let origin: string
+  try {
+    origin = new URL(url).origin.toLowerCase()
+  } catch {
+    return undefined // the client rejects an invalid URL itself
+  }
+
+  const records = await cachedRegistryRecords(registry)
+  const record = records.find((r) => {
+    if (!r.verified) return false
+    try {
+      return new URL(r.base_url).origin.toLowerCase() === origin
+    } catch {
+      return false
+    }
+  })
+  return record?.payee
+}
+
 /** Parse a decimal USDC string to stroops, or null when it is not one. */
 function parseUsdc(amount: unknown): bigint | null {
   // usdcToStroops calls amount.trim(), so non-strings must be rejected first.
@@ -243,11 +310,13 @@ export async function handlePayForData(
 
   // The same options go to estimateCost and pay so the quoted request (method
   // scopes the endpoint sunset check) is the one that is paid for.
+  const expectedPayee = await registeredPayeeFor(url, deps)
   const modeOptions =
-    preferred_mode || built.request
+    preferred_mode || built.request || expectedPayee
       ? {
           ...(preferred_mode && { forceMode: preferred_mode as PaymentMode }),
           ...(built.request && { request: built.request }),
+          ...(expectedPayee && { expectedPayee }),
         }
       : undefined
 
@@ -393,6 +462,8 @@ export async function handleOpenSession(
     return err('COMMITMENT_SECRET environment variable is required for session mode')
   }
 
+  const expectedPayee = await registeredPayeeFor(url, deps)
+
   const parsed = new URL(url)
   const origin = parsed.origin
   const isBareOrigin = parsed.pathname === '' || parsed.pathname === '/'
@@ -432,7 +503,7 @@ export async function handleOpenSession(
     endpointUrl = resolution.url
   }
 
-  const session = await client.openSession(endpointUrl)
+  const session = await client.openSession(endpointUrl, expectedPayee ? { expectedPayee } : undefined)
   openSessions.set(session.channelId, session)
 
   return ok({
@@ -703,7 +774,7 @@ export interface ListProvidersArgs {
  * column, so the accepted assets are projected out of the manifest.
  */
 const PROVIDER_COLUMNS =
-  'name, description, base_url, modes, tags, network, verified, last_seen_at, ' +
+  'name, description, base_url, modes, tags, network, payee, verified, last_seen_at, ' +
   'manifest->asset, manifest->assets'
 
 /**
@@ -748,13 +819,7 @@ export async function handleListProviders(
   deps: HandlerDeps,
 ): Promise<ToolResult> {
   const { tags, network, limit } = args
-  const { supabase } = deps
-
-  if (!supabase) {
-    return err(
-      'SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access',
-    )
-  }
+  const { supabase, registry } = deps
 
   if (
     limit !== undefined &&
@@ -767,6 +832,54 @@ export async function handleListProviders(
 
   const effectiveNetwork = network ?? deps.stellarNetwork
   const rowLimit = limit ?? MAX_PROVIDER_ROWS
+
+  // The registry serves this server's own network. A request for the other
+  // network (browse only; it cannot be paid from here) uses the Supabase query.
+  if (registry && effectiveNetwork === deps.stellarNetwork) {
+    const wanted = (tags ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+    // Unverified rows stay in the listing (flagged verified:false), and the tag
+    // filter runs in the registry query, before its row limit.
+    const all = await registry.listProviders({
+      includeUnverified: true,
+      ...(wanted.length > 0 && { tags: wanted }),
+    })
+    const rows = all.slice(0, rowLimit)
+    return ok({
+      success: true,
+      count: rows.length,
+      network: effectiveNetwork,
+      limit: rowLimit,
+      truncated: all.length > rowLimit,
+      providers: rows.map((r) => {
+        const assets = r.assets ?? []
+        return {
+          name: r.name,
+          description: r.description,
+          network: r.network,
+          base_url: r.base_url,
+          modes: r.modes,
+          tags: r.tags,
+          verified: r.verified,
+          // The registered payee: the trust anchor pay_for_data / open_session
+          // bind the provider's manifest to.
+          payee: r.payee,
+          source: r.source,
+          assets,
+          asset: assets[0] ?? null,
+        }
+      }),
+    })
+  }
+
+  if (!supabase) {
+    return err(
+      'SUPABASE_URL and SUPABASE_KEY environment variables are required for provider registry access ' +
+        '(or set ROUTEDOCK_REGISTRY_ACCOUNTS to use the on-chain registry)',
+    )
+  }
 
   // Build query — start with the explicit column list, apply filters progressively.
   let query: SupabaseQueryBuilder = supabase.from('providers').select(PROVIDER_COLUMNS)
@@ -825,6 +938,7 @@ export async function handleListProviders(
         modes: p.modes,
         tags: p.tags,
         verified: p.verified ?? false,
+        payee: p.payee ?? null,
         assets,
         // The primary asset, kept alongside `assets` because single-asset
         // providers — the common case — only advertise one.

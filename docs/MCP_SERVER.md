@@ -210,6 +210,7 @@ All tools return structured error responses:
   Any other value will cause the server to exit immediately with an error naming the allowed values.
 - `ROUTEDOCK_DAILY_CAP`: Required - Maximum daily spend in USDC to prevent unbounded spending (e.g. `"10"`).
 - `COMMITMENT_SECRET`: Optional - Wallet secret for opening payment channels in session mode.
+- `ROUTEDOCK_REGISTRY_ACCOUNTS`: Optional - Comma-separated Stellar public keys of accounts that registered providers on-chain (`routedock_endpoint` data entry). `list_providers` merges them with Supabase, so it works with only this set. For verified listed providers, `pay_for_data` and `open_session` bind the payment to the registered payee and reject a manifest not signed by it.
 - `SUPABASE_URL`: Optional - Supabase project URL for the provider registry.
 - `SUPABASE_KEY`: Optional - Supabase anon key for the provider registry (use anon key, not service-role key).
 - `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Custom path for the spend tracking file (defaults to `~/.routedock/spend.json`).
