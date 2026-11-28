@@ -169,7 +169,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'list_providers',
     description:
-      'List available RouteDock providers from the registry, bounded to a maximum of 50 rows and ordered by verified providers first. Can filter by capability tags (returns providers matching any of the given tags) and by network; without a network the server only returns providers on its own configured network.',
+      'List available RouteDock providers from the registry (Supabase and on-chain accounts, merged), bounded to a maximum of 50 rows. Each row includes the provider\'s registered payee. Can filter by capability tags (returns providers matching any of the given tags) and by network; without a network the server only returns providers on its own configured network.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { Horizon } from '@stellar/stellar-sdk'
 import { OnChainRegistry } from '../OnChainRegistry.js'
 import { ProviderRegistry } from '../ProviderRegistry.js'
+import type { RouteDockLogger } from '../../internal/logger.js'
 
 // ---------------------------------------------------------------------------
 // OnChainRegistry helpers
@@ -268,29 +269,59 @@ describe('OnChainRegistry.listProviders — timeout', () => {
 // ProviderRegistry helpers
 // ---------------------------------------------------------------------------
 
-function makeSupabaseMock(rows: object[] | null, error: object | null = null) {
+function makeSupabaseMock(
+  rows: object[] | null,
+  error: object | null = null,
+  calls: { order?: string | undefined; limit?: number | undefined } = {},
+  throws?: Error,
+) {
   return {
     from: () => {
       const filters: Record<string, unknown> = {}
       return {
-        // Mirrors the real query: .select('*').eq('verified', true).eq('network', ...).limit(100)
+        // Mirrors the real query:
+        // .select('*').eq('verified', true).eq('network', ...).order('registered_at').limit(n)
         select: () => {
+          let orderColumn: string | undefined
+          let overlapTags: string[] | undefined
           const query = {
+            overlaps: (_column: string, values: string[]) => {
+              overlapTags = values
+              return query
+            },
             eq: (column: string, value: unknown) => {
               filters[column] = value
               return query
             },
-            limit: () => {
-              const data = error
+            order: (column: string) => {
+              orderColumn = column
+              return query
+            },
+            limit: (n: number) => {
+              calls.order = orderColumn
+              calls.limit = n
+              if (throws) return Promise.reject(throws)
+              const filtered = error
                 ? null
                 : rows
-                  ? rows.filter((r) =>
-                      Object.entries(filters).every(
-                        ([column, value]) => (r as Record<string, unknown>)[column] === value,
-                      ),
+                  ? rows.filter(
+                      (r) =>
+                        Object.entries(filters).every(
+                          ([column, value]) => (r as Record<string, unknown>)[column] === value,
+                        ) &&
+                        (!overlapTags ||
+                          ((r as { tags?: string[] }).tags ?? []).some((t) => overlapTags!.includes(t))),
                     )
                   : rows
-              return Promise.resolve({ data, error })
+              const data =
+                filtered && orderColumn
+                  ? [...filtered].sort((a, b) =>
+                      String((a as Record<string, unknown>)[orderColumn!]).localeCompare(
+                        String((b as Record<string, unknown>)[orderColumn!]),
+                      ),
+                    )
+                  : filtered
+              return Promise.resolve({ data: data ? data.slice(0, n) : data, error })
             },
           }
           return query
@@ -305,9 +336,11 @@ class TestProviderRegistry extends ProviderRegistry {
     supabase: ReturnType<typeof makeSupabaseMock> | undefined,
     mockHorizon: ReturnType<typeof makeHorizonMock>,
     network?: 'testnet' | 'mainnet',
+    extra: { logger?: RouteDockLogger; limit?: number } = {},
   ) {
     super({
       ...(supabase ? { supabase: supabase as any } : {}),
+      ...extra,
       onChain: {
         horizonUrl: 'https://horizon-testnet.stellar.org',
         knownAccounts: ['ACCT9'],
@@ -463,5 +496,156 @@ describe('ProviderRegistry.listProviders — network filtering', () => {
     assert.equal(providers.length, 1)
     assert.equal(providers[0]!.source, 'onchain')
     assert.equal(providers[0]!.network, 'mainnet')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Merge, ordering, logging, tags (#762)
+// ---------------------------------------------------------------------------
+
+describe('ProviderRegistry.listProviders — merged sources (#762)', () => {
+  it('returns the Supabase row and the on-chain account together', async () => {
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock([makeRow('testnet', 'Listed')]),
+      oneOnChain,
+    )
+    const providers = await registry.listProviders()
+    assert.deepEqual(
+      providers.map((p) => [p.name, p.source]).sort(),
+      [
+        ['Listed', 'supabase'],
+        ['On-chain provider (ACCT9...)', 'onchain'],
+      ],
+    )
+  })
+
+  it('merges by normalized origin with Supabase metadata winning', async () => {
+    const row = { ...makeRow('testnet', 'Listed'), base_url: 'https://Onchain.Example.com/' }
+    const registry = new TestProviderRegistry(makeSupabaseMock([row]), oneOnChain)
+    const providers = await registry.listProviders()
+    assert.equal(providers.length, 1)
+    assert.equal(providers[0]!.source, 'supabase')
+    assert.equal(providers[0]!.name, 'Listed')
+  })
+
+  it('orders Supabase by registered_at and passes the configured limit', async () => {
+    const calls: { order?: string | undefined; limit?: number | undefined } = {}
+    const older = { ...makeRow('testnet', 'Older'), registered_at: '2026-01-01T00:00:00Z' }
+    const newer = { ...makeRow('testnet', 'Newer'), registered_at: '2026-06-01T00:00:00Z' }
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock([newer, older], null, calls),
+      emptyOnChain,
+      undefined,
+      { limit: 1 },
+    )
+    const providers = await registry.listProviders()
+    assert.equal(calls.order, 'registered_at')
+    assert.equal(calls.limit, 1)
+    assert.deepEqual(providers.map((p) => p.name), ['Older'], 'stable subset: oldest registrations first')
+  })
+
+  it('reports a Supabase error through the logger and still returns on-chain providers', async () => {
+    const logs: Array<[string, string, unknown]> = []
+    const logger: RouteDockLogger = (level, message, fields) => void logs.push([level, message, fields])
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock(null, { message: 'permission denied for table providers' }),
+      oneOnChain,
+      undefined,
+      { logger },
+    )
+    const providers = await registry.listProviders()
+    assert.deepEqual(providers.map((p) => p.source), ['onchain'])
+    assert.equal(logs.length, 1)
+    assert.equal(logs[0]![0], 'warn')
+    assert.match(JSON.stringify(logs[0]![2]), /permission denied/)
+  })
+
+  it('reports a thrown Supabase exception through the logger', async () => {
+    const logs: Array<[string, string, unknown]> = []
+    const logger: RouteDockLogger = (level, message, fields) => void logs.push([level, message, fields])
+    const registry = new TestProviderRegistry(
+      makeSupabaseMock([], null, {}, new Error('fetch failed')),
+      oneOnChain,
+      undefined,
+      { logger },
+    )
+    assert.equal((await registry.listProviders()).length, 1)
+    assert.equal(logs.length, 1)
+    assert.equal((logs[0]![2] as { error: Error }).error.message, 'fetch failed')
+  })
+
+  it('rejects a non-positive limit', () => {
+    assert.throws(
+      () => new ProviderRegistry({ limit: 0, onChain: { horizonUrl: 'https://horizon-testnet.stellar.org', knownAccounts: [] } }),
+      /limit must be a positive integer/,
+    )
+  })
+})
+
+describe('OnChainRegistry — tag validation (#762)', () => {
+  it('drops non-string entries from a JSON tag array', async () => {
+    const horizon = makeHorizonMock({
+      A: { routedock_endpoint: 'https://a.example.com', routedock_tags: JSON.stringify(['ai', 1, null, { x: 1 }, 'dex']) },
+    })
+    const [provider] = await new TestOnChainRegistry(horizon, ['A']).listProviders()
+    assert.deepEqual(provider!.tags, ['ai', 'dex'])
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// listProviders options: unverified rows and tag filter (issue #762 review)
+// ---------------------------------------------------------------------------
+
+describe('ProviderRegistry.listProviders options', () => {
+  const row = (name: string, verified: boolean, tags: string[], extra: object = {}) => ({
+    id: name,
+    name,
+    description: null,
+    base_url: `https://${name}.example.com`,
+    modes: ['x402'],
+    tags,
+    network: 'testnet',
+    payee: `G${name.toUpperCase()}`,
+    manifest: null,
+    verified,
+    registered_at: '2025-01-01T00:00:00Z',
+    last_seen_at: '2025-01-01T00:00:00Z',
+    ...extra,
+  })
+  const noOnChain = makeHorizonMock({ ACCT9: null })
+
+  it('hides unverified rows by default', async () => {
+    const rows = [row('a', true, ['x']), row('b', false, ['x'])]
+    const registry = new TestProviderRegistry(makeSupabaseMock(rows), noOnChain)
+    assert.deepEqual((await registry.listProviders()).map((r) => r.name), ['a'])
+  })
+
+  it('includeUnverified returns them flagged verified:false', async () => {
+    const rows = [row('a', true, ['x']), row('b', false, ['x'])]
+    const registry = new TestProviderRegistry(makeSupabaseMock(rows), noOnChain)
+    const listed = await registry.listProviders({ includeUnverified: true })
+    assert.deepEqual(
+      listed.map((r) => [r.name, r.verified]).sort(),
+      [['a', true], ['b', false]],
+    )
+  })
+
+  it('includeUnverified orders by last_seen_at', async () => {
+    const calls: { order?: string | undefined } = {}
+    const registry = new TestProviderRegistry(makeSupabaseMock([row('a', true, [])], null, calls), noOnChain)
+    await registry.listProviders({ includeUnverified: true })
+    assert.equal(calls.order, 'last_seen_at')
+  })
+
+  it('applies the tag filter in the query, before the row limit', async () => {
+    const rows = [
+      row('a', true, ['other'], { registered_at: '2025-01-01T00:00:00Z' }),
+      row('b', true, ['other'], { registered_at: '2025-01-02T00:00:00Z' }),
+      row('c', true, ['wanted'], { registered_at: '2025-01-03T00:00:00Z' }),
+    ]
+    const registry = new TestProviderRegistry(makeSupabaseMock(rows), noOnChain, undefined, { limit: 2 })
+    const listed = await registry.listProviders({ tags: ['wanted'] })
+    assert.deepEqual(listed.map((r) => r.name), ['c'])
   })
 })

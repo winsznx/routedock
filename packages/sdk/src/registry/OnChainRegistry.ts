@@ -35,7 +35,10 @@ export class OnChainRegistry {
     knownAccounts: string[]
     timeoutMs?: number
   }) {
-    this.horizon = new Horizon.Server(options.horizonUrl)
+    // A local or standalone Horizon (http://localhost:8000) is plain HTTP.
+    this.horizon = new Horizon.Server(options.horizonUrl, {
+      allowHttp: options.horizonUrl.startsWith('http://'),
+    })
     this.knownAccounts = options.knownAccounts
     this.timeoutMs = options.timeoutMs ?? 10_000
   }
@@ -95,7 +98,8 @@ export class OnChainRegistry {
         const decoded = tryDecodeBase64(rawTags)
         try {
           const parsed = JSON.parse(decoded)
-          if (Array.isArray(parsed)) tags = parsed
+          // Only string entries are tags; anything else in the array is dropped.
+          if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === 'string')
         } catch {
           tags = decoded.split(',').map((t) => t.trim()).filter(Boolean)
         }
