@@ -1,5 +1,38 @@
 # @routedock/routedock
 
+## 0.5.0
+
+### Minor Changes
+
+- [#771](https://github.com/winsznx/routedock/pull/771) [`8a3aa4a`](https://github.com/winsznx/routedock/commit/8a3aa4ab15bb2b31ca4a22021dda01daff24b47a) Thanks [@KingDavid9999](https://github.com/KingDavid9999)! - Add `agent-vault` custody mode ([#721](https://github.com/winsznx/routedock/issues/721)). `RouteDockClient` accepts `vault: { mode: 'agent-vault', vaultContract, agentSecret }` and pays x402 endpoints from the AgentVault contract account, signing the auth entry with the agent key as the raw 64-byte signature the vault's `__check_auth` expects (`agentVaultAuthorizeEntry`, `AgentVaultStellarScheme`). Vault policy refusals found while simulating (`[#3](https://github.com/winsznx/routedock/issues/3)` expired, `[#4](https://github.com/winsznx/routedock/issues/4)` daily cap, `[#5](https://github.com/winsznx/routedock/issues/5)` payee not allowed, `[#9](https://github.com/winsznx/routedock/issues/9)` frozen) surface as `RouteDockPolicyRejectError`. `mpp-charge` and sessions are rejected with a clear error in this mode.
+
+- [#774](https://github.com/winsznx/routedock/pull/774) [`06a79e8`](https://github.com/winsznx/routedock/commit/06a79e834df6d46fbfbc9154d77e39cb1abdefb7) Thanks [@Yerimahjr](https://github.com/Yerimahjr)! - `pay()` and `estimateCost()` now throw `RouteDockManifestError` when the manifest declares the request path but not the request method, before mode selection and signing ([#761](https://github.com/winsznx/routedock/issues/761)). Previously the client signed a payment for a method the manifest never advertised, which a payment middleware would settle before the route answered 404.
+
+  The `agent-to-agent` and `inference-agent` examples are fixed accordingly: the manifest declares `POST`, the mock servers register POST routes and read the JSON body the client sends, and both export their app builders (`main()` only runs when the file is executed directly) so a new CI route test can exercise them without funds.
+
+- [#767](https://github.com/winsznx/routedock/pull/767) [`b29fc6b`](https://github.com/winsznx/routedock/commit/b29fc6ba6d951f3b2ebb5a527294a1bfc62998c3) Thanks [@KingDavid9999](https://github.com/KingDavid9999)! - Add `RouteDockClient.getSpendStatus()`, which reports the asset, daily cap, spend so far today, remaining budget and per-endpoint caps from the spend store without making a payment. The read goes through the spend mutex, counts payments in flight, excludes rolled-back ones, and returns `null` caps when no `spendCap` is configured.
+
+### Patch Changes
+
+- [#757](https://github.com/winsznx/routedock/pull/757) [`f020624`](https://github.com/winsznx/routedock/commit/f02062476b308d434e47a175390b664705591d68) Thanks [@DevScoopee](https://github.com/DevScoopee)! - Fix Express provider handlers resolving endpoint-scoped assets from the mount-relative `req.path`, which made middleware mounted with `app.use('/path', routedock(...))` charge an unscoped asset or fail with "No eligible assets". The x402 and mpp-charge handlers now use the full request path (and the same path for idempotency), matching the Hono and Fastify adapters.
+
+- [#766](https://github.com/winsznx/routedock/pull/766) [`29610f0`](https://github.com/winsznx/routedock/commit/29610f0e9644892e61c814549115816c62299742) Thanks [@KingDavid9999](https://github.com/KingDavid9999)! - Fix Express and Fastify `mpp-session` calling `onOrphaned` after every voucher. The disconnect detector now listens on the response `close` event and only flags a response that did not finish, instead of the request `close` event, which Node fires on normal completion.
+
+- [#751](https://github.com/winsznx/routedock/pull/751) [`1a747fb`](https://github.com/winsznx/routedock/commit/1a747fbdd4c4de1415a6a019e3ea701535db17fe) Thanks [@DanbabaJr](https://github.com/DanbabaJr)! - Nulth signer now refuses auth entries whose `signatureExpirationLedger` is outside the session policy (`auth_expiry_out_of_policy`), and `NulthStellarScheme` clamps provider `maxTimeoutSeconds` to 300.
+
+- [#739](https://github.com/winsznx/routedock/pull/739) [`e79465e`](https://github.com/winsznx/routedock/commit/e79465ebdcef293cae7add1f597064a32d0ab797) Thanks [@joydeelish](https://github.com/joydeelish)! - Preserve settled payments when provider responses are not JSON. Return raw text and content type, retain spend reservations on unreadable paid bodies, and expose paid settlement metadata to MCP callers so agents do not retry a completed payment.
+
+- [#750](https://github.com/winsznx/routedock/pull/750) [`99430bd`](https://github.com/winsznx/routedock/commit/99430bd065e883002ecb34247629e4da6caad733) Thanks [@Olalolo22](https://github.com/Olalolo22)! - Make `SessionHandle.close()` idempotent across duplicate, concurrent, and post-auto-close calls (while allowing retries after failure), reject `mpp-session-ws` `stream()` calls after `close()` before spending or probing, and close active WebSockets with code `1000` on `close()` ([#726](https://github.com/winsznx/routedock/issues/726)).
+
+- [#737](https://github.com/winsznx/routedock/pull/737) [`d6fdac3`](https://github.com/winsznx/routedock/commit/d6fdac32113cb139352f7e577cfde820d550369c) Thanks [@storm-beyndtech](https://github.com/storm-beyndtech)! - Session vouchers are now signed once per item. A retried voucher request replays the credential it already signed instead of answering a fresh 402 with a higher cumulative, and a fresh 402 on the replay surfaces as `RouteDockChannelStateError`. The local spend cap is charged at the point of signing, so a request that fails before a voucher is signed no longer burns cap, and `stats().vouchersIssued` always matches `currentCumulative / rate`.
+
+- [#775](https://github.com/winsznx/routedock/pull/775) [`c4d5912`](https://github.com/winsznx/routedock/commit/c4d591258345637c764b2bbdb408ffdf061a8f94) Thanks [@Yerimahjr](https://github.com/Yerimahjr)! - Validate spend-cap state read from a `SpendStore`. A record that is `null`-shaped, `{}`, an array, or has a missing, non-string, non-integer or negative `totalMicros`/endpoint total now rejects the payment with `RouteDockPolicyRejectError('local_spend_state_invalid')` instead of resetting the cap or raising its headroom, and `FileSpendStore` fails closed on wrong-shape files (left untouched). Rollbacks clamp at zero and log a warning.
+
+- [#754](https://github.com/winsznx/routedock/pull/754) [`c05040b`](https://github.com/winsznx/routedock/commit/c05040b85f5fca8e0fbe195fb25409e9a1d838d8) Thanks [@Olalolo22](https://github.com/Olalolo22)! - Support `SessionOptions` forwarding (`mode`, `maxDurationMs`, `store`), live streaming `vouchers`/`cumulative` updates via `stream()` and `refreshStats()`, and `session:timeout` / `session:closed` / `session:close-failed` lifecycle handling in `useSession` ([#728](https://github.com/winsznx/routedock/issues/728)).
+
+- Updated dependencies [[`1a747fb`](https://github.com/winsznx/routedock/commit/1a747fbdd4c4de1415a6a019e3ea701535db17fe)]:
+  - @routedock/nulth-sdk@0.3.1
+
 ## 0.4.1
 
 ### Patch Changes

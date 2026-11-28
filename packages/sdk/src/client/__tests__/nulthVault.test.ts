@@ -41,7 +41,7 @@ function transferPreimage(asset: string, from: string, to: string, amount: bigin
     new xdr.HashIdPreimageSorobanAuthorization({
       networkId: hash(Buffer.from(Networks.TESTNET)),
       nonce: xdr.Int64.fromString('1'),
-      signatureExpirationLedger: 300,
+      signatureExpirationLedger: 100_050,
       invocation,
     }),
   ).toXDR('base64')
@@ -219,7 +219,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
       new xdr.HashIdPreimageSorobanAuthorization({
         networkId: hash(Buffer.from(Networks.TESTNET)),
         nonce: xdr.Int64.fromString('1'),
-        signatureExpirationLedger: 300,
+        signatureExpirationLedger: 100_050,
         invocation,
       }),
     ).toXDR('base64')
@@ -265,7 +265,7 @@ console.log('✓ Nulth ZK vault SDK integration PASSED')
       new xdr.HashIdPreimageSorobanAuthorization({
         networkId: hash(Buffer.from(Networks.TESTNET)),
         nonce: xdr.Int64.fromString('1'),
-        signatureExpirationLedger: 300,
+        signatureExpirationLedger: 100_050,
         invocation,
       }),
     ).toXDR('base64')

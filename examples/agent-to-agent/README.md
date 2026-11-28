@@ -5,7 +5,7 @@ An **orchestrator agent** breaks a document into chunks, then pays a **specialis
 ## What this covers
 
 - Agent-to-agent payments where the payer is itself an autonomous agent
-- Building a specialist provider with `routedockHono` and a custom GET handler
+- Building a specialist provider with `routedockHono` and a custom POST handler that reads a JSON body
 - `RouteDockClient` on the orchestrator side paying another agent's endpoint
 - Aggregating paid results into a final output
 - Independent keypairs for orchestrator and specialist
@@ -90,12 +90,18 @@ pnpm start
 [done] agent-to-agent task complete
 ```
 
+## The paid request
+
+The orchestrator calls `pay()` with `request: { method: 'POST', headers, body: JSON.stringify({ text }) }`, and the same body is replayed on the unpaid probe and the paid request. The provider's manifest declares `POST /summarise`, the Hono app registers `app.post('/summarise')` and reads `await c.req.json()`. Keep all three in step: the payment middleware settles *before* it hands off to your route, so a method the app does not route turns a paid request into a paid 404. `pay()` refuses a method the manifest did not declare for the path (`RouteDockManifestError`) before it signs anything.
+
+`pnpm --filter @routedock/routedock build && node --experimental-strip-types --test examples/__tests__/routes.test.ts` checks this for both examples without funds.
+
 ## Architecture
 
 ```
 Orchestrator Agent                 Specialist Sub-Agent
   RouteDockClient ──── x402 ───────► routedockHono middleware
-  (ORCHESTRATOR_SECRET)              └─ GET /summarise handler
+  (ORCHESTRATOR_SECRET)              └─ POST /summarise handler (JSON body { text })
                                      (SPECIALIST_SECRET)
 ```
 
@@ -103,7 +109,7 @@ Each agent has its own funded Stellar keypair. The orchestrator's wallet is debi
 
 ## Extending this pattern
 
-- Replace the canned summariser with a real LLM call inside the specialist's `GET /summarise` handler.
+- Replace the canned summariser with a real LLM call inside the specialist's `POST /summarise` handler.
 - Add more specialist agents (e.g., `/translate`, `/classify`) — the orchestrator calls each one independently.
 - Switch to `mpp-session` if the orchestrator needs to stream many sub-results from a single specialist — see `streaming-orderbook-agent` for the session pattern.
 - Deploy orchestrator and specialist as separate services. Set `SPECIALIST_URL` to the specialist's public base URL and `START_MOCK_SPECIALIST=false` in the orchestrator environment.

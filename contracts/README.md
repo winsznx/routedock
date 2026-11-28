@@ -35,6 +35,15 @@ The old immediate `upgrade(new_wasm_hash)` entry point has been removed. A contr
 
 This mechanism gives users notice before the enforcement code changes. It does **not** make the single-admin model trustless: the admin can still rotate agent keys and change caps, allowlists, expiry, and freeze state. Every target Wasm hash must be reviewed, and operators should monitor upgrade events.
 
+### Recording session settlements
+
+`record_session_settlement(channel_id, payer, payee, cumulative_amount, voucher_count)` emits `session_settled`. It is signed by the allowlisted `payee`, not the admin.
+
+- **Frozen vaults reject it.** The call fails with `ContractFrozen` before any auth check, so freeze stops settlement records as well as agent transfers.
+- **Once per channel.** A persistent per-`channel_id` marker (its TTL tracks the instance TTL) makes a second call for the same channel fail with `SettlementAlreadyRecorded` (error code 17, appended after the existing codes 1-16) and emit nothing. Because the marker is keyed by `channel_id` alone, whichever allowlisted payee records a channel first owns that channel's record.
+- **Instance TTL.** The call bumps the instance TTL after its auth check, like the admin entrypoints.
+- **Payee-asserted fields.** `payer`, `cumulative_amount` and `voucher_count` are supplied by the payee and are **not verified on-chain**. Unlike `payment_authorized`, which comes from `__check_auth` and reflects enforced spend, `session_settled` should be checked against the channel close transaction before it is trusted for reconciliation. Binding them to the channel contract would need a cross-contract read of the channel state and is not done here.
+
 ### Prerequisites
 
 - Rust 1.94.1 for the repository's locked Soroban dependency graph
