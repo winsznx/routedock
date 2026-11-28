@@ -73,7 +73,8 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const endpoint = req.path || req.originalUrl
+      const endpoint =
+        (req.originalUrl ?? `${req.baseUrl ?? ''}${req.path ?? ''}`).split('?')[0] || '/'
       const assetContract = resolveAssetContract(
         opts.manifest,
         'mpp-charge',
@@ -117,7 +118,7 @@ export function createMppChargeHandler(opts: MppChargeHandlerOptions): RequestHa
         },
         {
           method: req.method,
-          path: req.originalUrl.split('?')[0]!,
+          path: endpoint,
           amount: amountHumanReadable,
           payTo: recipient,
         },

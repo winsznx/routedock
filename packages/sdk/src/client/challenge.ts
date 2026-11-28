@@ -13,10 +13,16 @@ import { resolvePayee } from '../internal/payee.js'
  * correctly signed manifest priced at 0.0001 USDC and then demand 1000 USDC,
  * payable to any address, in any SAC token the agent holds. These validators
  * are the client-side guard: every field that ends up in the signed transfer
- * (network, payee, asset, amount) is compared against the manifest.
+ * (network, payee, asset, amount) is compared against the manifest. Multi-asset
+ * callers supply the contract selected for the payment's mode and endpoint.
  */
 
 export type Caip2Network = 'stellar:testnet' | 'stellar:pubnet'
+
+export interface ChallengePolicyOptions {
+  /** Asset contract selected from the signed manifest for the request endpoint. */
+  assetContract?: string
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -63,6 +69,7 @@ export function checkX402Accept(
   manifest: RouteDockManifest,
   network: Caip2Network,
   maxAmount: string,
+  policy?: ChallengePolicyOptions,
 ): RouteDockPolicyRejectError | null {
   if (accept.network !== network) {
     return new RouteDockPolicyRejectError('challenge_network_mismatch')
@@ -70,7 +77,7 @@ export function checkX402Accept(
   if (accept.payTo !== resolvePayee(manifest, 'x402')) {
     return new RouteDockPolicyRejectError('challenge_payee_mismatch')
   }
-  if (accept.asset !== manifest.asset_contract) {
+  if (accept.asset !== (policy?.assetContract ?? manifest.asset_contract)) {
     return new RouteDockPolicyRejectError('challenge_asset_mismatch')
   }
   return checkAmount(accept.amount, maxAmount)
@@ -85,8 +92,9 @@ export function filterX402Accepts(
   manifest: RouteDockManifest,
   network: Caip2Network,
   maxAmount: string,
+  policy?: ChallengePolicyOptions,
 ): PaymentRequirements[] {
-  return accepts.filter((accept) => checkX402Accept(accept, manifest, network, maxAmount) === null)
+  return accepts.filter((accept) => checkX402Accept(accept, manifest, network, maxAmount, policy) === null)
 }
 
 /**
@@ -101,6 +109,7 @@ export function checkChargeChallenge(
   manifest: RouteDockManifest,
   network: Caip2Network,
   maxAmount: string,
+  policy?: ChallengePolicyOptions,
 ): RouteDockPolicyRejectError | null {
   const methodDetails = request['methodDetails']
   const rawNetwork = isRecord(methodDetails) ? methodDetails['network'] : undefined
@@ -115,7 +124,7 @@ export function checkChargeChallenge(
   }
 
   const currency = request['currency']
-  if (typeof currency !== 'string' || currency !== manifest.asset_contract) {
+  if (typeof currency !== 'string' || currency !== (policy?.assetContract ?? manifest.asset_contract)) {
     return new RouteDockPolicyRejectError('challenge_asset_mismatch')
   }
 

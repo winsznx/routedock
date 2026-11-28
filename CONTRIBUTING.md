@@ -165,6 +165,10 @@ Typically that means:
 - anything requiring `AGENT_SECRET` or a funded testnet account
 - repository or organisation settings
 
+### Branch protection & merge queue (`main`)
+
+`.github/workflows/ci.yml` declares a `merge_group:` trigger alongside `push` and `pull_request` so all eight required CI contexts (`lint`, `sdk-tests`, `app-build`, `contract-tests`, `contract-wasm`, `dependency-audit`, `actionlint`, `typecheck`) run against merge-queue commits. To prevent PRs built against a stale `main` from merging untested combinations, a maintainer should enable the **Merge queue** rule (or set `strict_required_status_checks_policy: true` — "Require branches to be up to date before merging") on the `main protection` ruleset (`Settings → Rules → Rulesets → main protection`).
+
 ## Getting help
 
 Comment on the issue. A partial PR with a clear question beats a silent stall.

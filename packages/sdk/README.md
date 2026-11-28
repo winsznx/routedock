@@ -80,6 +80,19 @@ The cap is a single USDC total. If the asset selected for a payment is not
 USDC total. USDC-only providers are unaffected. See
 `docs/MULTI_ASSET_SUPPORT.md`.
 
+### Endpoint-scoped assets
+
+For manifests with `assets[]`, `pay()` and `estimateCost()` select only modes
+that have an eligible asset for the request URL. Default ordering, cost
+optimization, and session preferences apply after this filtering. A forced
+mode without an eligible asset throws `RouteDockNoSupportedModeError`.
+
+`preflight(url)` returns only eligible modes and their costs. The payment
+challenge must use the selected asset's contract; a root USDC contract cannot
+replace an endpoint's scoped XLM contract. Single-asset manifests keep their
+existing behavior. Standalone `selectMode(manifest, { endpoint: url })` uses
+the same filtering; `pay()` and `estimateCost()` always use their actual URL.
+
 ### Durable spend cap
 
 The `spendCap` is enforced via a pluggable `SpendStore` (`read()` / `write()`).
@@ -139,6 +152,34 @@ const store: SpendStore = {
   async update(fn) { /* ... */ },
 }
 ```
+
+### Agent vault (on-chain spend policies)
+
+Pay from an AgentVault contract account (`C...`) instead of a plain keypair, so the
+vault's on-chain policies (daily cap, payee allowlist, session expiry, per-payee
+and lifetime caps, freeze) apply to every payment:
+
+```ts
+const client = new RouteDockClient({
+  wallet: feePayerKeypair,
+  network: 'testnet',
+  vault: {
+    mode: 'agent-vault',
+    vaultContract: 'C...',   // the deployed AgentVault
+    agentSecret: 'S...',     // the ed25519 key registered on the vault as agent_pk
+  },
+})
+```
+
+- **x402 only.** `mpp-charge` and `mpp-session` / `mpp-session-ws` throw a clear
+  error: the session channel address is not on the vault allowlist and the vault
+  rejects create-contract contexts.
+- The provider's manifest must be on the same network and, if it declares a
+  `vault`, declare `agent-vault`.
+- The payment is simulated again after signing, which is when the vault runs its
+  policies. A refusal surfaces as `RouteDockPolicyRejectError` with `reason`
+  `vault_session_expired` (`#3`), `vault_daily_cap_exceeded` (`#4`),
+  `vault_payee_not_allowed` (`#5`) or `vault_frozen` (`#9`).
 
 ## Provider Usage
 
@@ -456,7 +497,18 @@ ctx.waitUntil(
 )
 ```
 
-This writes to the `providers` table from migration `001_init.sql`.
+This writes to the `providers` table from migration `001_init.sql`, plus the
+columns added by `009_providers_verified_guard.sql`.
+
+Registering never marks a provider verified. `registerProvider` does not send
+`verified`, new rows start unverified, and a database trigger rejects any change
+to `providers.verified` unless the session is a member of the `routedock_admin`
+role (the service key your provider uses is not). An operator verifies a
+provider by hand; the `verified` option is deprecated and ignored.
+
+If the stored manifest digest already matches, `registerProvider` skips the
+write, and refreshes `last_seen_at` at most once per `touchIntervalMs`
+(default one hour).
 
 ### Serving `mpp-session-ws`
 
@@ -608,17 +660,26 @@ function PriceButton() {
 }
 ```
 
-### `useSession(url)`
+### `useSession(url, options?)`
 
 ```tsx
 import { useEffect } from 'react'
 import { useSession } from '@routedock/routedock/react'
 
 function StreamingFeed() {
-  const { open, close, status, vouchers, cumulative } = useSession(
+  const { open, stream, close, status, vouchers, cumulative } = useSession(
     'https://provider.example.com/stream/orderbook',
+    { mode: 'mpp-session-ws', maxDurationMs: 60_000 },
   )
-  useEffect(() => { void open() }, [])
+  useEffect(() => {
+    void (async () => {
+      const handle = await open()
+      if (!handle) return
+      for await (const tick of stream()) {
+        console.log(tick)
+      }
+    })()
+  }, [open, stream])
   return (
     <div>
       <p>Status: {status} — vouchers: {vouchers} — paid: {cumulative} USDC</p>
@@ -628,7 +689,7 @@ function StreamingFeed() {
 }
 ```
 
-The hook automatically fires `session.close()` in the background on unmount when status is `open` (best-effort settlement).
+Pass `SessionOptions` (`mode`, `maxDurationMs`, `store`) as the second argument to pick `mpp-session-ws`, adjust the lifetime guard, or persist channel state. Iterating through the hook's `stream(streamOptions?)` wrapper updates `vouchers` and `cumulative` live as each item arrives (or call `refreshStats()` when iterating `session.stream()` directly). The hook subscribes to `session:timeout`, `session:closed`, and `session:close-failed` so auto-close transitions `status` cleanly without double-closing on manual `close()` or unmount, and automatically fires `session.close()` in the background on unmount while a session is still open (best-effort settlement).
 
 ### `useTxLog(filter?)`
 
@@ -651,7 +712,7 @@ function ActivityFeed({ channelId }: { channelId: string }) {
 |---|---|---|
 | `useRouteDockClient(config)` | Memoized `RouteDockClient` | — (creator hook) |
 | `usePay(url, options?)` | `{ pay, result, loading, error }` | `client` |
-| `useSession(url)` | `{ session, status, vouchers, cumulative, error, open, close }` | `client` (with `commitmentSecret`) |
+| `useSession(url, options?)` | `{ session, status, vouchers, cumulative, error, open, close, stream, refreshStats }` | `client` (with `commitmentSecret`) |
 | `useTxLog(filter?)` | `TxLogRow[]` (newest first) | `supabase` |
 
 React is a peer dependency — install `react@^18` (or `^19`) in your app.

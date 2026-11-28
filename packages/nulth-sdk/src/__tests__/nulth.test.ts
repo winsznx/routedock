@@ -25,7 +25,13 @@ const OTHER_ASSET = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
 const WITNESS = 'test-witness-secret'
 
 /** Build a real Soroban authorization preimage for a SEP-41 `transfer` call. */
-function transferPreimage(asset: string, from: string, to: string, amount: bigint): string {
+function transferPreimage(
+  asset: string,
+  from: string,
+  to: string,
+  amount: bigint,
+  expirationLedger = 300,
+): string {
   const invocation = new xdr.SorobanAuthorizedInvocation({
     function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
       new xdr.InvokeContractArgs({
@@ -44,7 +50,7 @@ function transferPreimage(asset: string, from: string, to: string, amount: bigin
     new xdr.HashIdPreimageSorobanAuthorization({
       networkId: hash(Buffer.from(Networks.TESTNET)),
       nonce: xdr.Int64.fromString('1'),
-      signatureExpirationLedger: 300,
+      signatureExpirationLedger: expirationLedger,
       invocation,
     }),
   ).toXDR('base64')
@@ -569,4 +575,72 @@ console.log('✓ mainnet rejects the insecure mock prover at construction')
     )
   }
   console.log('✓ paymentContextFromManifest honours the per-mode payee override')
+}
+
+// ── signAuthEntry bounds the entry's signatureExpirationLedger (#735) ────────
+
+{
+  const LEDGER = 1_000
+  function makeSigner(extra: { expiryLedger?: number; authExpiryWindowLedgers?: number } = {}) {
+    const signerConfig = {
+      nulthAccount: NULTH_ACCOUNT,
+      network: 'testnet' as const,
+      policy: createPolicyState({
+        dailyCapUsdc: '1.00',
+        allowedPayees: [PAYEE_A],
+        witnessSecret: WITNESS,
+        ...(extra.expiryLedger !== undefined ? { expiryLedger: extra.expiryLedger } : {}),
+        ledgerSequence: LEDGER,
+      }),
+      ...(extra.authExpiryWindowLedgers !== undefined
+        ? { authExpiryWindowLedgers: extra.authExpiryWindowLedgers }
+        : {}),
+    }
+    setNulthPaymentContext(signerConfig, {
+      payee: PAYEE_A,
+      amountStroops: 5_000n,
+      assetContract: USDC,
+      ledgerSequence: LEDGER,
+    })
+    return createNulthSigner(signerConfig)
+  }
+  const entry = (exp: number) => transferPreimage(USDC, NULTH_ACCOUNT, PAYEE_A, 5_000n, exp)
+  const isExpiry = (err: unknown) =>
+    err instanceof NulthPolicyError && err.code === 'auth_expiry_out_of_policy'
+
+  await assert.rejects(
+    () => makeSigner({ expiryLedger: LEDGER + 10 }).signAuthEntry(entry(LEDGER + 3_000_000)),
+    isExpiry,
+    'refuses an expiration above policy.expiryLedger',
+  )
+  await assert.rejects(
+    () => makeSigner({ expiryLedger: LEDGER + 10 }).signAuthEntry(entry(LEDGER + 11)),
+    isExpiry,
+    'refuses an expiration one ledger above policy.expiryLedger',
+  )
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(entry(LEDGER - 1)),
+    isExpiry,
+    'refuses an expiration below ledgerSequence',
+  )
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(entry(LEDGER + 121)),
+    isExpiry,
+    'refuses an expiration past the default window',
+  )
+  await assert.rejects(
+    () => makeSigner({ authExpiryWindowLedgers: 5 }).signAuthEntry(entry(LEDGER + 6)),
+    isExpiry,
+    'honours a custom window',
+  )
+  await assert.rejects(
+    () => makeSigner().signAuthEntry(entry(17_280 + 5)),
+    isExpiry,
+    'refuses an expiration in a different day bucket',
+  )
+  const ok = await makeSigner({ expiryLedger: LEDGER + 50 }).signAuthEntry(entry(LEDGER + 12))
+  assert.ok(ok.signedAuthEntry, 'entry inside the window and before expiryLedger still signs')
+  const okEdge = await makeSigner().signAuthEntry(entry(LEDGER + 120))
+  assert.ok(okEdge.signedAuthEntry, 'entry at the window edge still signs')
+  console.log('✓ signAuthEntry enforces the auth expiration window')
 }

@@ -1,6 +1,6 @@
 {
   "name": "@routedock/mcp-server",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "MCP server for RouteDock Stellar payments - exposes payment tools to LLM agents",
   "license": "MIT",
   "homepage": "https://github.com/winsznx/routedock/tree/main/packages/mcp-server#readme",
@@ -36,8 +36,8 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@routedock/routedock": "workspace:^",
     "@stellar/stellar-sdk": "^14.6.1",
-    "@supabase/supabase-js": "^2.47.0",
-    "dotenv": "^17.4.2"
+    "@supabase/supabase-js": "^2.119.2",
+    "dotenv": "^18.0.10"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
