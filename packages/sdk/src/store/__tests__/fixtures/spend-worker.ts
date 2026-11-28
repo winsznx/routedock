@@ -1,7 +1,7 @@
 /**
  * Child process for the multi-process spend-cap test (#562).
  *
- * Usage: spend-worker.ts <spendFile> <attempts> <amountUsdc> <dailyCapUsdc> <startAtEpochMs>
+ * Usage: spend-worker.ts <spendFile> <attempts> <amountUsdc> <dailyCapUsdc> <startAtEpochMs> <walletSecret>
  *
  * Builds a real RouteDockClient on a FileSpendStore pointing at the shared file,
  * waits until `startAtEpochMs` so every worker races at once, then tries to
@@ -13,13 +13,13 @@ import { RouteDockClient } from '../../../client/RouteDockClient.js'
 import { RouteDockPolicyRejectError } from '../../../errors.js'
 import { FileSpendStore } from '../../FileSpendStore.js'
 
-const [spendFile, attemptsArg, amount, dailyCap, startAtArg] = process.argv.slice(2)
-if (!spendFile || !attemptsArg || !amount || !dailyCap || !startAtArg) {
-  throw new Error('usage: spend-worker <spendFile> <attempts> <amountUsdc> <dailyCapUsdc> <startAtMs>')
+const [spendFile, attemptsArg, amount, dailyCap, startAtArg, walletSecret] = process.argv.slice(2)
+if (!spendFile || !attemptsArg || !amount || !dailyCap || !startAtArg || !walletSecret) {
+  throw new Error('usage: spend-worker <spendFile> <attempts> <amountUsdc> <dailyCapUsdc> <startAtMs> <walletSecret>')
 }
 
 const client = new RouteDockClient({
-  wallet: Keypair.random(),
+  wallet: Keypair.fromSecret(walletSecret), // every worker shares one wallet, so one cap
   network: 'testnet',
   spendCap: { daily: dailyCap, asset: 'USDC' },
   spendStore: new FileSpendStore(spendFile),

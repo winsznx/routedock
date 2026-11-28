@@ -74,6 +74,18 @@ export function parseDailySpend(value: unknown): DailySpend | null {
   return { date: record.date, totalMicros: record.totalMicros, endpoints: { ...record.endpoints } }
 }
 
+/**
+ * Identifies whose spend an accumulator belongs to. `RouteDockClient` derives it
+ * from the network, the paying wallet and the cap asset, so clients that share
+ * one backing store never share a cap.
+ */
+export type SpendScope = string
+
+/** Build the {@link SpendScope} key `${network}:${walletPublicKey}:${asset}`. */
+export function spendScopeKey(network: string, walletPublicKey: string, asset: string): SpendScope {
+  return `${network}:${walletPublicKey}:${asset}`
+}
+
 // ── Interface ──────────────────────────────────────────────────────────────────
 
 /**
@@ -92,6 +104,15 @@ export function parseDailySpend(value: unknown): DailySpend | null {
  * signed, and the stored state is left untouched. A custom store should
  * likewise treat a missing record as `null` and a damaged one as an error.
  *
+ * ### Per-scope accounting
+ * A cap bounds one wallet's spend on one network in one asset. `RouteDockClient`
+ * therefore passes a {@link SpendScope} (`${network}:${walletPublicKey}:${asset}`)
+ * to every call, and a store must keep a separate accumulator per scope: a
+ * testnet run must not eat into a mainnet budget, and two wallets sharing one
+ * file must not share one cap. The `scope` argument is optional so a custom store
+ * written against the older single-accumulator shape still compiles and keeps
+ * working, but it then pools every client that uses it into one cap.
+ *
  * ### Sharing a store between processes
  * The client serializes its own read → check → write with an in-memory mutex,
  * but that only protects one `RouteDockClient` instance. If more than one
@@ -104,10 +125,10 @@ export function parseDailySpend(value: unknown): DailySpend | null {
  * instead of `read()` + `write()` whenever it is present.
  */
 export interface SpendStore {
-  /** Return the persisted accumulator, or null if none has been written yet. */
-  read(): Promise<DailySpend | null>
-  /** Persist the accumulator. */
-  write(state: DailySpend): Promise<void>
+  /** Return the persisted accumulator for `scope`, or null if none has been written yet. */
+  read(scope?: SpendScope): Promise<DailySpend | null>
+  /** Persist the accumulator for `scope`. */
+  write(state: DailySpend, scope?: SpendScope): Promise<void>
   /**
    * Atomically read-modify-write the accumulator. Optional, but required for
    * stores shared across processes (see above).
@@ -123,10 +144,14 @@ export interface SpendStore {
    */
   update?(
     fn: (prev: DailySpend | null) => DailySpend | undefined,
+    scope?: SpendScope,
   ): Promise<DailySpend | null>
 }
 
 // ── In-memory implementation (default) ──────────────────────────────────────────
+
+/** Scope used when a caller does not pass one (single-accumulator use). */
+export const DEFAULT_SCOPE: SpendScope = 'default'
 
 export interface InMemorySpendStoreOptions {
   /** Log a startup warning about non-durability. Defaults to true. */
@@ -141,7 +166,7 @@ export interface InMemorySpendStoreOptions {
  * Use this only for development; inject a persistent store in production.
  */
 export class InMemorySpendStore implements SpendStore {
-  private state: DailySpend | null = null
+  private readonly state = new Map<SpendScope, DailySpend>()
 
   constructor(options: InMemorySpendStoreOptions = {}) {
     if (options.warn !== false) {
@@ -154,12 +179,21 @@ export class InMemorySpendStore implements SpendStore {
     }
   }
 
-  async read(): Promise<DailySpend | null> {
-    return this.state ? { ...this.state, endpoints: { ...this.state.endpoints } } : null
+  /**
+   * With no `scope`, returns the default-scope record, or the sole record when
+   * exactly one scope has been written — a convenience for inspecting the store
+   * of a single client. Pass a scope to read one explicitly.
+   */
+  async read(scope?: SpendScope): Promise<DailySpend | null> {
+    const state =
+      scope !== undefined
+        ? this.state.get(scope)
+        : (this.state.get(DEFAULT_SCOPE) ?? (this.state.size === 1 ? [...this.state.values()][0] : undefined))
+    return state ? { ...state, endpoints: { ...state.endpoints } } : null
   }
 
-  async write(state: DailySpend): Promise<void> {
-    this.state = { ...state, endpoints: { ...state.endpoints } }
+  async write(state: DailySpend, scope: SpendScope = DEFAULT_SCOPE): Promise<void> {
+    this.state.set(scope, { ...state, endpoints: { ...state.endpoints } })
   }
 }
 

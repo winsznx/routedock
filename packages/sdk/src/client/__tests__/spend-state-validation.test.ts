@@ -17,11 +17,20 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient } from '../RouteDockClient.js'
 import { RouteDockPolicyRejectError } from '../../errors.js'
 import { FileSpendStore } from '../../store/FileSpendStore.js'
-import { InMemorySpendStore, parseDailySpend, type DailySpend, type SpendStore } from '../../store/SpendStore.js'
+import {
+  InMemorySpendStore,
+  parseDailySpend,
+  spendScopeKey,
+  type DailySpend,
+  type SpendStore,
+} from '../../store/SpendStore.js'
 import type { RouteDockLogger } from '../../internal/logger.js'
 
 const today = new Date().toISOString().slice(0, 10)
 const ORIGIN = 'https://provider.test'
+// One fixed wallet, so tests can address the client's scoped accumulator (#763).
+const WALLET = Keypair.random()
+const SCOPE = spendScopeKey('testnet', WALLET.publicKey(), 'USDC')
 
 type Internals = {
   _checkAndReserveSpend(amount: string, endpointKey: string, asset: string): Promise<string>
@@ -30,7 +39,7 @@ type Internals = {
 
 const clientOn = (spendStore: SpendStore, extra: { logger?: RouteDockLogger } = {}) =>
   new RouteDockClient({
-    wallet: Keypair.random(),
+    wallet: WALLET,
     network: 'testnet',
     spendCap: { daily: '1', asset: 'USDC', endpointCaps: { [ORIGIN]: '1' } },
     spendStore,
@@ -113,16 +122,16 @@ describe('FileSpendStore spend file with the wrong shape', () => {
   it('a missing file (ENOENT) still means zero spend', async () => {
     const filePath = path.join(tmpDir, 'absent.json')
     const store = new FileSpendStore(filePath)
-    assert.equal(await store.read(), null)
+    assert.equal(await store.read(SCOPE), null)
     await clientOn(store)._checkAndReserveSpend('0.5', ORIGIN, 'USDC')
-    assert.equal((await store.read())?.totalMicros, '5000000')
+    assert.equal((await store.read(SCOPE))?.totalMicros, '5000000')
   })
 
   it('a valid file is accepted and accumulates', async () => {
     const filePath = path.join(tmpDir, 'valid.json')
     await fs.writeFile(filePath, JSON.stringify({ date: today, totalMicros: '4000000', endpoints: {} }), 'utf-8')
     await clientOn(new FileSpendStore(filePath))._checkAndReserveSpend('0.5', ORIGIN, 'USDC')
-    assert.equal((await new FileSpendStore(filePath).read())?.totalMicros, '9000000')
+    assert.equal((await new FileSpendStore(filePath).read(SCOPE))?.totalMicros, '9000000')
   })
 })
 
@@ -181,13 +190,13 @@ describe('rollback never goes negative', () => {
 
     const reserveId = await client._checkAndReserveSpend('0.5', ORIGIN, 'USDC')
     // The accumulator drops below the reservation (reset, hand edit, other process).
-    await store.write({ date: today, totalMicros: '1000000', endpoints: { [ORIGIN]: '1000000' } })
+    await store.write({ date: today, totalMicros: '1000000', endpoints: { [ORIGIN]: '1000000' } }, SCOPE)
     // Reserve a second amount, then shrink the state so the release would go negative.
-    await store.write({ date: today, totalMicros: '100', endpoints: { [ORIGIN]: '100' } })
+    await store.write({ date: today, totalMicros: '100', endpoints: { [ORIGIN]: '100' } }, SCOPE)
 
     await client._rollbackSpend(reserveId)
 
-    const after = await store.read()
+    const after = await store.read(SCOPE)
     assert.equal(after?.totalMicros, '0')
     assert.equal(after?.endpoints[ORIGIN], undefined, 'a per-endpoint total at or below zero is removed')
     assert.equal(logs.filter(([level]) => level === 'warn').length, 1)
@@ -200,7 +209,7 @@ describe('rollback never goes negative', () => {
     const client = clientOn(store, { logger: (_level, message) => void logs.push(message) })
     const reserveId = await client._checkAndReserveSpend('0.5', ORIGIN, 'USDC')
     await client._rollbackSpend(reserveId)
-    assert.equal((await store.read())?.totalMicros, '0')
+    assert.equal((await store.read(SCOPE))?.totalMicros, '0')
     assert.deepEqual(logs, [])
   })
 
@@ -208,8 +217,8 @@ describe('rollback never goes negative', () => {
     const store = new InMemorySpendStore({ warn: false })
     const client = clientOn(store)
     const reserveId = await client._checkAndReserveSpend('0.5', ORIGIN, 'USDC')
-    await store.write({ date: today, totalMicros: '-5', endpoints: {} })
+    await store.write({ date: today, totalMicros: '-5', endpoints: {} }, SCOPE)
     await assert.rejects(client._rollbackSpend(reserveId), isStateInvalid)
-    assert.equal((await store.read())?.totalMicros, '-5', 'left as found')
+    assert.equal((await store.read(SCOPE))?.totalMicros, '-5', 'left as found')
   })
 })

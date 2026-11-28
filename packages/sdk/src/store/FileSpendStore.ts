@@ -1,8 +1,42 @@
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { resolveLogger, type RouteDockLogger } from '../internal/logger.js'
 import { RouteDockPolicyRejectError } from '../errors.js'
-import { SPEND_STATE_INVALID, describeSpendStateProblem, type DailySpend, type SpendStore } from './SpendStore.js'
+import {
+  DEFAULT_SCOPE,
+  SPEND_STATE_INVALID,
+  describeSpendStateProblem,
+  type DailySpend,
+  type SpendScope,
+  type SpendStore,
+} from './SpendStore.js'
+
+/** On-disk format: one {@link DailySpend} per scope. */
+interface SpendFile {
+  version: 2
+  scopes: Record<SpendScope, DailySpend>
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Expand a leading `~` to the home directory and resolve to an absolute path.
+ * `fs` does not expand `~` (neither does dotenv), so an unexpanded
+ * `~/.routedock/spend.json` would otherwise create a directory literally named
+ * `~` under the working directory.
+ */
+export function resolveSpendFilePath(filePath: string): string {
+  const expanded =
+    filePath === '~'
+      ? os.homedir()
+      : filePath.startsWith('~/') || filePath.startsWith('~\\')
+        ? path.join(os.homedir(), filePath.slice(2))
+        : filePath
+  return path.resolve(expanded)
+}
 
 /** Tuning for the cross-process lock that guards read-modify-write. */
 export interface FileSpendStoreOptions {
@@ -18,6 +52,8 @@ export interface FileSpendStoreOptions {
    * than `lockStaleMs` to survive a crashed holder. Default 15 000 ms.
    */
   lockTimeoutMs?: number
+  /** Log sink for the one-time legacy-file migration notice. Defaults to the console. */
+  logger?: RouteDockLogger
 }
 
 const DEFAULT_LOCK_STALE_MS = 10_000
@@ -30,6 +66,20 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  *
  * Persists the daily spend accumulator to a JSON file on disk, preserving
  * cumulative spending totals across process restarts, crashes, and redeploys.
+ *
+ * ### Per-scope accounting
+ * The file holds one accumulator per {@link SpendScope}
+ * (`${network}:${walletPublicKey}:${asset}`, supplied by `RouteDockClient`):
+ * `{ "version": 2, "scopes": { "<scope>": { date, totalMicros, endpoints } } }`.
+ * Clients on different networks or wallets can share one path and each enforce
+ * only their own spend. A file written before scoping existed (a single bare
+ * accumulator) is adopted by the first scope that reads it, so today's total is
+ * not lost; it is rewritten in the new format on the next update, and a one-time
+ * info line is logged.
+ *
+ * ### Path
+ * A leading `~` is expanded with `os.homedir()` and the path is resolved to an
+ * absolute one; {@link FileSpendStore.filePath} is the resolved path.
  *
  * ### Error semantics
  * - File absent (ENOENT): returns null — legitimately no spend recorded yet.
@@ -67,22 +117,33 @@ export class FileSpendStore implements SpendStore {
   private readonly lockPath: string
   private readonly lockStaleMs: number
   private readonly lockTimeoutMs: number
+  private readonly logger: RouteDockLogger
+  private migrationLogged = false
 
   constructor(filePath: string, options: FileSpendStoreOptions = {}) {
-    this.filePath = filePath
-    this.lockPath = `${filePath}.lock`
+    this.filePath = resolveSpendFilePath(filePath)
+    this.lockPath = `${this.filePath}.lock`
+    this.logger = resolveLogger(options.logger)
     this.lockStaleMs = options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
     this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS
   }
 
-  async read(): Promise<DailySpend | null> {
+  async read(scope: SpendScope = DEFAULT_SCOPE): Promise<DailySpend | null> {
+    return (await this.readFile(scope)).scopes[scope] ?? null
+  }
+
+  /**
+   * Read and normalize the file. A legacy single-accumulator file is mapped onto
+   * `scope` (the first scope to touch it adopts today's total).
+   */
+  private async readFile(scope: SpendScope): Promise<SpendFile> {
     let data: string
     try {
       data = await fs.readFile(this.filePath, 'utf-8')
     } catch (err) {
       // ENOENT is expected on first run — no spend recorded yet.
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null
+        return { version: 2, scopes: {} }
       }
       // Any other I/O error (permission denied, EISDIR, etc.) must throw.
       // A cap that cannot read its state should refuse to spend, not assume zero.
@@ -101,24 +162,46 @@ export class FileSpendStore implements SpendStore {
       )
     }
 
+    if (isRecord(parsed) && parsed['version'] === 2 && isRecord(parsed['scopes'])) {
+      const scopes = parsed['scopes']
+      for (const [key, value] of Object.entries(scopes)) {
+        const problem = describeSpendStateProblem(value)
+        if (problem !== null) throw this.invalidState(`record for scope "${key}"`, problem, data)
+      }
+      return { version: 2, scopes: scopes as Record<SpendScope, DailySpend> }
+    }
+
     // Valid JSON of the wrong shape (null, {}, [], a missing or negative total)
     // must fail closed too: casting it would reset the cap or grow its headroom.
     // Only an absent file (ENOENT above) means zero spend.
-    const problem = describeSpendStateProblem(parsed)
-    if (problem !== null) {
-      throw new RouteDockPolicyRejectError(SPEND_STATE_INVALID, {
-        cause: new Error(
-          `[FileSpendStore] Spend file at ${this.filePath} does not hold a valid spend record (${problem}). ` +
-            `Delete or repair it before resuming. Raw content: ${data.slice(0, 120)}`,
-        ),
-      })
+    const legacyProblem = describeSpendStateProblem(parsed)
+    if (legacyProblem !== null) throw this.invalidState('spend record', legacyProblem, data)
+
+    // Pre-scope file: carry today's total over into the reading client's scope.
+    if (!this.migrationLogged) {
+      this.migrationLogged = true
+      this.logger(
+        'info',
+        `[FileSpendStore] Migrating pre-scope spend file ${this.filePath} into scope "${scope}"`,
+      )
     }
-    return parsed as DailySpend
+    return { version: 2, scopes: { [scope]: parsed as DailySpend } }
   }
 
-  async write(state: DailySpend): Promise<void> {
+  private invalidState(what: string, problem: string, data: string): RouteDockPolicyRejectError {
+    return new RouteDockPolicyRejectError(SPEND_STATE_INVALID, {
+      cause: new Error(
+        `[FileSpendStore] Spend file at ${this.filePath} does not hold a valid ${what} (${problem}). ` +
+          `Delete or repair it before resuming. Raw content: ${data.slice(0, 120)}`,
+      ),
+    })
+  }
+
+  async write(state: DailySpend, scope: SpendScope = DEFAULT_SCOPE): Promise<void> {
     await this.withLock(async (assertHeld) => {
-      await this.writeFile(state, assertHeld)
+      const file = await this.readFile(scope)
+      file.scopes[scope] = state
+      await this.writeFile(file, assertHeld)
     })
   }
 
@@ -130,19 +213,22 @@ export class FileSpendStore implements SpendStore {
    */
   async update(
     fn: (prev: DailySpend | null) => DailySpend | undefined,
+    scope: SpendScope = DEFAULT_SCOPE,
   ): Promise<DailySpend | null> {
     return this.withLock(async (assertHeld) => {
-      const prev = await this.read()
+      const file = await this.readFile(scope)
+      const prev = file.scopes[scope] ?? null
       const next = fn(prev)
       if (next === undefined) return prev
-      await this.writeFile(next, assertHeld)
+      file.scopes[scope] = next
+      await this.writeFile(file, assertHeld)
       return next
     })
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
 
-  private async writeFile(state: DailySpend, assertHeld: () => Promise<void>): Promise<void> {
+  private async writeFile(state: SpendFile, assertHeld: () => Promise<void>): Promise<void> {
     const tmpPath = `${this.filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
     try {
       await fs.writeFile(tmpPath, JSON.stringify(state, null, 2), 'utf-8')
