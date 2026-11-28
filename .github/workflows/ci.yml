@@ -8,6 +8,39 @@ on:
   merge_group:
 
 jobs:
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: routedock_test
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d routedock_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres@localhost:5432/routedock_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply migrations and seed
+        run: bash scripts/check-migrations.sh
+      - name: Show publication tables
+        run: psql "$DATABASE_URL" -c "select tablename from pg_publication_tables where pubname='supabase_realtime' order by tablename;"
+      - name: Re-apply migrations added by this change
+        env:
+          MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.event.repository.default_branch }}
+        run: bash scripts/check-migrations.sh --reapply-new "$MIGRATION_BASE_SHA"
+
   contract-tests:
     runs-on: ubuntu-latest
     steps:

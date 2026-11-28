@@ -26,6 +26,31 @@ pnpm --filter @routedock/routedock build
 
 **Build order matters and is not optional.** `@routedock/routedock` depends on `nulth-sdk`'s output, and several packages import `@routedock/routedock/schema`, which resolves to the SDK's built `dist/` rather than its source. Skipping these two builds produces `ERR_MODULE_NOT_FOUND` in tests that pass for everyone else.
 
+### Database migrations
+
+New migrations must pass the migration check in CI. It applies every file in `supabase/migrations/` in order to a real Postgres with `ON_ERROR_STOP=1`, applies `supabase/seed.sql`, checks that `tx_log` is published and `sessions` is not, then re-applies migration files added by your PR. Guard new `CREATE TABLE`, `CREATE POLICY`, and `CREATE TRIGGER` statements so the second pass succeeds.
+
+To check against Supabase locally:
+
+```bash
+supabase start && supabase db reset
+DB=$(supabase status -o env | grep DB_URL | cut -d= -f2- | tr -d '"')
+psql "$DB" -c "select tablename from pg_publication_tables where pubname='supabase_realtime';"
+```
+
+To run the same check as CI against a disposable plain Postgres, using trust auth because the database is local and throwaway:
+
+```bash
+docker run --rm -d --name routedock-migrations \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=routedock_test \
+  -p 55432:5432 postgres:15
+DATABASE_URL=postgresql://postgres@localhost:55432/routedock_test \
+  bash scripts/check-migrations.sh
+DATABASE_URL=postgresql://postgres@localhost:55432/routedock_test \
+  bash scripts/check-migrations.sh --reapply-new "$(git merge-base origin/main HEAD)"
+docker rm -f routedock-migrations
+```
+
 ## Verify before you push
 
 One command runs the same things CI does, in the same order:
