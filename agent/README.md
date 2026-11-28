@@ -20,7 +20,7 @@ The agent executes the full autonomous payment workflow:
 | `PROVIDER_A_URL` | `http://localhost:3001` | URL for discrete price provider |
 | `PROVIDER_B_URL` | `http://localhost:3002` | URL for streaming orderbook provider |
 | `AGENT_DAILY_CAP_USDC` | `0.002` | Daily spending cap in USDC |
-| `AGENT_SPEND_STORE_PATH` | `~/.routedock/spend.json` | Path to persistent file spend store |
+| `AGENT_SPEND_STORE_PATH` | `<home>/.routedock/spend.json` | Path to persistent file spend store (a leading `~` is expanded to the home directory; the file is shared per wallet and network, so the agent's testnet spend never counts against an MCP server on mainnet) |
 | `COMMITMENT_SECRET` | Optional | Ed25519 commitment secret key for `mpp-session` |
 
 ## Spend Cap & Store Durability
@@ -34,6 +34,8 @@ The agent executes the full autonomous payment workflow:
 > Always pass a durable `SpendStore` (such as `FileSpendStore` pointing to disk, Redis, or SQL) via `spendStore` in `RouteDockClientConfig`:
 >
 > ```typescript
+> import os from 'node:os'
+> import path from 'node:path'
 > import { RouteDockClient } from '@routedock/routedock'
 > import { FileSpendStore } from '@routedock/routedock/node' // Node-only (node:fs)
 >
@@ -41,7 +43,7 @@ The agent executes the full autonomous payment workflow:
 >   wallet: keypair,
 >   network: 'testnet',
 >   spendCap: { daily: '10.0', asset: 'USDC' },
->   spendStore: new FileSpendStore('~/.routedock/spend.json'),
+>   spendStore: new FileSpendStore(path.join(os.homedir(), '.routedock', 'spend.json')),
 > })
 > ```
 

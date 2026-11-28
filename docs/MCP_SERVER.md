@@ -212,7 +212,7 @@ All tools return structured error responses:
 - `COMMITMENT_SECRET`: Optional - Wallet secret for opening payment channels in session mode.
 - `SUPABASE_URL`: Optional - Supabase project URL for the provider registry.
 - `SUPABASE_KEY`: Optional - Supabase anon key for the provider registry (use anon key, not service-role key).
-- `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Custom path for the spend tracking file (defaults to `~/.routedock/spend.json`).
+- `ROUTEDOCK_SPEND_STORE_PATH`: Optional - Custom path for the spend tracking file (defaults to `<home>/.routedock/spend.json`). A leading `~` is expanded to the home directory and the path is resolved to an absolute one, so it does not depend on the working directory the server was started from (`.env` files do not expand `~` themselves). The file keeps a separate daily total per network, wallet and asset, so sharing it with the example agent (testnet) does not mix their caps.
 - `ROUTEDOCK_ENV_FILE`: Optional - Path to an external `.env` file to load secrets from.
 
 ### Security

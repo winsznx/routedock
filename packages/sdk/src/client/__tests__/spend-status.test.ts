@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Keypair } from '@stellar/stellar-sdk'
 import { RouteDockClient } from '../RouteDockClient.js'
-import { InMemorySpendStore, type SpendStore } from '../../store/SpendStore.js'
+import { InMemorySpendStore, spendScopeKey, type SpendStore } from '../../store/SpendStore.js'
 import { FileSpendStore } from '../../store/FileSpendStore.js'
 
 const ORIGIN = 'https://api.example.com'
@@ -30,9 +30,13 @@ function internals(client: RouteDockClient): SpendInternals {
   return client as unknown as SpendInternals
 }
 
+// One fixed wallet, so a test can write straight to the client's scoped accumulator (#763).
+const WALLET = Keypair.random()
+const SCOPE = spendScopeKey('testnet', WALLET.publicKey(), 'USDC')
+
 function makeClient(store: SpendStore, spendCap?: ConstructorParameters<typeof RouteDockClient>[0]['spendCap']) {
   return new RouteDockClient({
-    wallet: Keypair.random(),
+    wallet: WALLET,
     network: 'testnet',
     spendStore: store,
     ...(spendCap ? { spendCap } : {}),
@@ -117,7 +121,7 @@ try {
         date: new Date().toISOString().slice(0, 10),
         totalMicros: '5000000', // 0.5 USDC, above the 0.10 cap
         endpoints: {},
-      })
+      }, SCOPE)
       const status = await client.getSpendStatus()
       assert.equal(status.spentToday, '0.5', `${label}: over-cap spend is reported as stored`)
       assert.equal(status.remainingToday, '0', `${label}: remaining is clamped at zero`)
@@ -127,7 +131,7 @@ try {
     {
       const store = makeStore()
       const client = makeClient(store, { daily: '1.00', asset: 'USDC' })
-      await store.write({ date: '2000-01-01', totalMicros: '9000000', endpoints: { [ORIGIN]: '9000000' } })
+      await store.write({ date: '2000-01-01', totalMicros: '9000000', endpoints: { [ORIGIN]: '9000000' } }, SCOPE)
       const status = await client.getSpendStatus()
       assert.equal(status.spentToday, '0', `${label}: stale day is not counted`)
       assert.equal(status.remainingToday, '1', `${label}: stale day does not reduce the budget`)

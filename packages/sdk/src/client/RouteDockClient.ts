@@ -17,7 +17,14 @@ import type { RetryPolicy } from '../internal/retry.js'
 import { USDC_ISSUERS, usdcToStroops, stroopsToUsdc } from '../internal/usdc.js'
 import { HORIZON_URLS } from '../network.js'
 import { resolveLogger } from '../internal/logger.js'
-import { InMemorySpendStore, parseDailySpend, type DailySpend, type SpendStore } from '../store/SpendStore.js'
+import {
+  InMemorySpendStore,
+  parseDailySpend,
+  spendScopeKey,
+  type DailySpend,
+  type SpendScope,
+  type SpendStore,
+} from '../store/SpendStore.js'
 import { getEligibleAssets, selectAsset } from '../internal/assetUtils.js'
 
 // Commitment secrets are stored here instead of on the instance so they never
@@ -247,7 +254,7 @@ export class RouteDockClient {
    * Pending spend reservations keyed by reserveId. Used by _rollbackSpend
    * to revert the accumulator when a payment fails after reservation.
    */
-  private _pendingReserves = new Map<string, { endpointKey: string; amountMicros: bigint }>()
+  private _pendingReserves = new Map<string, { endpointKey: string; amountMicros: bigint; scope: SpendScope }>()
 
   constructor(config: RouteDockClientConfig) {
     this.keypair =
@@ -733,7 +740,8 @@ export class RouteDockClient {
    * `daily` and `remainingToday` are `null`.
    */
   async getSpendStatus(): Promise<SpendStatus> {
-    const stored = await this._withSpendMutex(() => this.spendStore.read())
+    const scope = this.spendCap ? this._spendScope(this.spendCap) : undefined
+    const stored = parseDailySpend(await this._withSpendMutex(() => this.spendStore.read(scope)))
     const day = new Date().toISOString().slice(0, 10)
     const current = stored && stored.date === day ? stored : null
 
@@ -767,6 +775,14 @@ export class RouteDockClient {
   }
 
   /**
+   * Accumulator scope for this client: the cap bounds one wallet's spend on one
+   * network in one asset, so those three identify the record in a shared store.
+   */
+  private _spendScope(spendCap: SpendCap): SpendScope {
+    return spendScopeKey(this.network, this.keypair.publicKey(), spendCap.asset)
+  }
+
+  /**
    * Reserve spend against local daily caps BEFORE dispatching payment.
    * Returns a reserveId that must be passed to _commitSpend() on success
    * or _rollbackSpend() on failure.
@@ -787,6 +803,7 @@ export class RouteDockClient {
     this._assertCapAsset(asset)
 
     const spendCap = this.spendCap
+    const scope = this._spendScope(spendCap)
     const amountMicros = usdcToStroops(amount)
 
     // Pure function of the previous state: a store that retries (optimistic
@@ -834,12 +851,12 @@ export class RouteDockClient {
         // Atomic across processes: read, check and write happen under the
         // store's own lock, so two clients sharing one store cannot both pass
         // the check against the same total.
-        await store.update(reserve)
+        await store.update(reserve, scope)
       } else {
-        await store.write(reserve(await store.read()))
+        await store.write(reserve(await store.read(scope)), scope)
       }
       const reserveId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      this._pendingReserves.set(reserveId, { endpointKey, amountMicros })
+      this._pendingReserves.set(reserveId, { endpointKey, amountMicros, scope })
       return reserveId
     })
   }
@@ -864,7 +881,7 @@ export class RouteDockClient {
     if (!reserve) return
     this._pendingReserves.delete(reserveId)
 
-    const { endpointKey, amountMicros } = reserve
+    const { endpointKey, amountMicros, scope } = reserve
 
     // Pure function of the previous state (see _checkAndReserveSpend).
     // Returns undefined when there is nothing to roll back (e.g. day rollover).
@@ -897,10 +914,10 @@ export class RouteDockClient {
     await this._withSpendMutex(async () => {
       const store = this.spendStore
       if (store.update) {
-        await store.update(release)
+        await store.update(release, scope)
       } else {
-        const next = release(await store.read())
-        if (next) await store.write(next)
+        const next = release(await store.read(scope))
+        if (next) await store.write(next, scope)
       }
     })
 

@@ -1,5 +1,4 @@
 # @routedock/routedock
-
 Unified payment execution layer for autonomous agents on Stellar. One SDK for x402, MPP charge, and MPP session — mode selected automatically from the provider's `routedock.json` manifest.
 
 ## Requirements
@@ -126,12 +125,14 @@ On Node you can use the file-backed store instead. It depends on `node:fs`, so i
 lives in a Node-only entry point and is **not** exported from `/client`:
 
 ```ts
+import os from 'node:os'
+import path from 'node:path'
 import { RouteDockClient } from '@routedock/routedock/client'
 import { FileSpendStore } from '@routedock/routedock/node' // Node only (node:fs)
 
 const client = new RouteDockClient({
   // ...
-  spendStore: new FileSpendStore('~/.routedock/spend.json'),
+  spendStore: new FileSpendStore(path.join(os.homedir(), '.routedock', 'spend.json')),
 })
 ```
 
@@ -140,7 +141,7 @@ read → check → write, but that only protects one `RouteDockClient`. If two
 processes can use the same store (the MCP server and the example agent both
 default to `~/.routedock/spend.json`), a plain `read()` / `write()` store can
 lose updates and let the cap be exceeded. A shared store must implement the
-optional atomic `update(fn)` method, which the client uses automatically.
+optional atomic `update(fn, scope)` method, which the client uses automatically.
 `FileSpendStore` implements it with an exclusive lock file
 (`<file>.lock`, stale locks from crashed processes are broken after 10 s):
 
@@ -149,9 +150,23 @@ const store: SpendStore = {
   read, write,
   // fn(prev) returns the next state, or undefined to leave it unchanged.
   // Make the read, fn and write atomic (a transaction, CAS loop, lock, ...).
-  async update(fn) { /* ... */ },
+  async update(fn, scope) { /* ... */ },
 }
 ```
+
+**The cap is per wallet, network and asset.** The client passes a scope
+(`${network}:${walletPublicKey}:${asset}`) to the store, and `FileSpendStore`
+keeps one daily accumulator per scope in the file. A testnet demo run therefore
+never counts against a mainnet budget, and two wallets sharing one file each get
+their own cap. A file written by an older version (one bare accumulator) is
+adopted by the first client that reads it, so today's total is kept. A custom
+`SpendStore` may ignore the optional `scope` argument, but then it pools every
+client that uses it into one cap.
+
+`FileSpendStore` expands a leading `~` to the home directory and resolves the
+path to an absolute one (`store.filePath`), so `~/.routedock/spend.json` works
+even when it comes from a `.env` file. Prefer an absolute path in code, as above,
+so the location never depends on the working directory.
 
 ### Agent vault (on-chain spend policies)
 

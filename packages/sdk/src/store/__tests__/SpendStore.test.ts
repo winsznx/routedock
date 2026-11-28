@@ -80,3 +80,24 @@ describe('InMemorySpendStore', () => {
     assert.equal(typeof store.write, 'function')
   })
 })
+
+describe('InMemorySpendStore — scopes (#763)', () => {
+  const rec = (totalMicros: string): DailySpend => ({ date: '2026-06-26', totalMicros, endpoints: {} })
+
+  it('keeps one accumulator per scope', async () => {
+    const store = new InMemorySpendStore({ warn: false })
+    await store.write(rec('1'), 'testnet:A:USDC')
+    await store.write(rec('2'), 'mainnet:A:USDC')
+    assert.equal((await store.read('testnet:A:USDC'))?.totalMicros, '1')
+    assert.equal((await store.read('mainnet:A:USDC'))?.totalMicros, '2')
+    assert.equal(await store.read('testnet:B:USDC'), null)
+  })
+
+  it('an unscoped read returns the sole record, and null when several scopes exist', async () => {
+    const store = new InMemorySpendStore({ warn: false })
+    await store.write(rec('1'), 'a')
+    assert.equal((await store.read())?.totalMicros, '1')
+    await store.write(rec('2'), 'b')
+    assert.equal(await store.read(), null)
+  })
+})
