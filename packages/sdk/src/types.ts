@@ -268,9 +268,9 @@ export interface PreflightComplianceFlags {
 
 /** Result returned by client.preflight(url) — manifest compatibility check with no money movement */
 export interface UrlPreflightResult {
-  /** Payment modes supported by this provider */
+  /** Provider modes with an eligible asset for the requested URL; other modes are omitted. */
   modes: PaymentMode[]
-  /** Estimated cost for each supported mode */
+  /** Estimated cost for each asset-eligible mode */
   costs: PreflightModeCost[]
   /** Deprecation / sunset flags */
   compliance: PreflightComplianceFlags
