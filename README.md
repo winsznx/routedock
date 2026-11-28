@@ -311,6 +311,8 @@ export default app
 
 One middleware. Handles x402, MPP charge, and MPP session. Serves `routedock.json`. Verifies payments. Settles on-chain.
 
+Provider callbacks (`onSettled`, `onSessionOpen`, `onVoucher`, `onOrphaned`, and vault settlement recording) run detached from the response so a slow database write never blocks the paid request. On Cloudflare Workers the Hono adapter automatically registers each callback promise with the **current request's** `executionCtx.waitUntil()`, keeping it alive after the response is returned; the first `onVoucher` also waits for `onSessionOpen` before it runs. You can override this with the `waitUntil` option in `routedockHono({...})`. On Node/Bun where no execution context is available, callbacks simply float in the background as before.
+
 This example uses in-memory defaults for settlement idempotency and session
 state, which aren't safe once requests can land on different isolates or
 processes (Cloudflare Workers, Deno Deploy, or any multi-instance deployment).

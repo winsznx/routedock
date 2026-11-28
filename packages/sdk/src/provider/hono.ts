@@ -103,12 +103,40 @@ export interface RouteDockHonoOptions {
    */
   vaultSettlement?: VaultSettlementConfig
   /**
-   * Receives background promises (currently the vault settlement record) so
-   * the runtime keeps the request alive until they finish — pass
-   * `ctx.waitUntil` on Cloudflare Workers. Without it, settlement still runs
-   * but the runtime may evict the isolate before it completes.
+   * Receives background promises (settlement and billing callbacks) so the
+   * runtime keeps the request alive until they finish. On Workers this is
+   * picked up from the request's `executionCtx` automatically.
    */
   waitUntil?: (promise: Promise<unknown>) => void
+}
+
+type BackgroundContext = {
+  executionCtx?: { waitUntil?: (promise: Promise<unknown>) => void }
+}
+
+function background(
+  c: BackgroundContext | null,
+  promise: Promise<unknown>,
+  opts: Pick<RouteDockHonoOptions, 'waitUntil'>,
+): void {
+  if (opts.waitUntil) {
+    try {
+      opts.waitUntil(promise)
+      return
+    } catch {
+      void promise
+    }
+  }
+  try {
+    const ctx = c?.executionCtx
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(promise)
+      return
+    }
+  } catch {
+    void promise
+  }
+  void promise
 }
 
 function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
@@ -295,10 +323,13 @@ function createX402HonoHandler(opts: RouteDockHonoOptions): MiddlewareHandler {
       }
 
       if (txHash && opts.onSettled) {
-        Promise.resolve().then(() => opts.onSettled!(txHash!, x402Price, 'x402', payerAddress)).catch(err => {
-          logger('error', '[x402] onSettled callback error', { error: err })
-          opts.onCallbackError?.(err, 'onSettled')
-        })
+        const settled = Promise.resolve()
+          .then(() => opts.onSettled!(txHash!, x402Price, 'x402', payerAddress))
+          .catch((err) => {
+            logger('error', '[x402] onSettled callback error', { error: err })
+            opts.onCallbackError?.(err, 'onSettled')
+          })
+        background(c, settled, opts)
       }
 
       await next()
@@ -459,10 +490,13 @@ function createMppChargeHonoHandler(opts: RouteDockHonoOptions): MiddlewareHandl
       }
 
       if (reference && opts.onSettled) {
-        Promise.resolve().then(() => opts.onSettled!(reference!, chargePrice, 'mpp-charge', payerAddress)).catch(err => {
-          logger('error', '[mpp-charge] onSettled callback error', { error: err })
-          opts.onCallbackError?.(err, 'onSettled')
-        })
+        const settled = Promise.resolve()
+          .then(() => opts.onSettled!(reference!, chargePrice, 'mpp-charge', payerAddress))
+          .catch((err) => {
+            logger('error', '[mpp-charge] onSettled callback error', { error: err })
+            opts.onCallbackError?.(err, 'onSettled')
+          })
+        background(c, settled, opts)
       }
 
       await next()
@@ -512,9 +546,10 @@ interface MppSessionHandlerState {
   /** mppx server instance (channel method) used for voucher verification. */
   mppx: unknown
   /** Handle a DELETE channel-close request; returns the HTTP response. */
-  handleDelete(c: DeleteContext): Promise<Response>
+  handleDelete(c: DeleteContext & BackgroundContext): Promise<Response>
   /** Arm the connection-closed orphan guard (idempotent). */
-  armAbortGuard(c: SignalContext): void
+  armAbortGuard(c: SignalContext & BackgroundContext): void
+  setContext(c: BackgroundContext | null): void
 }
 
 /** The last verified voucher: amount, its signature, and the payer it named. */
@@ -549,6 +584,7 @@ function createMppSessionHandlerState(
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let settledCleanly = false
   let abortListenerArmed = false
+  let requestContext: BackgroundContext | null = null
 
   function clearIdleTimer(): void {
     if (idleTimer) {
@@ -557,11 +593,11 @@ function createMppSessionHandlerState(
     }
   }
 
-  function armIdleTimer(): void {
+  function armIdleTimer(context: BackgroundContext | null): void {
     if (!opts.idleTimeoutMs) return
     clearIdleTimer()
     idleTimer = setTimeout(() => {
-      void flagOrphan('idle-timeout')
+      void flagOrphan('idle-timeout', context)
     }, opts.idleTimeoutMs)
     // `unref` exists on Node's Timeout but not the Web `number` handle — call it
     // defensively so the timer never keeps a Node process alive.
@@ -620,7 +656,10 @@ function createMppSessionHandlerState(
   }
 
   // Flag an open-but-unsettled session for the reconciler. Idempotent.
-  async function flagOrphan(reason: 'connection-closed' | 'idle-timeout'): Promise<void> {
+  async function flagOrphan(
+    reason: 'connection-closed' | 'idle-timeout',
+    context: BackgroundContext | null = requestContext,
+  ): Promise<void> {
     await loadPersistedRecord()
     if (!sessionOpened || settledCleanly || orphanFlagged) return
     orphanFlagged = true
@@ -629,16 +668,19 @@ function createMppSessionHandlerState(
 
     const cumulativeAmount = record ? (Number(record.amount) / 1e7).toFixed(7) : '0.0000000'
     if (opts.onOrphaned) {
-      try {
-        await opts.onOrphaned(sessionPricing.channelFactory, {
-          cumulativeAmount,
-          lastSignature: record?.signature ?? '',
-          voucherCount,
-          reason,
+      const orphaned = Promise.resolve()
+        .then(() =>
+          opts.onOrphaned!(sessionPricing.channelFactory, {
+            cumulativeAmount,
+            lastSignature: record?.signature ?? '',
+            voucherCount,
+            reason,
+          }),
+        )
+        .catch((err) => {
+          logger('error', '[mpp-session] onOrphaned handler failed', { error: err })
         })
-      } catch (err) {
-        logger('error', '[mpp-session] onOrphaned handler failed', { error: err })
-      }
+      background(context, orphaned, opts)
     }
   }
 
@@ -677,39 +719,48 @@ function createMppSessionHandlerState(
     record = { amount, signature: payload.signature, payer }
 
     voucherCount++
-    // Voucher activity — this session is alive again.
     settledCleanly = false
     orphanFlagged = false
-    armIdleTimer()
+    const context = requestContext
+    armIdleTimer(context)
 
     const wasOpened = sessionOpened
     sessionOpened = true
 
+    const channelId = sessionPricing.channelFactory
+    const voucherPayer = record.payer
+    const voucherAmount = record.amount
+    const voucherSignature = record.signature
+    const voucherIndex = voucherCount
+
     await innerStore.put(voucherRecordKey, {
-      amount: record.amount.toString(),
-      signature: record.signature,
-      payer: record.payer,
+      amount: voucherAmount.toString(),
+      signature: voucherSignature,
+      payer: voucherPayer,
       voucherCount,
       sessionOpened: true,
     })
 
-    if (!wasOpened) {
-      if (opts.onSessionOpen) {
-        Promise.resolve()
-          .then(() => opts.onSessionOpen!(sessionPricing.channelFactory, record!.payer))
-          .catch((err) => {
-            logger('error', '[mpp-session] onSessionOpen callback error', { error: err })
-            opts.onCallbackError?.(err, 'onSessionOpen')
-          })
-      }
+    let openPromise: Promise<void> | undefined
+    if (!wasOpened && opts.onSessionOpen) {
+      openPromise = Promise.resolve()
+        .then(() => opts.onSessionOpen!(channelId, voucherPayer))
+        .catch((err) => {
+          logger('error', '[mpp-session] onSessionOpen callback error', { error: err })
+          opts.onCallbackError?.(err, 'onSessionOpen')
+        })
+      background(context, openPromise, opts)
     }
 
     if (opts.onVoucher) {
-      const humanAmount = (Number(record.amount) / 1e7).toFixed(7)
-      Promise.resolve().then(() => opts.onVoucher!(sessionPricing.channelFactory, voucherCount, humanAmount, record!.signature)).catch(err => {
-        logger('error', '[mpp-session] onVoucher callback error', { error: err })
-        opts.onCallbackError?.(err, 'onVoucher')
-      })
+      const humanAmount = (Number(voucherAmount) / 1e7).toFixed(7)
+      const voucherPromise = (openPromise ?? Promise.resolve())
+        .then(() => opts.onVoucher!(channelId, voucherIndex, humanAmount, voucherSignature))
+        .catch((err) => {
+          logger('error', '[mpp-session] onVoucher callback error', { error: err })
+          opts.onCallbackError?.(err, 'onVoucher')
+        })
+      background(context, voucherPromise, opts)
     }
   }
 
@@ -735,7 +786,7 @@ function createMppSessionHandlerState(
   return {
     mppx,
 
-    async handleDelete(c: DeleteContext): Promise<Response> {
+    async handleDelete(c: DeleteContext & BackgroundContext): Promise<Response> {
       await loadPersistedRecord()
       let body: { amount?: string; signature?: string } | undefined
       try {
@@ -798,10 +849,13 @@ function createMppSessionHandlerState(
 
         if (opts.onSettled) {
           const totalPaid = (Number(closeAmount) / 1e7).toFixed(7)
-          Promise.resolve().then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, closePayer)).catch(err => {
-            logger('error', '[mpp-session] onSettled callback error', { error: err })
-            opts.onCallbackError?.(err, 'onSettled')
-          })
+          const settled = Promise.resolve()
+            .then(() => opts.onSettled!(closeTxHash, totalPaid, reportMode, closePayer))
+            .catch((err) => {
+              logger('error', '[mpp-session] onSettled callback error', { error: err })
+              opts.onCallbackError?.(err, 'onSettled')
+            })
+          background(c, settled, opts)
         }
 
         // Record session_settled on the agent vault. Fire-and-forget: it must
@@ -824,8 +878,7 @@ function createMppSessionHandlerState(
             },
             { logger, onCallbackError: opts.onCallbackError },
           )
-          if (opts.waitUntil) opts.waitUntil(settlement)
-          else void settlement
+          background(c, settlement, opts)
         }
 
         sessionOpened = false
@@ -841,7 +894,7 @@ function createMppSessionHandlerState(
       return c.json({ closeTxHash: null, message: 'no vouchers received' })
     },
 
-    armAbortGuard(c: SignalContext): void {
+    armAbortGuard(c: SignalContext & BackgroundContext): void {
       // Payment verified. The Workers/edge runtime exposes connection teardown
       // via the request's AbortSignal — use it (in place of Node's
       // `req.on('close')`) so a client crash mid-session flags the channel for
@@ -851,10 +904,14 @@ function createMppSessionHandlerState(
         abortListenerArmed = true
         signal.addEventListener(
           'abort',
-          () => { void flagOrphan('connection-closed') },
+          () => { void flagOrphan('connection-closed', c) },
           { once: true },
         )
       }
+    },
+
+    setContext(c: BackgroundContext | null): void {
+      requestContext = c
     },
   }
 }
@@ -870,23 +927,32 @@ function createMppSessionHonoHandler(
     try {
       if (c.req.method === 'DELETE') {
         // `await` so a rejected close is caught below rather than escaping.
-        return await state.handleDelete(c as unknown as DeleteContext)
+        return await state.handleDelete(c as unknown as DeleteContext & BackgroundContext)
       }
 
-      const result = await (
-        state.mppx as unknown as {
-          channel: (o: { amount: string; description?: string }) => (
-            r: globalThis.Request,
-          ) => Promise<{
-            status: number
-            challenge?: globalThis.Response
-            withReceipt?: (r: globalThis.Response) => globalThis.Response
-          }>
-        }
-      ).channel({
-        amount: sessionPricing.rate,
-        description: opts.manifest.name,
-      })(c.req.raw)
+      const verifyRequest = () =>
+        (
+          state.mppx as unknown as {
+            channel: (o: { amount: string; description?: string }) => (
+              r: globalThis.Request,
+            ) => Promise<{
+              status: number
+              challenge?: globalThis.Response
+              withReceipt?: (r: globalThis.Response) => globalThis.Response
+            }>
+          }
+        ).channel({
+          amount: sessionPricing.rate,
+          description: opts.manifest.name,
+        })(c.req.raw)
+
+      state.setContext(c)
+      let result: Awaited<ReturnType<typeof verifyRequest>>
+      try {
+        result = await verifyRequest()
+      } finally {
+        state.setContext(null)
+      }
 
       if (result.status === 402) {
         const challenge = result.challenge!
